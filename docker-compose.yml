@@ -1,0 +1,108 @@
+# --- 공통 설정 ---
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# --- Networks ---
+networks:
+  aaa-network:
+    driver: bridge
+    ipam:
+      config:
+        # 서브넷 고정: Docker 기본 할당(172.17~19.x.x) 충돌 방지, NAS 멀티 스택 라우팅 안정성, iptables 규칙 불변
+        # /24: ~7 컨테이너 대비 충분. 향후 스택은 172.21.0.0/24 이후 사용
+        - subnet: 172.20.0.0/24
+
+services:
+
+  # --- MySQL ---
+  mysql:
+    image: mysql:8.4
+    container_name: aaa-mysql
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.0"
+    env_file:
+      - ${AAA_SSD_BASE}/secrets/.env.common
+    expose:
+      - "3306"
+    volumes:
+      - ${AAA_SSD_BASE}/data/mysql:/var/lib/mysql
+      - ${AAA_SSD_BASE}/config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ${AAA_SSD_BASE}/config/mysql/initdb.d:/docker-entrypoint-initdb.d:ro
+    logging: *default-logging
+    environment:
+      TZ: Asia/Seoul
+    networks:
+      - aaa-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # --- Redis ---
+  redis:
+    image: redis:8.4
+    container_name: aaa-redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    env_file:
+      - ${AAA_SSD_BASE}/secrets/.env.common
+    expose:
+      - "6379"
+    volumes:
+      - ${AAA_SSD_BASE}/data/redis:/data
+      - ${AAA_SSD_BASE}/config/redis/redis.conf:/etc/redis/redis.conf:ro
+      - ${AAA_SSD_BASE}/config/redis/users.acl:/etc/redis/users.acl:ro
+    logging: *default-logging
+    environment:
+      TZ: Asia/Seoul
+      # redis-cli ACL 인증: admin 유저로 healthcheck 실행. -a 플래그 대비 ps 노출 방지
+      REDISCLI_AUTH: ${REDIS_ADMIN_PASSWORD}
+      REDISCLI_AUTH_USER: admin
+    command: redis-server /etc/redis/redis.conf
+    networks:
+      - aaa-network
+    healthcheck:
+      # CMD-SHELL: redis-cli는 NOAUTH/LOADING에도 exit 0을 반환하므로 PONG 문자열 검증 필수 (docker-library/healthcheck 공식 패턴)
+      # CMD-SHELL 보안 참고: 명령이 docker-compose.yml에 하드코딩되어 사용자 입력이 아니므로 Shell Injection 위험 없음.
+      #   REDISCLI_AUTH 환경변수로 인증하므로 -a 플래그 미사용 → ps/프로세스 리스트에 비밀번호 비노출
+      test: ["CMD-SHELL", "[ \"$$(redis-cli -h 127.0.0.1 ping)\" = 'PONG' ]"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --- Watchtower: GHCR 폴링 → 자동 컨테이너 업데이트 ---
+  # networks 미지정: default 네트워크 사용, aaa-network(DB)와 격리. 외부 레지스트리 접근 유지
+  watchtower:
+    image: ghcr.io/nicholas-fedor/watchtower:1.14.2
+    container_name: aaa-watchtower
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    logging: *default-logging
+    environment:
+      TZ: Asia/Seoul
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_POLL_INTERVAL: "3600"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+      # opt-in 라벨 모드: com.centurylinklabs.watchtower.enable="true" 라벨이 있는 컨테이너만 감시
+      # MySQL/Redis/Watchtower는 라벨 미부여로 감시 제외. 앱 서비스 추가 시 라벨 필수
+      WATCHTOWER_LABEL_ENABLE: "true"
