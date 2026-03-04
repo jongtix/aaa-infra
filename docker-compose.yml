@@ -73,7 +73,8 @@ services:
       # CMD-SHELL: redis-cli는 NOAUTH/LOADING에도 exit 0을 반환하므로 PONG 문자열 검증 필수 (docker-library/healthcheck 공식 패턴)
       # CMD-SHELL 보안 참고: 명령이 docker-compose.yml에 하드코딩되어 사용자 입력이 아니므로 Shell Injection 위험 없음.
       #   REDISCLI_AUTH 환경변수로 인증하므로 -a 플래그 미사용 → ps/프로세스 리스트에 비밀번호 비노출
-      test: ["CMD-SHELL", "[ \"$$(redis-cli -h 127.0.0.1 ping)\" = 'PONG' ]"]
+      #   --user admin: redis-cli는 REDISCLI_AUTH_USER를 미지원하므로 --user 플래그로 명시
+      test: ["CMD-SHELL", "[ \"$$(redis-cli -h 127.0.0.1 --user admin ping)\" = 'PONG' ]"]
       interval: 30s
       timeout: 5s
       retries: 3
