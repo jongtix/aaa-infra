@@ -65,17 +65,17 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 ### 0-5. CI/CD 파이프라인
 
-- GitHub Actions 워크플로우 작성 — Docker 이미지 빌드 ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
-- GHCR(GitHub Container Registry) 이미지 푸시 설정
-- Watchtower GHCR 폴링 설정 — 자동 컨테이너 업데이트
+- ~GitHub Actions 워크플로우 작성 — Docker 이미지 빌드~ → Phase 1 이월 (빌드 대상 앱 서비스 없음) ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
+- ~GHCR(GitHub Container Registry) 이미지 푸시 설정~ → Phase 1 이월 (빌드 대상 앱 서비스 없음)
+- Watchtower GHCR 폴링 설정 — 자동 컨테이너 업데이트 (opt-in 라벨 모드)
 - Dependabot 설정 — `docker-compose` + `github-actions` 에코시스템 ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
 - Docker 이미지 태그 전략 수립 — semver + latest + sha 동시 push
 
 ### 완료 기준 (Phase 0)
 
 - Docker Compose `up` 시 MySQL, Redis, Watchtower 정상 기동
-- GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인
 - `.env.*` 파일이 git 커밋에 포함되지 않음을 pre-commit hook으로 검증
+- ~GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인~ → Phase 1 완료 기준으로 이동
 
 ---
 
@@ -173,6 +173,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 [PRD 3절 Phase 1 성공 지표](PRD.md#3-성공-지표-success-metrics) 충족:
 
+- GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인 (Phase 0에서 이월)
 - 수집 누락률 < 1% (장중 기준)
 - 데이터 파이프라인 장애 시 자동 복구 (Fallback 체인 동작 확인)
 - 수집 지연 < 5초 (실시간 체결 기준)
