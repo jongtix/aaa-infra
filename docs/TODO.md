@@ -16,22 +16,23 @@
 - [x] MySQL/Redis 데이터 볼륨 마운트 경로 지정 확인
 
 ### 0-2. 환경 변수 및 시크릿 관리
-- [ ] `.env.common`, `.env.collector`, `.env.analyzer`, `.env.notifier`, `.env.trader` 파일 분리
-- [ ] `.env.example` 파일 작성
-- [ ] `.gitignore`에 `.env*` 패턴 등록 (`.env.example` 예외)
-- [ ] pre-commit hook — `.env*` 파일 커밋 방지
-- [ ] 모든 `.env.*` 파일 `chmod 600`
+- [x] `.env.common`, `.env.collector`, `.env.analyzer`, `.env.notifier`, `.env.trader` 파일 분리
+- [x] `.env.example` 파일 작성
+- [x] `.gitignore`에 `.env*` 패턴 등록 (`.env.example` 예외)
+- [x] pre-commit hook — `.env*` 파일 커밋 방지
+- [x] 모든 `.env.*` 파일 `chmod 600`
+- [x] 인프라-앱 시크릿 격리 — `.env.mysql`, `.env.redis` 분리, `.env.common` 앱 전용으로 축소
 
 ### 0-3. MySQL 초기화
-- [ ] `my.cnf` 템플릿 작성 — NAS 환경 메모리 설정 (`innodb_buffer_pool_size` 등)
-- [ ] `initdb.d/*.sql` 템플릿 작성 — 서비스별 전용 사용자 생성 + 최소 권한 원칙
-- [ ] 서비스별 전용 사용자 생성 + 최소 권한 원칙
-- [ ] root 계정 원격 접속 금지
+- [x] `my.cnf` 작성 — NAS 환경 메모리 설정 (`innodb_buffer_pool_size` 등)
+- [x] `initdb.d/01-init.sh` 작성 — 서비스별 전용 사용자 생성 + 최소 권한 원칙
+- [x] 서비스별 전용 사용자 생성 + 최소 권한 원칙 (DB 레벨 INSERT/SELECT)
+- [x] root 계정 원격 접속 금지
 
 ### 0-4. Redis 초기화
-- [ ] `redis.conf` 템플릿 작성 — `maxmemory`, AOF, RDB 비활성화
-- [ ] `users.acl` 템플릿 작성 — `default` 비활성화, `admin`, `appuser` 권한 정의
-- [x] ACL 기반 인증 (`aclfile`) — `default` 유저 비활성화, `admin` 유저(healthcheck 전용), `appuser`에 `-@dangerous` 적용
+- [x] `redis.conf` 작성 — `maxmemory`, AOF, RDB 비활성화
+- [x] `users.acl` 작성 — `default` 비활성화, `admin`, `appuser` 권한 정의
+- [x] ACL 기반 인증 (`aclfile`) — `default` 유저 비활성화, `admin` 유저(healthcheck·관리용), `appuser`에 `-@dangerous` 적용
 
 ### 0-5. CI/CD 파이프라인
 - [ ] GitHub Actions 워크플로우 — Docker 이미지 빌드

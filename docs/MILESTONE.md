@@ -44,8 +44,8 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 ### 0-2. 환경 변수 및 시크릿 관리
 
-- `.env.common`, `.env.collector`, `.env.analyzer`, `.env.notifier`, `.env.trader` 파일 분리 ([TECHSPEC 3.8절](TECHSPEC.md#38-kis-api-토큰-관리))
-- `.env.example` 파일 작성 (실제 값 제외)
+- `aaa-infra/.env.example` 작성 — 인프라 공통 변수만 포함 (`.env`, `.env.mysql`, `.env.redis`, `.env.common`) ([ADR-006](ADR/ADR-006-env-example-management-strategy.md))
+- 서비스 전용 변수 (`.env.collector`, `.env.analyzer`, `.env.notifier`, `.env.trader`)는 각 서비스 레포 `.env.example`로 분리 관리 — 해당 Phase 착수 시 작성 ([ADR-006](ADR/ADR-006-env-example-management-strategy.md))
 - `.gitignore`에 `.env*` 패턴 등록 (`.env.example` 예외)
 - pre-commit hook 설정 — `.env*` 파일 커밋 방지 이중 차단
 - 모든 `.env.*` 파일 `chmod 600` 적용
@@ -61,7 +61,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 - `redis.conf` 템플릿 작성 — `maxmemory`, AOF, RDB 비활성화 ([TECHSPEC 5절](TECHSPEC.md#5-redis-설계))
 - `users.acl` 템플릿 작성 — `default` 비활성화, `admin`, `appuser` 권한 정의
-- ACL 기반 인증 (`aclfile`) — `default` 유저 비활성화, `admin` 유저(healthcheck 전용), `appuser`에 `-@dangerous` 적용 ([TECHSPEC 5절](TECHSPEC.md#5-redis-설계))
+- ACL 기반 인증 (`aclfile`) — `default` 유저 비활성화, `admin` 유저(healthcheck·관리용), `appuser`에 `-@dangerous` 적용 ([TECHSPEC 5절](TECHSPEC.md#5-redis-설계))
 
 ### 0-5. CI/CD 파이프라인
 

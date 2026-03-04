@@ -11,11 +11,12 @@ Docker Compose 구성, 공통 인프라, 프로젝트 문서를 관리한다.
 ## Quick Start
 
 ```bash
-# 인프라 전체 기동 (MySQL, Redis)
+# 1. .env 파일 생성 (.env.example 참조)
+# 2. NAS 디렉토리 구조 초기화 (1회)
+sudo bash scripts/init-nas.sh
+# 3. 설정 파일 및 시크릿 파일 배치 (init-nas.sh 출력 안내 참조)
+# 4. 인프라 기동
 docker compose up -d
-
-# 특정 서비스만 기동
-docker compose up -d mysql redis
 
 # 로그 확인
 docker compose logs -f
@@ -62,7 +63,16 @@ aaa-infra/
 │   ├── MILESTONE.md    — Phase별 마일스톤
 │   ├── TODO.md         — 현재 진행 중인 작업 목록
 │   └── ADR/            — 아키텍처 결정 기록
+├── scripts/
+│   └── init-nas.sh     — NAS 최초 배포 전 호스트 환경 초기화
 └── README.md
+```
+
+## 개발 환경 설정
+
+```bash
+# pre-commit hook 설치 (.env 파일 커밋 방지)
+pip install pre-commit && pre-commit install
 ```
 
 ## 로드맵

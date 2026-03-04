@@ -415,20 +415,23 @@ KIS API Access Token은 계좌(앱키)당 독립 발급·관리한다.
 
 **시크릿 보호**
 
-공통 설정은 `.env.common`, 서비스 전용 시크릿은 별도 파일로 분리한다. 각 서비스는 `env_file`에 `.env.common` + 서비스 전용 파일을 순서대로 지정한다.
+인프라 컨테이너와 앱 서비스의 시크릿을 격리한다. MySQL/Redis 컨테이너는 각각 전용 env 파일만 수신하며, 앱 서비스는 `.env.common` + 서비스 전용 파일을 순서대로 지정한다.
 
 | 파일 | 범위 | 주요 내용 |
 |------|------|-----------|
-| `.env.common` | 전체 서비스 공유 | MySQL host/port, Redis host/port/password, TZ |
-| `.env.collector` | collector 전용 | collector DB 계정, KIS 수집용 앱키 5개, 외부 API 키 |
-| `.env.analyzer` | analyzer 전용 | analyzer DB 계정 |
-| `.env.notifier` | notifier 전용 | notifier DB 계정, 매매봇 토큰, 시스템봇 토큰 |
-| `.env.trader` | trader 전용 | trader DB 계정, KIS 주문용 앱키, 매매봇 토큰, 화이트리스트 |
+| `.env.common` | 앱 서비스 전용 | MySQL host/port/database, Redis host/port, REDIS_APPUSER_PASSWORD, TZ |
+| `.env.mysql` | MySQL 컨테이너 전용 | MYSQL_ROOT_PASSWORD, MYSQL_DATABASE, 서비스별 DB 비밀번호 4개, TZ |
+| `.env.redis` | Redis 컨테이너 전용 | REDIS_ADMIN_PASSWORD, REDISCLI_AUTH/REDISCLI_AUTH_USER, TZ |
+| `.env.collector` | collector 전용 | collector DB 계정, KIS 수집용 앱키 5개, 외부 API 키 (변수명은 Phase 1 착수 시 `aaa-collector` 레포 `.env.example`에 작성) |
+| `.env.analyzer` | analyzer 전용 | analyzer DB 계정 (변수명은 Phase 2 착수 시 `aaa-analyzer` 레포 `.env.example`에 작성) |
+| `.env.notifier` | notifier 전용 | notifier DB 계정, 매매봇 토큰, 시스템봇 토큰 (변수명은 Phase 3 착수 시 `aaa-notifier` 레포 `.env.example`에 작성) |
+| `.env.trader` | trader 전용 | trader DB 계정, KIS 주문용 앱키, 매매봇 토큰, 화이트리스트 (변수명은 Phase 4 착수 시 `aaa-trader` 레포 `.env.example`에 작성) |
 
 `TELEGRAM_TRADE_BOT_TOKEN`은 notifier와 trader 양쪽에 중복 존재한다 (의도된 중복).
 
 - 모든 `.env.*` 파일 권한: `chmod 600` (소유자만 읽기/쓰기)
 - Git 커밋 방지: `.gitignore`에 `.env*` 패턴 등록 + pre-commit hook으로 이중 차단 (`.env.example`만 예외 처리)
+- **`.env.example` 관리 전략**: `aaa-infra/.env.example`은 인프라 공통 변수만 관리, 서비스별 변수는 각 서비스 레포의 `.env.example`로 분리 관리 ([ADR-006](ADR/ADR-006-env-example-management-strategy.md) 참조)
 
 **토큰 특성**
 
@@ -1290,7 +1293,7 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 | 영역 | 참조 위치 | 핵심 내용 |
 |------|-----------|-----------|
 | 로그 마스킹 | 2.3절 공통 규칙 | 민감 정보 종류별 마스킹 처리 후 출력 |
-| 시크릿 관리 | 3.8절 시크릿 보호 | `.env` 공통+서비스별 분리, chmod 600, pre-commit hook |
+| 시크릿 관리 | 3.8절 시크릿 보호 | `.env` 공통+서비스별 분리, chmod 600, pre-commit hook, `.env.example` 혼합형 관리 |
 | MySQL 접근 | 4절 접근 보안 | 서비스별 전용 사용자, INSERT-ONLY 감사 로그, root 원격 접속 금지 |
 | Redis 접근 | 5절 접근 보안 | ACL 기반 인증(aclfile), 위험 명령어 차단(-@dangerous), 호스트 바인딩 금지 |
 | SSH 접근 | 6.2절 SSH 보안 최소 조치 | 공개키 인증만 허용, Ed25519, passphrase 설정 |
@@ -1312,4 +1315,4 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 
 ---
 
-*최종 업데이트: 2026-02-26*
+*최종 업데이트: 2026-03-02*
