@@ -1,0 +1,20 @@
+version: 2
+
+updates:
+  # Docker Compose 이미지 추적: mysql:8.4, redis:8.4, watchtower:1.14.2
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "15:00"
+      timezone: "Asia/Seoul"
+
+  # GitHub Actions 워크플로우 액션 버전 추적
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "15:00"
+      timezone: "Asia/Seoul"
