@@ -48,7 +48,7 @@ services:
 
   # --- Redis ---
   redis:
-    image: redis:8.4
+    image: redis:8.6
     container_name: aaa-redis
     restart: unless-stopped
     deploy:
