@@ -28,16 +28,15 @@ services:
           memory: 768M
           cpus: "1.0"
     env_file:
-      - ${AAA_SSD_BASE}/secrets/.env.common
+      - ${AAA_SSD_BASE}/secrets/.env.mysql
     expose:
       - "3306"
     volumes:
       - ${AAA_SSD_BASE}/data/mysql:/var/lib/mysql
       - ${AAA_SSD_BASE}/config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
       - ${AAA_SSD_BASE}/config/mysql/initdb.d:/docker-entrypoint-initdb.d:ro
+      - ${AAA_HDD_BASE}/logs/mysql:/var/log/mysql
     logging: *default-logging
-    environment:
-      TZ: Asia/Seoul
     networks:
       - aaa-network
     healthcheck:
@@ -58,19 +57,15 @@ services:
           memory: 256M
           cpus: "0.5"
     env_file:
-      - ${AAA_SSD_BASE}/secrets/.env.common
+      - ${AAA_SSD_BASE}/secrets/.env.redis
     expose:
       - "6379"
     volumes:
       - ${AAA_SSD_BASE}/data/redis:/data
       - ${AAA_SSD_BASE}/config/redis/redis.conf:/etc/redis/redis.conf:ro
       - ${AAA_SSD_BASE}/config/redis/users.acl:/etc/redis/users.acl:ro
+      - ${AAA_HDD_BASE}/logs/redis:/var/log/redis
     logging: *default-logging
-    environment:
-      TZ: Asia/Seoul
-      # redis-cli ACL 인증: admin 유저로 healthcheck 실행. -a 플래그 대비 ps 노출 방지
-      REDISCLI_AUTH: ${REDIS_ADMIN_PASSWORD}
-      REDISCLI_AUTH_USER: admin
     command: redis-server /etc/redis/redis.conf
     networks:
       - aaa-network
