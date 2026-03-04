@@ -1,0 +1,12 @@
+# Smoke Test (정규식 수정 시 검증용):
+#   차단되어야 함: touch .env .env.local .env.mysql && git add .env .env.local .env.mysql && git commit
+#   통과되어야 함: git add .env.example && git commit
+#   정리: git reset HEAD .env .env.local .env.mysql && rm .env .env.local .env.mysql
+repos:
+  - repo: local
+    hooks:
+      - id: forbid-env-files
+        name: Forbid .env files (except .env.example)
+        entry: "Found .env file(s) staged for commit. Remove with: git reset HEAD <file>"
+        language: fail
+        files: '\.env($|\.(?!example$))'
