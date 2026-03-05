@@ -1122,6 +1122,9 @@ Docker Compose (NAS)
 - 스케줄: `weekly`, 레포별 요일 분산으로 PR 집중 방지
 - Dependabot Security Updates: 즉시 활성화 (CVE 감지 시 자동 PR)
 - 역할 분담: Watchtower = GHCR 빌드 앱 서비스 자동 배포, Dependabot = 인프라 이미지 + 라이브러리 의존성 PR 관리
+- ignore 정책 (`docker-compose` 에코시스템):
+  - MySQL(`mysql`): 메이저/마이너 업그레이드 ignore → 패치만 자동 PR. 8.4 LTS 고정 정책, 스키마 호환성 검토 후 수동 진행
+  - Redis(`redis`): 메이저 업그레이드 ignore → 마이너·패치 자동 PR. Streams API 등 주요 변경 동반 시 수동 검토
 
 ### 10.3 Docker Compose 구성
 
