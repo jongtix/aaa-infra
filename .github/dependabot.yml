@@ -9,6 +9,18 @@ updates:
       day: "monday"
       time: "15:00"
       timezone: "Asia/Seoul"
+    ignore:
+      # MySQL은 8.4 LTS를 고정 사용. 메이저/마이너 업그레이드는 스키마 호환성과
+      # LTS 정책 검토 후 수동으로 진행해야 하므로 패치 업데이트만 허용.
+      - dependency-name: "mysql"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+      # Redis는 8.x 내에서 마이너 업데이트까지 허용. Streams API 등 주요 변경이
+      # 동반되는 메이저 업그레이드는 호환성 검토 후 수동으로 진행.
+      - dependency-name: "redis"
+        update-types:
+          - "version-update:semver-major"
 
   # GitHub Actions 워크플로우 액션 버전 추적
   - package-ecosystem: "github-actions"
