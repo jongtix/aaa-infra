@@ -50,7 +50,7 @@
               ┌──────────────────┼──────────────────┐
               ▼                  ▼                   ▼
        ┌────────────┐    ┌──────────────┐    ┌────────────┐
-       │  MySQL 8.4 │    │  Redis 8.4   │    │  외부 API  │
+       │  MySQL 8.4 │    │  Redis 8.6   │    │  외부 API  │
        │  (단일 DB) │    │(Streams+캐시)│    │  KIS/FRED/ │
        └────────────┘    └──────────────┘    │  DART 등   │
                                              └────────────┘
@@ -166,7 +166,7 @@
 | 구성 요소 | 버전 | 용도 |
 |-----------|------|------|
 | MySQL | 8.4 LTS | 주 데이터 저장소 |
-| Redis | 8.4 | Streams (서비스 간 통신) + 캐싱 + 카운터 |
+| Redis | 8.6 | Streams (서비스 간 통신) + 캐싱 + 카운터 |
 | Docker Compose | - | 컨테이너 오케스트레이션 |
 
 ### 2.3 공통 규칙
@@ -1155,7 +1155,7 @@ Docker Compose (NAS)
 | aaa-notifier | GHCR | - |
 | aaa-trader | GHCR | - |
 | mysql | Docker Hub (mysql:8.4) | 3306 |
-| redis | Docker Hub (redis:8.4) | 6379 |
+| redis | Docker Hub (redis:8.6) | 6379 |
 | watchtower | GHCR (nicholas-fedor 포크) | - |
 
 **Docker 네트워크**:
@@ -1189,7 +1189,7 @@ Docker Compose (NAS)
 |-----------|---------|
 | OS + Docker 오버헤드 | ~660MB |
 | MySQL 8.4 (`innodb_buffer_pool_size=512M`) | ~650MB |
-| Redis 8.4 (`maxmemory 128mb`, 컨테이너 limit 256M) | ~256MB |
+| Redis 8.6 (`maxmemory 128mb`, 컨테이너 limit 256M) | ~256MB |
 | aaa-collector | ~800MB |
 | aaa-analyzer | ~500MB |
 | aaa-notifier | ~600MB |
