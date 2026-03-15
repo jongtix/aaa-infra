@@ -101,7 +101,20 @@ Phase 4 (aaa-trader: 반자동 주문)
 - Lazy 갱신: 401 응답 시 즉시 재발급 후 재시도
 - 갱신 실패 처리: 최대 3회 재시도 → 실패 시 안전 모드 진입 + 로그 기록 (텔레그램 알림은 Phase 3 이후)
 
-### 1-3. DB 스키마 (Phase 1)
+### 1-3. CI/CD 파이프라인
+
+Phase 0에서 이월된 CI/CD 항목 구현.
+
+- GitHub Actions 워크플로우 작성 — Docker 이미지 빌드 ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
+- GHCR(GitHub Container Registry) 이미지 푸시 설정
+- semantic-release 설정 — 커밋 기반 SemVer 자동 결정 (`feat` → minor, `fix` → patch, `!` → major) ([ADR-005](ADR/ADR-005-dependency-auto-versioning.md))
+- Gitmoji + Conventional Commits 혼합 포맷 지원 (`headerPattern` 커스텀)
+- `gradle-semantic-release-plugin` 연동 — `gradle.properties` 자동 업데이트
+- Docker 이미지 3-태그 동시 push: `:v1.2.3` + `:latest` + `:sha-<commit>` ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
+- Dependabot 설정 — `gradle` + `github-actions` 에코시스템
+- GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인
+
+### 1-4. DB 스키마 (Phase 1)
 
 구현 시점에 필요한 테이블부터 순차 진행.
 
@@ -121,7 +134,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 - 모든 시간 컬럼 `DATETIME` 사용 (`TIMESTAMP` 금지)
 - Unique Key 설정 (종목코드 + 타임스탬프) — 중복 INSERT 방지 ([TECHSPEC 5.1절](TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스))
 
-### 1-4. 관심 종목 동기화
+### 1-5. 관심 종목 동기화
 
 - 장 시작 전 KIS API → DB 동기화 구현 — 1일 2회(07:30, 15:45 KST) ([TECHSPEC 3.6절](TECHSPEC.md#36-데이터-보관-정책))
 - 동기화 실패 시 직전 DB 목록 유지 + 로그 기록 (텔레그램 알림은 Phase 3 이후)
@@ -129,7 +142,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 - 중복 ETF 대표 선정 알고리즘 구현 ([TECHSPEC 6.5절](TECHSPEC.md#65-종목-등급-분류-로직))
 - Redis 캐싱: `cache:stock:list`, `cache:grade:{종목코드}` ([TECHSPEC 5.2절](TECHSPEC.md#52-redis-캐싱))
 
-### 1-5. KIS WebSocket 실시간 수집
+### 1-6. KIS WebSocket 실시간 수집
 
 - 국내 체결 (`H0STCNT0`), 호가 (`H0STASP0`) 구독 ([TECHSPEC 3.2절](TECHSPEC.md#32-kis-api-국내-수집-상세))
 - 해외 체결, 호가(Level 1), VIX 선물 실시간 구독 ([TECHSPEC 3.3절](TECHSPEC.md#33-kis-api-해외-수집-상세))
@@ -138,7 +151,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 - WebSocket 재연결 로직 + 안전 모드 진입 기준 구현 ([TECHSPEC 1.3절](TECHSPEC.md#13-안전-모드-safe-mode))
 - Trace ID Redis Streams 헤더 전파 ([TECHSPEC 2.3절](TECHSPEC.md#23-공통-규칙))
 
-### 1-6. KIS REST 배치 수집
+### 1-7. KIS REST 배치 수집
 
 - 국내 배치: OHLCV 일봉, 투자자별 매매동향, 공매도, 신용잔고, 재무제표, 업종지수, 금리, 증시자금, 배당/증자, 투자의견, 뉴스 제목 ([TECHSPEC 3.2절](TECHSPEC.md#32-kis-api-국내-수집-상세))
 - 해외 배치: OHLCV, 해외선물, 배당/권리, 뉴스 제목 ([TECHSPEC 3.3절](TECHSPEC.md#33-kis-api-해외-수집-상세))
@@ -149,7 +162,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 - `backfill_status` 테이블 관리: (대상, 데이터 테이블) 단위로 백필 상태 추적, 미완료 항목 대상 하루 1회 스케줄 실행 ([TECHSPEC 3.9절](TECHSPEC.md#39-과거-데이터-백필-전략))
 - 외부 API 응답 검증: null/0 이하/극단값 필터 적용, 검증 실패 건 저장 제외 + 로그 기록 ([TECHSPEC 2.3절](TECHSPEC.md#23-공통-규칙))
 
-### 1-7. 외부 API 수집
+### 1-8. 외부 API 수집
 
 - 환율 USDKRW 일봉 Fallback 체인: 한국수출입은행 → ECOS → yfinance ([TECHSPEC 3.4절](TECHSPEC.md#34-외부-api-fallback-체인))
 - VIX 일봉 Fallback 체인: CBOE CDN → FRED → yfinance
@@ -161,7 +174,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 - Fallback 전환 시 Redis 카운터 기록 ([TECHSPEC 5.3절](TECHSPEC.md#53-redis-카운터-phase-12-성능-지표))
 - 거시경제/환율/VIX 과거 데이터 백필: 각 API 제공 범위 내 최대 과거까지 수집 ([TECHSPEC 3.9절](TECHSPEC.md#39-과거-데이터-백필-전략))
 
-### 1-8. 장애 감지 및 시스템 알림
+### 1-9. 장애 감지 및 시스템 알림
 
 - 수집 정상 여부 Redis 카운터 추적 (마지막 수집 타임스탬프 또는 분당 수집 건수) ([TECHSPEC 10.4절](TECHSPEC.md#104-모니터링-전략))
 - 장중 일정 시간 이상 수집 건수 0 → 로그 기록 (텔레그램 알림은 Phase 3 이후)
@@ -173,7 +186,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 [PRD 3절 Phase 1 성공 지표](PRD.md#3-성공-지표-success-metrics) 충족:
 
-- GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인 (Phase 0에서 이월)
+- GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인 (1-3에서 구현)
 - 수집 누락률 < 1% (장중 기준)
 - 데이터 파이프라인 장애 시 자동 복구 (Fallback 체인 동작 확인)
 - 수집 지연 < 5초 (실시간 체결 기준)
