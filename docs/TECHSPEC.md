@@ -177,16 +177,34 @@
   - ET 변환 시 고정 오프셋(`-5h`/`-4h`) 사용 금지. 반드시 `ZoneId.of("America/New_York")` 사용 (DST 자동 처리)
   - KIS API 해외 일봉 응답에는 현지 시각(EST/EDT)이 KST와 함께 포함된다. 현재는 KST만 저장하되, 향후 intraday 시간 기반 피처 도입 시 현지 시각도 수집 가능
   - ML 피처 계산 시 `created_at` 등 DATETIME 타임스탬프가 아닌 `trade_date DATE` 컬럼을 조인 키·정렬 기준으로 사용한다 (DST 전환일 오류 원천 차단)
-- **스케줄링**: Java 서비스는 `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지 — Virtual Threads 버그: Spring Framework #31900, #31749). Python 서비스(analyzer)는 APScheduler cron 사용. Redis Streams 이벤트 구독은 스케줄링이 아닌 별개 메커니즘으로 이 규칙 적용 대상 아님
-- **로깅**: 모든 서비스 구조화 로그(JSON) 기본 출력. 민감 정보는 마스킹 처리 후 출력
+  - 상세: [ADR-009](ADR/ADR-009-kst-timezone-strategy.md)
+- **스케줄링**: `@Scheduled`를 사용하는 Java 서비스는 cron 표현식만 사용 (`fixedDelay` 금지 — Virtual Threads 버그: Spring Framework #31900, #31749). Python 서비스(analyzer)는 APScheduler cron 사용. Redis Streams 이벤트 구독은 스케줄링이 아닌 별개 메커니즘으로 이 규칙 적용 대상 아님
+  - 상세: [ADR-008](ADR/ADR-008-virtual-threads-scheduling.md)
+- **로깅**: Java 서비스 파일 appender는 ECS JSON 포맷 출력, 콘솔 appender는 plain text 유지. 민감 정보는 `SafeMdc` + ArchUnit 조합으로 구조적 마스킹
+  - **마스킹 전략**: `SafeMdc`가 `MDC.put()` 시점에 자동 마스킹(1차), ArchUnit이 `MDC.put()` 직접 호출을 빌드 타임에 차단하여 `SafeMdc` 경유 강제(2차)
+  - **마스킹 포맷**:
 
-  | 정보 유형 | 노출 규칙 | 예시 |
-  |-----------|-----------|------|
-  | App Key | 앞 4자 + 뒤 4자 | `PSKd****q1xG` |
-  | App Secret | 앞 4자만 | `s3cr****` |
-  | Access Token | 앞 4자 + 뒤 4자 | `eyJh****ab3c` |
-  | Bot Token | 앞 4자만 | `7312****` |
-  | 계좌번호 | 뒤 2자리만 | `50******01` |
+    | 정보 유형 | 노출 규칙 | 예시 |
+    |-----------|-----------|------|
+    | App Key | 앞 4자 + 뒤 4자 | `PSKd****q1xG` |
+    | App Secret | 앞 4자만 | `s3cr****` |
+    | Access Token | 앞 4자 + 뒤 4자 | `eyJh****ab3c` |
+    | Bot Token | 앞 4자만 | `7312****` |
+    | 계좌번호 | 뒤 2자리만 | `****01` |
+  - **Virtual Threads MDC**: MDC는 부모→자식 스레드 자동 상속 안 됨. 자식 스레드에서 `TraceIdManager.set()` 별도 호출 필요
+  - **로그 파일 롤링**: 최대 1GB / 보존 30일 / 총 용량 cap 50GB / gzip 압축
+  - 상세: [ADR-011](ADR/ADR-011-structured-logging-strategy.md)
+- **패키지 구조**: Java 서비스는 Package by Feature 구조 채택
+  - 도메인 피처 패키지는 해당 도메인의 모든 레이어(controller, service, repository, dto 등)를 포함한다
+  - `common` 하위는 목적 단위로 분리 (`logging`, `exception`, `config` 등)
+  - 유틸 클래스는 `common.utils`로 통합하지 않고 해당 기술 관심사 패키지에 배치 (예: 로깅 유틸 → `common.logging`)
+  - 상세: [ADR-010](ADR/ADR-010-package-by-feature.md)
+- **코드 품질**: Java 서비스는 Spotless + SpotBugs(FindSecBugs) + PMD 조합 적용
+  - Spotless: Google Java Format AOSP 기준 코드 포맷 자동 적용
+  - SpotBugs + FindSecBugs: 바이트코드 기반 버그·보안 취약점 탐지 (CI에서 실행)
+  - PMD: 소스코드 기반 품질 규칙 검사 (bestpractices, errorprone, codestyle, design, multithreading, performance)
+  - pre-commit hook: `./gradlew spotlessCheck pmdMain pmdTest` 자동 실행
+  - 상세: [ADR-007](ADR/ADR-007-code-quality-toolchain.md)
 - **Trace ID**: 모든 서비스는 요청/이벤트 처리 시 `trace_id`를 생성하여 로그에 포함한다. Redis Streams 메시지 헤더를 통해 서비스 간 전파한다
   - 생성 방식: UUID v4
   - Redis Streams 헤더 key: `trace_id`
@@ -1161,7 +1179,7 @@ Docker Compose (NAS)
 | 서비스 | `-Xms` | `-Xmx` | `MaxMetaspaceSize` | `MaxDirectMemorySize` | 컨테이너 limit | 비고 |
 |--------|--------|--------|--------------------|-----------------------|----------------|------|
 | aaa-collector | 128m | 384m | 160m | 64m | 800MB | WebSocket 5세션 + REST 배치 + 백필, 힙 압력 중~높 |
-| aaa-analyzer | - | - | - | - | 500MB | Python 프로세스, JVM 없음. ML 모델 8개 상시 적재 |
+| aaa-analyzer | - | - | - | - | 500MB | Python 프로세스, JVM 없음. ML 모델 8개 상시 적재. **⚠️ Phase 2 착수 전 실측 필요**: LightGBM/XGBoost 모델 로드 + 추론 시 peak RSS 미검증. tracemalloc/memory_profiler로 측정 후 재검토 |
 | aaa-notifier | 64m | 192m | 128m | 64m | 600MB | 틱 구독 + 6단계 필터, 재처리 급증 대비 |
 | aaa-trader | 64m | 128m | 128m | 32m | 450MB | I/O 위주 극저부하, 동시 주문 사실상 1건 |
 
