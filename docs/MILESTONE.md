@@ -37,7 +37,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 ### 0-1. Docker Compose 기본 구성
 
-- `docker-compose.yml` 작성 — MySQL 8.4, Redis 8.4, Watchtower 포함
+- `docker-compose.yml` 작성 — MySQL 8.4, Redis 8.6, Watchtower 포함
 - Docker 네트워크 `aaa-network` 구성 — 애플리케이션 서비스 격리 ([TECHSPEC 10.3절](TECHSPEC.md#103-docker-compose-구성))
 - MySQL/Redis 포트 호스트 바인딩 금지 (`expose`만 사용)
 - `restart: unless-stopped` 정책 전 서비스 적용

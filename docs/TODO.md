@@ -9,7 +9,7 @@
 ## Phase 0: 인프라 공통
 
 ### 0-1. Docker Compose 기본 구성
-- [x] `docker-compose.yml` 작성 — MySQL 8.4, Redis 8.4, Watchtower
+- [x] `docker-compose.yml` 작성 — MySQL 8.4, Redis 8.6, Watchtower
 - [x] Docker 네트워크 `aaa-network` 구성
 - [x] MySQL/Redis 포트 호스트 바인딩 금지 (`expose`만 사용)
 - [x] `restart: unless-stopped` 정책 전 서비스 적용
