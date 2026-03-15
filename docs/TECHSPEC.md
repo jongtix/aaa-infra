@@ -1150,7 +1150,7 @@ Docker Compose (NAS)
 
 | 서비스 | 이미지 소스 | 포트 (내부) |
 |--------|------------|-------------|
-| aaa-collector | GHCR | - |
+| aaa-collector | GHCR | 8080 |
 | aaa-analyzer | GHCR | - |
 | aaa-notifier | GHCR | - |
 | aaa-trader | GHCR | - |

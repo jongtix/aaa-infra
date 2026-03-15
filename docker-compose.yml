@@ -80,6 +80,48 @@ services:
       retries: 3
       start_period: 30s
 
+  # --- Collector: 주식 시장 데이터 수집 ---
+  collector:
+    image: ghcr.io/jongtix/aaa-collector:latest
+    container_name: aaa-collector
+    restart: unless-stopped
+    stop_grace_period: 40s
+    # N100 4코어 기준 초기값, 실측 후 조정
+    deploy:
+      resources:
+        limits:
+          memory: 800M
+          cpus: "1.5"
+    env_file:
+      - ${AAA_SSD_BASE}/secrets/.env.common
+    expose:
+      - "8080"
+    volumes:
+      - ${AAA_HDD_BASE}/logs/aaa-collector:/var/log/aaa-collector
+    logging: *default-logging
+    networks:
+      - aaa-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   # --- Watchtower: GHCR 폴링 → 자동 컨테이너 업데이트 ---
   # networks 미지정: default 네트워크 사용, aaa-network(DB)와 격리. 외부 레지스트리 접근 유지
   watchtower:
