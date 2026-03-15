@@ -721,7 +721,7 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 
 | 역할 | 장비 | 사양 |
 |------|------|------|
-| 학습 (Training) | MacBook M1 Pro | 10코어, 32GB RAM |
+| 학습 (Training) | MacBook M5 Pro | 18코어, 48GB RAM |
 | 추론 (Inference) | UGREEN DXP2800 NAS | Intel N100, 8GB RAM |
 
 **학습 자동화 흐름**
@@ -1091,7 +1091,7 @@ WebSocket 실시간 체결/호가 데이터는 ML 학습 피처로 사용하지 
 | 구성 요소 | 장비 | 용도 |
 |-----------|------|------|
 | 운영 서버 (추론 + 서비스) | UGREEN DXP2800 NAS (Intel N100, 8GB RAM) | 전체 서비스 운영 |
-| ML 학습 | MacBook M1 Pro (10코어, 32GB RAM) | 주말 재학습 전용 |
+| ML 학습 | MacBook M5 Pro (18코어, 48GB RAM) | 주말 재학습 전용 |
 | 모델 공유 스토리지 | NAS NFS/SMB | 학습 결과 → 추론 전달 |
 
 ### 10.2 CI/CD 파이프라인
