@@ -94,6 +94,7 @@ services:
           cpus: "1.5"
     env_file:
       - ${AAA_SSD_BASE}/secrets/.env.common
+      - ${AAA_SSD_BASE}/secrets/.env.collector
     expose:
       - "8080"
     volumes:

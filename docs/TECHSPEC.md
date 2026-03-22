@@ -440,7 +440,7 @@ KIS API Access Token은 계좌(앱키)당 독립 발급·관리한다.
 | `.env.common` | 앱 서비스 전용 | MySQL host/port/database, Redis host/port, REDIS_APPUSER_PASSWORD, TZ |
 | `.env.mysql` | MySQL 컨테이너 전용 | MYSQL_ROOT_PASSWORD, MYSQL_DATABASE, 서비스별 DB 비밀번호 4개, TZ |
 | `.env.redis` | Redis 컨테이너 전용 | REDIS_ADMIN_PASSWORD, REDISCLI_AUTH/REDISCLI_AUTH_USER, TZ |
-| `.env.collector` | collector 전용 | collector DB 계정, KIS 수집용 앱키 5개, 외부 API 키 (변수명은 Phase 1 착수 시 `aaa-collector` 레포 `.env.example`에 작성) |
+| `.env.collector` | collector 전용 | collector DB 계정, KIS 수집용 앱키 5개, 외부 API 키 (변수명은 `aaa-collector` 레포 `.env.example` 참조) |
 | `.env.analyzer` | analyzer 전용 | analyzer DB 계정 (변수명은 Phase 2 착수 시 `aaa-analyzer` 레포 `.env.example`에 작성) |
 | `.env.notifier` | notifier 전용 | notifier DB 계정, 매매봇 토큰, 시스템봇 토큰 (변수명은 Phase 3 착수 시 `aaa-notifier` 레포 `.env.example`에 작성) |
 | `.env.trader` | trader 전용 | trader DB 계정, KIS 주문용 앱키, 매매봇 토큰, 화이트리스트 (변수명은 Phase 4 착수 시 `aaa-trader` 레포 `.env.example`에 작성) |
