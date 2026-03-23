@@ -126,7 +126,7 @@ services:
   # --- Watchtower: GHCR 폴링 → 자동 컨테이너 업데이트 ---
   # networks 미지정: default 네트워크 사용, aaa-network(DB)와 격리. 외부 레지스트리 접근 유지
   watchtower:
-    image: ghcr.io/nicholas-fedor/watchtower:1.14.3
+    image: ghcr.io/nicholas-fedor/watchtower:1.14.4
     container_name: aaa-watchtower
     restart: unless-stopped
     deploy:
