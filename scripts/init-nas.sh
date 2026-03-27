@@ -53,8 +53,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 # .env에서 변수 로드 (export 없이 값만 추출)
-AAA_SSD_BASE="$(grep -E '^AAA_SSD_BASE=' "$ENV_FILE" | cut -d'=' -f2-)"
-AAA_HDD_BASE="$(grep -E '^AAA_HDD_BASE=' "$ENV_FILE" | cut -d'=' -f2-)"
+AAA_SSD_BASE="$(grep -E '^AAA_SSD_BASE=' "$ENV_FILE" | cut -d'=' -f2- | sed "s/^['\"]//;s/['\"]$//")"
+AAA_HDD_BASE="$(grep -E '^AAA_HDD_BASE=' "$ENV_FILE" | cut -d'=' -f2- | sed "s/^['\"]//;s/['\"]$//")"
 
 if [[ -z "$AAA_SSD_BASE" ]]; then
     error "AAA_SSD_BASE가 .env에 설정되지 않았습니다."
