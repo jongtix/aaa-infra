@@ -167,21 +167,26 @@ echo ""
 # Step 4. 디렉토리 권한 설정 (시크릿 + 설정)
 # =============================================================================
 
-info "설정/시크릿 디렉토리 소유권 및 권한 설정 ($HOST_USER:$HOST_GROUP)..."
+info "설정 디렉토리 소유권 및 권한 설정 ($HOST_USER:$HOST_GROUP, chmod 755)..."
 
-chown_host_dirs=(
+chown_config_dirs=(
     "${AAA_SSD_BASE}/config"
     "${AAA_SSD_BASE}/config/mysql"
     "${AAA_SSD_BASE}/config/mysql/initdb.d"
     "${AAA_SSD_BASE}/config/redis"
-    "${AAA_SSD_BASE}/secrets"
 )
 
-for dir in "${chown_host_dirs[@]}"; do
+for dir in "${chown_config_dirs[@]}"; do
     chown "$HOST_USER:$HOST_GROUP" "$dir"
-    chmod 700 "$dir"
-    info "  chown $HOST_USER:$HOST_GROUP + chmod 700 $dir"
+    chmod 755 "$dir"
+    info "  chown $HOST_USER:$HOST_GROUP + chmod 755 $dir"
 done
+
+info "시크릿 디렉토리 소유권 및 권한 설정 ($HOST_USER:$HOST_GROUP, chmod 700)..."
+
+chown "$HOST_USER:$HOST_GROUP" "${AAA_SSD_BASE}/secrets"
+chmod 700 "${AAA_SSD_BASE}/secrets"
+info "  chown $HOST_USER:$HOST_GROUP + chmod 700 ${AAA_SSD_BASE}/secrets"
 
 echo ""
 
