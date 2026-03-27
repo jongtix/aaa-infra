@@ -1238,6 +1238,15 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 - 역할: 인프라 계층 감시 (컨테이너 크래시, JVM 무응답 자동 복구)
 - [TBD - Phase 1 구현 시] Spring Boot Actuator는 `health`만 노출 (`management.endpoints.web.exposure.include=health`), FastAPI `/docs`·`/redoc`는 프로덕션 비활성화
 
+**컨테이너 UID 정책**:
+- DB 서비스 (MySQL, Redis): 공식 이미지 내부 프로세스 UID **999** 사용
+- 앱 서비스: 모든 앱 서비스는 UID **1004**로 비루트 유저를 생성하여 실행
+  - Java 서비스 (collector, notifier, trader): Alpine 기반 — `adduser -u 1004`
+  - Python 서비스 (analyzer): 베이스 이미지에 따라 유저 생성 명령이 다름 — [TBD Phase 2 착수 시]
+  - DB 서비스 UID(999)와 분리하여 파일 시스템 권한 충돌 방지. 1000~1003은 Linux 기본 시스템 유저 범위와 겹칠 수 있어 회피
+  - `init-nas.sh`의 호스트 디렉토리 `chown`과 각 서비스 Dockerfile의 UID 값은 반드시 일치해야 한다
+  - 하드닝 조치 전체 목록: [ADR-012](ADR/ADR-012-docker-base-image-alpine.md) 참조
+
 ### 10.4 모니터링 전략
 
 | Phase | 방법 | 이유 |
