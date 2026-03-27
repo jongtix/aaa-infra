@@ -107,6 +107,7 @@ dirs=(
     "${AAA_SSD_BASE}/config/redis"
     "${AAA_HDD_BASE}/logs/mysql"
     "${AAA_HDD_BASE}/logs/redis"
+    "${AAA_HDD_BASE}/logs/aaa-collector"
 )
 
 for dir in "${dirs[@]}"; do
@@ -134,6 +135,15 @@ chown_dirs=(
 for dir in "${chown_dirs[@]}"; do
     chown 999:999 "$dir"
     info "  chown 999:999 $dir"
+done
+
+chown_app_dirs=(
+    "${AAA_HDD_BASE}/logs/aaa-collector"
+)
+
+for dir in "${chown_app_dirs[@]}"; do
+    chown 1004:1004 "$dir"
+    info "  chown 1004:1004 $dir"
 done
 
 echo ""
@@ -166,11 +176,12 @@ info "다음 파일을 배치한 후 docker compose up -d를 실행하세요:"
 echo ""
 echo "  설정 파일:"
 echo "    ${AAA_SSD_BASE}/config/mysql/my.cnf"
-echo "    ${AAA_SSD_BASE}/config/mysql/initdb.d/01-init.sh"
+echo "    ${AAA_SSD_BASE}/config/mysql/initdb.d/01-init.sh  (chmod +x 필수)"
 echo "    ${AAA_SSD_BASE}/config/redis/redis.conf"
 echo "    ${AAA_SSD_BASE}/config/redis/users.acl"
 echo ""
 echo "  시크릿 파일 (배치 후 chmod 600 적용):"
 echo "    ${AAA_SSD_BASE}/secrets/.env.mysql"
 echo "    ${AAA_SSD_BASE}/secrets/.env.redis"
-echo "    ${AAA_SSD_BASE}/secrets/.env.common  (Phase 1부터 필요)"
+echo "    ${AAA_SSD_BASE}/secrets/.env.common"
+echo "    ${AAA_SSD_BASE}/secrets/.env.collector"
