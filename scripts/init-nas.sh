@@ -31,6 +31,14 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# --- UID 정의 ---
+# DB 서비스: MySQL 8.4, Redis 8.6 공식 이미지 내부 프로세스 UID
+# 확인: docker inspect --format='{{.Config.User}}' mysql:8.4
+DB_UID=999
+# 앱 서비스: Dockerfile에서 adduser -u 로 고정한 비루트 유저
+# 확인: grep 'adduser' aaa-collector/Dockerfile
+APP_UID=1004
+
 # =============================================================================
 # Step 1. 사전 검증
 # =============================================================================
@@ -82,10 +90,19 @@ if [[ ! -d "$AAA_HDD_BASE" ]]; then
     exit 1
 fi
 
-# UID 999 충돌 확인
-if id 999 &>/dev/null; then
-    EXISTING_USER="$(id -nu 999 2>/dev/null || echo 'unknown')"
-    warn "UID 999가 이미 사용 중입니다 (user: $EXISTING_USER)."
+# sudo 실행자 감지 (config/secrets 소유권 설정용)
+HOST_USER="${SUDO_USER:-}"
+if [[ -z "$HOST_USER" ]]; then
+    error "SUDO_USER를 감지할 수 없습니다. 'sudo bash scripts/init-nas.sh'로 실행하세요."
+    exit 1
+fi
+HOST_GROUP="$(id -gn "$HOST_USER")"
+info "호스트 사용자: $HOST_USER:$HOST_GROUP"
+
+# UID 충돌 확인
+if id $DB_UID &>/dev/null; then
+    EXISTING_USER="$(id -nu $DB_UID 2>/dev/null || echo 'unknown')"
+    warn "UID $DB_UID가 이미 사용 중입니다 (user: $EXISTING_USER)."
     warn "MySQL/Redis 컨테이너가 이 UID를 사용합니다. 충돌 여부를 확인하세요."
 fi
 
@@ -102,6 +119,7 @@ dirs=(
     "${AAA_SSD_BASE}/secrets"
     "${AAA_SSD_BASE}/data/mysql"
     "${AAA_SSD_BASE}/data/redis"
+    "${AAA_SSD_BASE}/config"
     "${AAA_SSD_BASE}/config/mysql"
     "${AAA_SSD_BASE}/config/mysql/initdb.d"
     "${AAA_SSD_BASE}/config/redis"
@@ -120,21 +138,18 @@ echo ""
 # =============================================================================
 # Step 3. 소유권 설정 (데이터/로그 디렉토리)
 # =============================================================================
-# MySQL 8.4, Redis 8.4 공식 이미지 내부 프로세스 UID: 999
-# 이미지 버전 변경 시 UID 확인 필요: docker inspect --format='{{.Config.User}}' mysql:8.4
+info "소유권 설정 (UID $DB_UID: MySQL/Redis, UID $APP_UID: 앱 서비스)..."
 
-info "소유권 설정 (UID 999)..."
-
-chown_dirs=(
+chown_db_dirs=(
     "${AAA_SSD_BASE}/data/mysql"
     "${AAA_SSD_BASE}/data/redis"
     "${AAA_HDD_BASE}/logs/mysql"
     "${AAA_HDD_BASE}/logs/redis"
 )
 
-for dir in "${chown_dirs[@]}"; do
-    chown 999:999 "$dir"
-    info "  chown 999:999 $dir"
+for dir in "${chown_db_dirs[@]}"; do
+    chown $DB_UID:$DB_UID "$dir"
+    info "  chown $DB_UID:$DB_UID $dir"
 done
 
 chown_app_dirs=(
@@ -142,8 +157,8 @@ chown_app_dirs=(
 )
 
 for dir in "${chown_app_dirs[@]}"; do
-    chown 1004:1004 "$dir"
-    info "  chown 1004:1004 $dir"
+    chown $APP_UID:$APP_UID "$dir"
+    info "  chown $APP_UID:$APP_UID $dir"
 done
 
 echo ""
@@ -152,17 +167,21 @@ echo ""
 # Step 4. 디렉토리 권한 설정 (시크릿 + 설정)
 # =============================================================================
 
-info "시크릿 디렉토리 권한 설정..."
+info "설정/시크릿 디렉토리 소유권 및 권한 설정 ($HOST_USER:$HOST_GROUP)..."
 
-chmod 700 "${AAA_SSD_BASE}/secrets"
-info "  chmod 700 ${AAA_SSD_BASE}/secrets/"
+chown_host_dirs=(
+    "${AAA_SSD_BASE}/config"
+    "${AAA_SSD_BASE}/config/mysql"
+    "${AAA_SSD_BASE}/config/mysql/initdb.d"
+    "${AAA_SSD_BASE}/config/redis"
+    "${AAA_SSD_BASE}/secrets"
+)
 
-info "설정 디렉토리 권한 설정..."
-
-chmod 700 "${AAA_SSD_BASE}/config/mysql"
-info "  chmod 700 ${AAA_SSD_BASE}/config/mysql/"
-chmod 700 "${AAA_SSD_BASE}/config/redis"
-info "  chmod 700 ${AAA_SSD_BASE}/config/redis/"
+for dir in "${chown_host_dirs[@]}"; do
+    chown "$HOST_USER:$HOST_GROUP" "$dir"
+    chmod 700 "$dir"
+    info "  chown $HOST_USER:$HOST_GROUP + chmod 700 $dir"
+done
 
 echo ""
 
