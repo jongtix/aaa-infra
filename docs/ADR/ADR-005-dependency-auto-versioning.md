@@ -28,7 +28,7 @@ AAA는 5개 독립 레포로 구성된 MSA 시스템이며, 각 레포가 서로
 
 ### 2. semantic-release — 커밋 기반 자동 버저닝
 
-커밋 메시지에서 SemVer를 자동 결정한다: `feat` → minor, `fix` → patch, `!` → major.
+커밋 메시지에서 SemVer를 자동 결정한다: `feat` → minor, `fix`/`perf` → patch, `!` → major. `revert` → patch는 기본 fallback 규칙으로 적용된다. 커스텀 `releaseRules`는 기본 규칙을 대체하지 않고 우선 평가되며, 매칭되지 않으면 기본 규칙이 fallback으로 적용된다.
 
 - Gitmoji + Conventional Commits 하이브리드 형식 지원: `@semantic-release/commit-analyzer`의 커스텀 `headerPattern`으로 `✨ feat(scope): ...` 파싱
 - Java 서비스: semantic-release + `gradle-semantic-release-plugin` (`gradle.properties` 버전 자동 업데이트)
