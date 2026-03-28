@@ -22,7 +22,7 @@ AAA는 5개 독립 레포로 구성된 MSA 시스템이며, 각 레포가 서로
 
 레포별 `.github/dependabot.yml` 개별 설정으로 의존성 업데이트 PR을 자동 생성한다.
 
-- 에코시스템: `docker-compose`(aaa-infra), `gradle`(Java 서비스), `uv`(aaa-analyzer), `github-actions`(전체)
+- 에코시스템: `docker-compose`(aaa-infra), `gradle`(Java 서비스)[^1], `uv`(aaa-analyzer), `github-actions`(전체)
 - 스케줄: `weekly`, 레포별 요일 분산으로 PR 집중 방지
 - Security Updates: 즉시 활성화 (CVE 감지 시 자동 PR)
 
@@ -78,6 +78,8 @@ AAA는 5개 독립 레포로 구성된 MSA 시스템이며, 각 레포가 서로
 ---
 
 ## 결과
+
+[^1]: Gradle 서비스는 Dependabot 감지를 위해 `libs.versions.toml` (Version Catalog)을 사용한다. `gradle.properties` 변수나 `pmd { toolVersion }` 같은 plugin config 방식은 Dependabot이 resolve하지 못한다.
 
 - Dependabot Security Updates를 즉시 활성화한다.
 - Dependabot Version Updates는 Phase별 서비스 개발 착수 시 점진적으로 설정한다.
