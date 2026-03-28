@@ -149,7 +149,8 @@ chown_db_dirs=(
 
 for dir in "${chown_db_dirs[@]}"; do
     chown $DB_UID:$DB_UID "$dir"
-    info "  chown $DB_UID:$DB_UID $dir"
+    chmod 750 "$dir"
+    info "  chown $DB_UID:$DB_UID + chmod 750 $dir"
 done
 
 chown_app_dirs=(
@@ -158,7 +159,8 @@ chown_app_dirs=(
 
 for dir in "${chown_app_dirs[@]}"; do
     chown $APP_UID:$APP_UID "$dir"
-    info "  chown $APP_UID:$APP_UID $dir"
+    chmod 750 "$dir"
+    info "  chown $APP_UID:$APP_UID + chmod 750 $dir"
 done
 
 echo ""
