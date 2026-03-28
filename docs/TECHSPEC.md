@@ -438,7 +438,7 @@ KIS API Access Token은 계좌(앱키)당 독립 발급·관리한다.
 
 | 파일 | 범위 | 주요 내용 |
 |------|------|-----------|
-| `.env.common` | 앱 서비스 전용 | MySQL host/port/database, Redis host/port, REDIS_APPUSER_PASSWORD, TZ |
+| `.env.common` | 앱 서비스 전용 | MySQL host/port/database, Redis host/port, REDIS_APPUSER_USERNAME, REDIS_APPUSER_PASSWORD, TZ |
 | `.env.mysql` | MySQL 컨테이너 전용 | MYSQL_ROOT_PASSWORD, MYSQL_DATABASE, 서비스별 DB 비밀번호 4개, TZ |
 | `.env.redis` | Redis 컨테이너 전용 | REDIS_ADMIN_PASSWORD, REDISCLI_AUTH/REDISCLI_AUTH_USER, TZ |
 | `.env.collector` | collector 전용 | collector DB 계정, KIS 수집용 앱키 5개, 외부 API 키 (변수명은 `aaa-collector` 레포 `.env.example` 참조) |
