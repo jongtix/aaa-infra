@@ -577,6 +577,46 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - Phase 1 대상 테이블: 설계 의도, 주요 컬럼, 인덱스 전략을 기술. DDL 전문은 Flyway 마이그레이션(V1~)이 단일 소스
 - Phase 2~4 대상 테이블(`trading_signals`, `notification_log`, `order_log`): 테이블명 + 주요 컬럼 윤곽만 정의
 
+### 4.1 Phase 1 — Priority 1 테이블
+
+#### stocks
+
+종목 마스터. 국내/해외 주식, ETF, 업종지수를 통합 관리한다. 수집 대상 종목의 기준 정보를 담으며, 다른 시계열 테이블이 FK로 참조하는 중심 테이블이다.
+
+- **주요 컬럼**: `symbol`(종목코드), `market`(시장, Java ENUM → VARCHAR 저장), `asset_type`(자산유형, Java ENUM → VARCHAR 저장), `active`(수집 활성 여부)
+- **유니크 키**: `(symbol, market)` — 동일 종목코드가 시장별로 존재 가능 (예: 삼성전자 KRX vs OTC)
+- **인덱스**: `(market, asset_type)` — 시장별·자산유형별 수집 대상 필터링 최적화
+- **설계 결정**: `active` 필드로 상장폐지·거래정지 종목을 논리 삭제 처리. 물리 삭제 시 FK 참조 무결성 파괴 방지
+- **DDL**: `V1__collector_create_stocks.sql`
+
+#### daily_ohlcv
+
+종목별 일봉 OHLCV 시계열. 국내/해외 주식, ETF, 업종지수를 `stocks.asset_type`으로 구분하여 단일 테이블에 통합한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, 가격 4종(`DECIMAL(18,4)`), `volume`, `trading_value`
+- **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
+- **인덱스**: `trade_date` 단독 — 특정 날짜의 전체 종목 cross-section 조회 최적화 (수익률 랭킹·시장 폭 지표 등 cross-sectional 피처 계산, 수집 데이터 품질 검증). `(stock_id, trade_date)` 유니크 키는 leading column이 `stock_id`이므로 날짜 단독 조건 커버 불가
+- **설계 결정**: 가격 컬럼 `DECIMAL(18,4)` — 미국 주식 소수점 이하 가격과 한국 고가 종목(수십만 원대) 모두 커버. `volume`/`trading_value`는 `BIGINT DEFAULT 0` — 거래 정지일에도 레코드 존재 허용
+- **DDL**: `V2__collector_create_daily_ohlcv.sql`
+
+#### market_indicators
+
+환율(USDKRW), VIX 등 시장 지표의 일봉 OHLC 시계열. 주식과 수집 소스·변환 로직이 달라 `daily_ohlcv`와 분리한다.
+
+- **주요 컬럼**: `indicator_code`(지표 코드, Java ENUM → VARCHAR 저장), `trade_date`, OHLC 4종(`DECIMAL(20,4)`), `source`(데이터 소스)
+- **유니크 키**: `(indicator_code, trade_date)` — 지표당 일별 1건 보장
+- **설계 결정**: `stocks`와 FK 관계 없음 — 지표는 종목이 아닌 독립 엔티티. `source` 컬럼으로 Fallback 체인(3.4절)의 어느 소스에서 수집했는지 추적. Volume 미포함 — 환율/VIX 특성상 거래량 개념 없음 (OHLCV가 아닌 OHLC). `open_value`/`high_value`/`low_value` nullable — 일부 지표(VIX 등)는 소스에 따라 종가만 제공되는 경우가 있어 OHLC 전체 보장 불가
+- **DDL**: `V3__collector_create_market_indicators.sql`
+
+#### investor_trend
+
+종목별 투자자 매매동향 시계열. 외국인·기관·개인의 순매수 수량과 금액을 기록한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, 투자자별 순매수 수량/금액 6종, `total_volume`, `total_trading_value`
+- **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
+- **설계 결정**: `daily_ohlcv`와 동일한 `(stock_id, trade_date)` 유니크 키 패턴. `trade_date` 단독 인덱스 불필요 — 관심 종목 한정 소규모 데이터(~160건/일)로 날짜 단독 조건 조회 시에도 스캔 비용 미미. 모든 수치 컬럼 `BIGINT DEFAULT 0` — 순매수 0은 유효한 값 (매수/매도 균형)
+- **DDL**: `V4__collector_create_investor_trend.sql`
+
 **백필 메타데이터** — `backfill_status` 별도 테이블로 통합 관리:
 - 종목/시장지표/해외선물/거시경제 모든 유형을 (대상 유형, 대상 코드, 데이터 테이블) 복합 키로 하나의 테이블에서 관리
 - 데이터 테이블별 독립적으로 완료 상태·마지막 수집 날짜를 추적 (부분 완료 표현 가능)
