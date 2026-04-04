@@ -118,8 +118,10 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 
 구현 시점에 필요한 테이블부터 순차 진행.
 
+- Flyway 의존성 추가, `ddl-auto=validate` 설정, 마이그레이션 파일 구조 초기화 ([ADR-016](ADR/ADR-016-flyway-schema-migration.md))
 - KIS API 실제 응답 데이터 확인 후 스키마 설계
-- 종목 마스터 테이블 설계 및 생성: `stocks`, `stock_grades` ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
+- 종목 마스터 테이블 설계 및 생성: `stocks` ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
+- 종목 등급 테이블: `stock_grades` ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
 - 가격 데이터 테이블: `daily_ohlcv` (주식/ETF/지수 포함, `asset_type` ENUM) ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
 - 시장 지표 테이블: `market_indicators` (환율, VIX)
 - 해외선물 테이블: `futures_daily`
@@ -132,7 +134,7 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 - 기업 이벤트 테이블: `corporate_events`
 - 투자의견 테이블: `analyst_estimates`
 - 모든 시간 컬럼 `DATETIME` 사용 (`TIMESTAMP` 금지)
-- Unique Key 설정 (종목코드 + 타임스탬프) — 중복 INSERT 방지 ([TECHSPEC 5.1절](TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스))
+- Unique Key 설정 — 중복 INSERT 방지 ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
 
 ### 1-5. 관심 종목 동기화
 
