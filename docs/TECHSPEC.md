@@ -260,7 +260,7 @@
 | 실시간 호가 | WebSocket (`H0STASP0`) | 틱 → Redis Streams 발행 (타이밍 평가용) |
 | 프로그램매매 | REST | 일별 배치. 투자자별 매매동향과 중복도 높아 WebSocket 제외 |
 | 투자자별 매매동향 | REST | 5개 이상 API, 기관/외국인/개인 |
-| 공매도 | REST (`daily_short_sale`, `short_sale`) | 일별 |
+| 공매도 | REST (`short_sale_domestic`, `short_sale_overseas`) | 일별 |
 | 신용잔고/대차거래 | REST | 3개 이상 API |
 | 재무제표 | REST | 7개 이상 API: 매출/영업이익/EPS/BPS/ROE 등 |
 | 업종지수 | REST | KOSPI/KOSDAQ/KOSPI200, 7개 이상 API |
@@ -529,7 +529,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 **접근 보안**:
 - Flyway 전용 계정과 서비스 런타임 계정을 분리 ([ADR-016](ADR/ADR-016-flyway-schema-migration.md))
   - `flyway`: SELECT, INSERT, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES (Flyway 마이그레이션 전용. `spring.flyway.user`로 지정)
-  - `collector`: SELECT, INSERT + UPDATE(stocks, stock_grades, backfill_status만). DELETE/DDL 없음
+  - `collector`: SELECT, INSERT + UPDATE(stocks, stock_grades, backfill_status, short_sale_overseas만). DELETE/DDL 없음
   - `notifier`: SELECT, INSERT + 필요 테이블 UPDATE. `notification_log`는 SELECT/INSERT만 (INSERT-ONLY)
   - `trader`: SELECT, INSERT + 필요 테이블 UPDATE. `order_log`는 SELECT/INSERT만 (INSERT-ONLY)
   - `analyzer`: SELECT, INSERT (trading_signals에 INSERT, 나머지는 SELECT)
@@ -549,14 +549,15 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 | 가격 데이터 | `daily_ohlcv` | collector |
 | 시장 지표 | `market_indicators` | collector |
 | 해외선물 | `futures_daily` | collector |
-| 시간외 데이터 | `extended_hours` | collector |
-| 수급 데이터 | `investor_trend`, `short_sale`, `credit_balance` | collector |
+| 시간외 데이터 | `extended_hours` (1-8절 설계) | collector |
+| 수급 데이터 | `investor_trend`, `short_sale_domestic`, `short_sale_overseas`, `credit_balance` | collector |
 | 거시경제 | `macro_indicators` | collector |
 | 재무제표 | `financials` | collector |
 | 뉴스 | `news_headlines` | collector |
-| 공시 | `disclosures` | collector |
+| 공시 | `disclosures` (1-8절 설계) | collector |
 | 기업 이벤트 | `corporate_events` | collector |
 | 투자의견 | `analyst_estimates` | collector |
+| 수집 인프라 | `backfill_status` | collector |
 | ML 신호 | `trading_signals` | analyzer |
 | 알림 이력 | `notification_log` | notifier |
 | 주문 이력 | `order_log` | trader |
@@ -565,11 +566,11 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - `daily_ohlcv`: 국내/해외 주식, ETF, 업종지수(KOSPI/KOSDAQ/KOSPI200), 시장지수(SPX/NDX) 포함. `asset_type` ENUM으로 구분. 일봉 전용
 - `market_indicators`: 환율(USDKRW), VIX 등 일봉 OHLC 형태의 시장 지표. 주식과 변환 로직이 달라 별도 관리
 - `futures_daily`: 해외선물(ES, NQ, CL/WTI, VX). 미결제약정 등 선물 전용 컬럼 포함, 만기 롤오버 처리
-- `extended_hours`: 미국 Pre-Market/After-Hours 스냅샷(2~3회/일). `session` ENUM('PRE','AFTER')으로 구분
+- `extended_hours`: 미국 Pre-Market/After-Hours 스냅샷(2~3회/일). `session` ENUM('PRE','AFTER')으로 구분. 스키마 설계는 1-8절(외부 API 수집)에서 정의
 - `investor_trend`: 투자자별 매매동향. 외국인·기관·개인 3개 투자자 그룹으로 확정 (프로그램매매 컬럼 미포함 — KIS API 응답에 별도 제공되지 않음)
 - `macro_indicators`: ECOS/FRED 거시경제 + 금리종합(`comp_interest`) + 증시자금종합(`mktfunds`). 지표 코드 + 날짜 + 값 구조
 - `news_headlines`: 국내/해외 뉴스 제목 ([7.5절](#75-뉴스-피처) 피처 계산용)
-- `disclosures`: DART 공시 데이터
+- `disclosures`: DART 공시 데이터. 스키마 설계는 1-8절(외부 API 수집)에서 정의
 - `corporate_events`: 배당/증자/분할/어닝 등 기업 이벤트 통합. `event_type` ENUM으로 구분
 - `analyst_estimates`: 투자의견/추정실적
 
@@ -586,7 +587,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - **주요 컬럼**: `symbol`(종목코드), `market`(시장, Java ENUM → VARCHAR 저장), `asset_type`(자산유형, Java ENUM → VARCHAR 저장), `active`(수집 활성 여부)
 - **유니크 키**: `(symbol, market)` — 동일 종목코드가 시장별로 존재 가능 (예: 삼성전자 KRX vs OTC)
 - **인덱스**: `(market, asset_type)` — 시장별·자산유형별 수집 대상 필터링 최적화
-- **설계 결정**: `active` 필드로 상장폐지·거래정지 종목을 논리 삭제 처리. 물리 삭제 시 FK 참조 무결성 파괴 방지
+- **설계 결정**: `active` 필드로 상장폐지·거래정지 종목을 논리 삭제 처리. 물리 삭제 시 FK 참조 무결성 파괴 방지. 종목 메타데이터(상장 여부, 종목명 등) 변경 시 UPDATE 사용 — 종목당 현재 상태 1건만 유지하는 마스터 테이블이므로 시계열 테이블의 INSERT IGNORE 원칙 비적용
 - **DDL**: `V1__collector_create_stocks.sql`
 
 #### daily_ohlcv
