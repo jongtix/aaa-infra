@@ -627,6 +627,102 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - 현재 예상 데이터 규모(관심 종목 수 × 1건/일 × 250일)에서는 인덱스 최적화로 충분
 - [TBD] 연간 1,000만 건 초과 시 timestamp 기준 Range Partitioning 검토 (파티셔닝 단위는 실측 후 결정)
 
+### 4.2 Phase 1 — Priority 2 테이블
+
+#### credit_balance
+
+종목별 신용잔고 일별 추이. 융자(loan)와 대주(lend) 신규/상환/잔고 수량·금액 및 비율을 기록한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, 융자 4종(신규/상환/잔고 수량·금액), `loan_balance_rate`, `loan_supply_rate`, 대주 4종(신규/상환/잔고 수량·금액), `lend_balance_rate`, `lend_supply_rate`
+- **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
+- **설계 결정**: 금액 단위 만원(`BIGINT`) — KIS API 응답 단위 그대로 저장. 비율 컬럼 `DECIMAL(7,4)` — 퍼센트 소수점 4자리까지 표현. `trade_date` 단독 인덱스 불필요 — 관심 종목 한정 소규모 데이터(~160건/일)로 날짜 단독 조건 조회 시에도 스캔 비용 미미
+- **DDL**: `V5__collector_create_credit_balance.sql`
+
+#### short_sale_domestic
+
+국내 공매도 일별 추이. KIS API에서 수집하며 당일·누적 공매도 수량·금액 및 비중을 기록한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, `short_sell_qty`, `short_sell_vol_rate`, `short_sell_amt`, `short_sell_amt_rate`, 누적 수량/금액 및 비중 4종
+- **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
+- **설계 결정**: 국내(`short_sale_domestic`)와 해외(`short_sale_overseas`)를 분리 — 수집 소스가 달라(국내: KIS API, 해외: FINRA Daily Short Volume + Short Interest 두 소스 병합) 컬럼 구조가 상이하므로 단일 테이블로 통합 불가. 비율 컬럼 `DECIMAL(7,4)` — KIS API 응답 정밀도 유지. `trade_date` 단독 인덱스 불필요 — 관심 종목 한정 소규모 데이터(~160건/일)로 날짜 단독 조건 조회 시에도 스캔 비용 미미
+- **DDL**: `V6__collector_create_short_sale_domestic.sql`
+
+#### short_sale_overseas
+
+미국 공매도 일별 (FINRA Daily Short Volume + Short Interest 병합). 일별 공매도 거래량과 반월(월 2회) 발표 공매도 잔고를 단일 레코드에 통합한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, `short_volume`, `total_volume`, `short_interest`(LOCF 확장), `float_shares`, `si_pct_float`(LOCF 확장), `short_interest_date`(LOCF 기준점), `daily_collected_at`, `interest_collected_at`
+- **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
+- **설계 결정**: `short_interest`/`float_shares`/`si_pct_float`은 FINRA Short Interest가 반월(월 2회) 발표 데이터이므로 일별로 LOCF(Last Observation Carried Forward)로 채워 저장 — 분석 시 날짜 조인 없이 바로 활용 가능. `short_interest_date`로 실제 발표일 추적 가능. 두 소스 수집 시점을 각각 `daily_collected_at`/`interest_collected_at`으로 분리 기록. 두 소스 병합을 위해 INSERT ON DUPLICATE KEY UPDATE(UPSERT) 사용 — 시계열 테이블의 INSERT IGNORE 원칙 예외, [ADR-017](ADR/ADR-017-short-sale-table-split.md) 참조. UPSERT UPDATE SET 절은 수집 소스별 전용 컬럼만 갱신해야 한다 — FINRA Daily 수집 시 `short_volume`, `total_volume`, `daily_collected_at`만, FINRA Short Interest 수집 시 `short_interest`, `float_shares`, `si_pct_float`, `short_interest_date`, `interest_collected_at`만 SET 대상으로 지정하여 다른 소스의 컬럼을 NULL로 덮어쓰지 않는다.
+- **DDL**: `V7__collector_create_short_sale_overseas.sql`
+
+#### macro_indicators
+
+거시경제 지표 시계열. ECOS(한국은행), FRED(미국 연준), KIS 금리/증시자금 데이터를 지표 코드 + 날짜 + 값 구조로 저장한다.
+
+- **주요 컬럼**: `indicator_code`(지표 코드, VARCHAR), `source`(KIS/ECOS/FRED, Java ENUM → VARCHAR 저장), `trade_date`, `value`(`DECIMAL(18,8)`)
+- **유니크 키**: `(indicator_code, trade_date)` — 지표당 일별 1건 보장
+- **인덱스**: `trade_date` 단독 — 특정 날짜의 전체 거시지표 cross-section 조회 최적화
+- **설계 결정**: `indicator_code`를 String으로 설계 — ECOS/FRED/KIS 등 외부 소스 지표가 동적으로 추가되므로 enum으로 고정하면 코드 변경 없이 지표 추가 불가. `source`는 `MacroSource` enum(KIS/ECOS/FRED)으로 고정 — PRD에서 수집 대상 소스가 이 3개로 확정되어 있으며, 새 소스 추가는 수집 로직 구현을 수반하는 의도적 코드 변경 사항이다. `stocks`와 FK 관계 없음 — 거시지표는 종목과 독립된 엔티티
+- **DDL**: `V8__collector_create_macro_indicators.sql`
+
+### 4.3 Phase 1 — Priority 3 테이블
+
+#### news_headlines
+
+KIS 종합시황공시 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 원시 데이터로 사용된다.
+
+- **주요 컬럼**: `serial_no`(내용 조회용 일련번호), `published_at`, `provider_code`, `title`, `category_code`, `source`, `stock_code1`~`stock_code5`(관련 종목코드)
+- **유니크 키**: `serial_no` — KIS API 응답의 고유 식별자
+- **인덱스**: `published_at` — 시간 범위 조회 최적화
+- **설계 결정**: `stock_code1`~`stock_code5` 비정규화 구조 — KIS API 응답이 관련 종목코드를 정확히 5개 고정 필드로 제공하므로 별도 관계 테이블 없이 비정규화 저장. `stocks` FK 없음 — 종목코드가 `stocks` 마스터에 없는 경우도 있어 참조 무결성 강제 불가
+- **DDL**: `V9__collector_create_news_headlines.sql`
+
+#### analyst_estimates
+
+종목별 투자의견 (KIS 국내주식종목투자의견). 회원사(증권사)별 투자의견, 목표가, 괴리도를 기록한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, `institution_name`(회원사명), `opinion`, `opinion_code`, `prev_opinion`, `prev_opinion_code`, `target_price`, `prev_close`, 괴리도/괴리율 4종
+- **유니크 키**: `(stock_id, trade_date, institution_name)` — 종목·날짜·회원사 조합으로 1건 보장
+- **설계 결정**: `institution_name`을 유니크 키 구성 요소로 포함 — 동일 종목·날짜에 복수 증권사 의견이 존재. `institution_name DEFAULT ''` — KIS API 응답에서 회원사명이 빈 문자열로 올 수 있어 NOT NULL 보장 처리
+- **DDL**: `V10__collector_create_analyst_estimates.sql`
+
+#### stock_grades
+
+종목 등급 (A/B/C/F). 분석 엔진이 산정한 현재 등급을 저장한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `grade`(A/B/C/F), `graded_at`(등급 산정 일시)
+- **유니크 키**: `stock_id` — 종목당 현재 등급 1건만 유지
+- **설계 결정**: 종목당 1건 유지(UPDATE 방식) — 등급 이력이 아닌 현재 상태 관리. 등급 변경 이력이 필요해지면 별도 이력 테이블 추가 검토
+- **DDL**: `V11__collector_create_stock_grades.sql`
+
+#### corporate_events
+
+기업 이벤트 통합 테이블. 배당/증자/분할/어닝 등을 `event_type` ENUM으로 구분하여 단일 테이블에 저장한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `event_type`(DIVIDEND/RIGHTS_ISSUE/SPLIT/EARNINGS, Java ENUM → VARCHAR 저장), `event_date`(기준일), `event_subtype`, `pay_date`, `stock_pay_date`, `odd_pay_date`, `cash_amount`, `cash_rate`, `stock_rate`, `face_value`, `stock_kind`, `is_high_dividend`
+- **유니크 키**: `(stock_id, event_type, event_date)` — 종목·이벤트유형·기준일 조합으로 1건 보장
+- **설계 결정**: Phase 1 수집 대상은 DIVIDEND에 한정 — 테이블 구조는 RIGHTS_ISSUE/SPLIT/EARNINGS 확장을 고려해 설계. 배당 외 이벤트 유형의 컬럼은 해당 이벤트 수집 시 활용
+- **DDL**: `V12__collector_create_corporate_events.sql`
+
+#### futures_daily
+
+해외선물 일봉 (ES, NQ, CL/WTI, VX). 개별 계약 코드와 연속선물을 동일 테이블에서 관리하며 미결제약정 컬럼을 포함한다.
+
+- **주요 컬럼**: `series_code`(선물 시리즈 코드, 예: ES/NQ/CL/VX), `contract_code`(개별 계약 코드 또는 CONTINUOUS), `exchange_code`, `trade_date`, OHLC 4종(`DECIMAL(18,6)`), `volume`, `open_interest`, `is_continuous`
+- **유니크 키**: `(series_code, contract_code, trade_date)` — 시리즈·계약·날짜 조합으로 1건 보장
+- **설계 결정**: `stocks` FK 없음 — 연속선물의 `series_code`(예: ES, NQ)가 종목 마스터와 무관한 독립 식별자. `daily_ohlcv`와 분리 — 미결제약정(`open_interest`) 등 선물 전용 컬럼과 만기 롤오버 처리가 필요해 주식과 통합 불가
+- **DDL**: `V13__collector_create_futures_daily.sql`
+
+#### financials
+
+종목별 재무비율 (KIS 국내주식재무비율). 원시 재무제표 수치가 아닌 재무비율 중심으로 저장한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks), `period_type`(ANNUAL/QUARTERLY, Java ENUM → VARCHAR 저장), `period_date`(결산년월, YYYY-MM-01), 성장률 3종(`revenue_growth`, `operating_profit_growth`, `net_income_growth`), `roe`, `eps`, `sps`, `bps`, `retention_rate`, `debt_ratio`
+- **유니크 키**: `(stock_id, period_type, period_date)` — 종목·기간유형·결산월 조합으로 1건 보장
+- **설계 결정**: 원시 재무제표가 아닌 재무비율(EPS, BPS, ROE 등) 중심 설계 — ML 피처로 직접 활용 가능한 정규화된 수치 저장. `period_date`를 해당 월의 1일(YYYY-MM-01)로 통일 — DATE 타입으로 인덱싱 최적화
+- **DDL**: `V14__collector_create_financials.sql`
+
 ---
 
 ## 5. Redis 설계
