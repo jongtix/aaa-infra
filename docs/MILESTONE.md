@@ -116,25 +116,23 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 
 ### 1-4. DB 스키마 (Phase 1)
 
-구현 시점에 필요한 테이블부터 순차 진행.
+구현 시점에 필요한 테이블부터 순차 진행. 테이블 우선순위 분류는 [TECHSPEC 4절](TECHSPEC.md#4-db-스키마) 참조.
 
 - Flyway 의존성 추가, `ddl-auto=validate` 설정, 마이그레이션 파일 구조 초기화 ([ADR-016](ADR/ADR-016-flyway-schema-migration.md))
 - KIS API 실제 응답 데이터 확인 후 스키마 설계
-- 종목 마스터 테이블 설계 및 생성: `stocks` ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
-- 종목 등급 테이블: `stock_grades` ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
-- 가격 데이터 테이블: `daily_ohlcv` (주식/ETF/지수 포함, `asset_type` ENUM) ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
+- 종목 마스터 테이블 설계 및 생성: `stocks`
+- 가격 데이터 테이블: `daily_ohlcv` (주식/ETF/지수 포함, `asset_type` ENUM)
 - 시장 지표 테이블: `market_indicators` (환율, VIX)
-- 해외선물 테이블: `futures_daily`
-- 시간외 데이터 테이블: `extended_hours` (Pre/After-Hours, `session` ENUM)
-- 수급 데이터 테이블: `investor_trend`, `short_sale`, `credit_balance`
+- 수급 데이터 테이블: `investor_trend`, `credit_balance`, `short_sale_domestic`, `short_sale_overseas`
 - 거시경제 테이블: `macro_indicators` (금리종합, 증시자금종합 포함)
-- 재무제표 테이블: `financials`
 - 뉴스 테이블: `news_headlines`
-- 공시 테이블: `disclosures`
-- 기업 이벤트 테이블: `corporate_events`
 - 투자의견 테이블: `analyst_estimates`
+- 종목 등급 테이블: `stock_grades`
+- 기업 이벤트 테이블: `corporate_events`
+- 해외선물 테이블: `futures_daily`
+- 재무제표 테이블: `financials`
 - 모든 시간 컬럼 `DATETIME` 사용 (`TIMESTAMP` 금지)
-- Unique Key 설정 — 중복 INSERT 방지 ([TECHSPEC 4절](TECHSPEC.md#4-db-스키마))
+- Unique Key 설정 — 중복 INSERT 방지
 
 ### 1-5. 관심 종목 동기화
 
@@ -161,15 +159,17 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 - `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지)
 - 일봉 수집 완료 시 `stream:daily:complete` 이벤트 발행 (`market` 필드: `domestic` / `overseas`) ([TECHSPEC 5.1절](TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스))
 - 과거 데이터 백필: 일봉 OHLCV, 수급 데이터를 종목별 최대 과거까지 수집 ([TECHSPEC 3.9절](TECHSPEC.md#39-과거-데이터-백필-전략))
-- `backfill_status` 테이블 관리: (대상, 데이터 테이블) 단위로 백필 상태 추적, 미완료 항목 대상 하루 1회 스케줄 실행 ([TECHSPEC 3.9절](TECHSPEC.md#39-과거-데이터-백필-전략))
+- `backfill_status` 테이블 생성 및 관리: (대상, 데이터 테이블) 단위로 백필 상태 추적, 미완료 항목 대상 하루 1회 스케줄 실행 ([TECHSPEC 3.9절](TECHSPEC.md#39-과거-데이터-백필-전략))
 - 외부 API 응답 검증: null/0 이하/극단값 필터 적용, 검증 실패 건 저장 제외 + 로그 기록 ([TECHSPEC 2.3절](TECHSPEC.md#23-공통-규칙))
 
 ### 1-8. 외부 API 수집
 
 - 환율 USDKRW 일봉 Fallback 체인: 한국수출입은행 → ECOS → yfinance ([TECHSPEC 3.4절](TECHSPEC.md#34-외부-api-fallback-체인))
 - VIX 일봉 Fallback 체인: CBOE CDN → FRED → yfinance
+- `extended_hours` 테이블 생성 (Pre/After-Hours, `session` ENUM)
 - Pre/After-Hours 1분봉: yfinance → Alpaca → Polygon.io (스냅샷 2~3회/일) ([TECHSPEC 3.7절](TECHSPEC.md#37-시간외-데이터-수집-정책))
 - FINRA Daily Short Volume, FINRA Short Interest 수집 ([TECHSPEC 3.5절](TECHSPEC.md#35-단일-소스-외부-api))
+- `disclosures` 테이블 생성
 - DART OpenAPI 공시 폴링 (분당 1000회 제한)
 - 한국은행 ECOS: 기준금리, CPI, GDP, 경상수지
 - FRED API: GDP, CPI, DFF, UNRATE, DGS10, VIXCLS (120 req/min)
