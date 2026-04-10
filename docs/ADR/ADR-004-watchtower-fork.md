@@ -1,7 +1,8 @@
 # ADR-004: Watchtower 비공식 포크(nicholas-fedor) 채택
 
-- **상태**: 승인
+- **상태**: 폐기 (ADR-018로 대체)
 - **일자**: 2026-03-01
+- **폐기일**: 2026-04-06
 - **관련 문서**: [TECHSPEC 10.3절 — Docker Compose 구성](../TECHSPEC.md#103-docker-compose-구성)
 
 ---
