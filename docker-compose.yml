@@ -12,7 +12,7 @@ networks:
     ipam:
       config:
         # 서브넷 고정: Docker 기본 할당(172.17~19.x.x) 충돌 방지, NAS 멀티 스택 라우팅 안정성, iptables 규칙 불변
-        # /24: ~7 컨테이너 대비 충분. 향후 스택은 172.21.0.0/24 이후 사용
+        # /24: ~6 컨테이너 대비 충분. 향후 스택은 172.21.0.0/24 이후 사용
         - subnet: 172.20.0.0/24
 
 services:
@@ -82,7 +82,7 @@ services:
 
   # --- Collector: 주식 시장 데이터 수집 ---
   collector:
-    image: ghcr.io/jongtix/aaa-collector:latest
+    image: ${COLLECTOR_IMAGE:-ghcr.io/jongtix/aaa-collector:latest}
     container_name: aaa-collector
     restart: unless-stopped
     stop_grace_period: 40s
@@ -113,8 +113,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
     read_only: true
     tmpfs:
       - /tmp
@@ -122,26 +120,3 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-
-  # --- Watchtower: GHCR 폴링 → 자동 컨테이너 업데이트 ---
-  # networks 미지정: default 네트워크 사용, aaa-network(DB)와 격리. 외부 레지스트리 접근 유지
-  watchtower:
-    image: ghcr.io/nicholas-fedor/watchtower:1.16.1
-    container_name: aaa-watchtower
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-          cpus: "0.25"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    logging: *default-logging
-    environment:
-      TZ: Asia/Seoul
-      WATCHTOWER_CLEANUP: "true"
-      WATCHTOWER_POLL_INTERVAL: "3600"
-      WATCHTOWER_INCLUDE_RESTARTING: "true"
-      # opt-in 라벨 모드: com.centurylinklabs.watchtower.enable="true" 라벨이 있는 컨테이너만 감시
-      # MySQL/Redis/Watchtower는 라벨 미부여로 감시 제외. 앱 서비스 추가 시 라벨 필수
-      WATCHTOWER_LABEL_ENABLE: "true"
