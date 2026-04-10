@@ -103,7 +103,10 @@ services:
     networks:
       - aaa-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      # CMD-SHELL (wget): 홈 NAS 환경(외부 인터넷 차단, Docker 내부 네트워크 격리)에서 wget/shell 공격 표면 위협이 낮아 현 방식 유지.
+      #   distroless 이미지로 마이그레이션 시 wget 의존성 제거 필요.
+      # --tries=1: wget 기본 재시도(3회)를 1회로 제한. docker compose --wait-timeout 180s를 wget 내부 재시도가 소진하는 것을 방지.
+      test: ["CMD-SHELL", "wget -qO- --tries=1 http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 30s
       timeout: 10s
       retries: 3
