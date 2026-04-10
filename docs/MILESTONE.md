@@ -37,7 +37,7 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 ### 0-1. Docker Compose 기본 구성
 
-- `docker-compose.yml` 작성 — MySQL 8.4, Redis 8.6, Watchtower 포함
+- `docker-compose.yml` 작성 — MySQL 8.4, Redis 8.6, ~~Watchtower~~ 포함
 - Docker 네트워크 `aaa-network` 구성 — 애플리케이션 서비스 격리 ([TECHSPEC 10.3절](TECHSPEC.md#103-docker-compose-구성))
 - MySQL/Redis 포트 호스트 바인딩 금지 (`expose`만 사용)
 - `restart: unless-stopped` 정책 전 서비스 적용
@@ -67,13 +67,13 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 - ~GitHub Actions 워크플로우 작성 — Docker 이미지 빌드~ → Phase 1 이월 (빌드 대상 앱 서비스 없음) ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
 - ~GHCR(GitHub Container Registry) 이미지 푸시 설정~ → Phase 1 이월 (빌드 대상 앱 서비스 없음)
-- Watchtower GHCR 폴링 설정 — 자동 컨테이너 업데이트 (opt-in 라벨 모드)
+- ~Watchtower GHCR 폴링 설정 — 자동 컨테이너 업데이트 (opt-in 라벨 모드)~
 - Dependabot 설정 — `docker-compose` + `github-actions` 에코시스템 ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
 - Docker 이미지 태그 전략 수립 — semver + latest + sha 동시 push
 
 ### 완료 기준 (Phase 0)
 
-- Docker Compose `up` 시 MySQL, Redis, Watchtower 정상 기동
+- Docker Compose `up` 시 MySQL, Redis, ~~Watchtower~~ 정상 기동
 - `.env.*` 파일이 git 커밋에 포함되지 않음을 pre-commit hook으로 검증
 - ~GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인~ → Phase 1 완료 기준으로 이동
 
@@ -112,7 +112,17 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 - `gradle-semantic-release-plugin` 연동 — `gradle.properties` 자동 업데이트
 - Docker 이미지 3-태그 동시 push: `:v1.2.3` + `:latest` + `:sha-<commit>` ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
 - Dependabot 설정 — `gradle` + `github-actions` 에코시스템
-- GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인
+- ~~GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인~~ → 1-4a에서 GitHub Actions self-hosted runner CD로 전환
+
+### 1-4a. GitHub Actions self-hosted runner CD
+
+([ADR-018](ADR/ADR-018-github-actions-cd.md))
+
+- NAS에 GitHub Actions self-hosted runner 등록 및 상시 실행
+- `deploy.yml` 작성 — `docker compose up -d --wait --wait-timeout 180 collector`
+- 배포 성공/실패 GitHub Actions UI 즉시 확인
+- 배포 실패(마이그레이션 미포함) 시 이전 이미지 자동 롤백
+- 배포 실패(마이그레이션 포함) 시 텔레그램으로 수동 롤백 알림 발송 ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
 
 ### 1-4. DB 스키마 (Phase 1)
 
@@ -188,7 +198,7 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 
 [PRD 3절 Phase 1 성공 지표](PRD.md#3-성공-지표-success-metrics) 충족:
 
-- GitHub Push → GHCR 이미지 빌드 → Watchtower 자동 업데이트 흐름 동작 확인 (1-3에서 구현)
+- GitHub Push → GHCR 이미지 빌드 → self-hosted runner 자동 배포 흐름 동작 확인 (1-3, 1-4a에서 구현)
 - 수집 누락률 < 1% (장중 기준)
 - 데이터 파이프라인 장애 시 자동 복구 (Fallback 체인 동작 확인)
 - 수집 지연 < 5초 (실시간 체결 기준)
@@ -352,7 +362,7 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 - `stream:system:{서비스명}` 전 서비스 이벤트 구독 ([TECHSPEC 5.1절](TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스))
 - 시스템봇으로 텔레그램 발송
 - notifier 자체 장애 시 직접 시스템봇 HTTP 호출 (예외 경로)
-- Watchtower 배포 완료 시 텔레그램 알림 연동 ([TECHSPEC 10.2절](TECHSPEC.md#102-cicd-파이프라인))
+
 
 ### 완료 기준 (Phase 3)
 

@@ -596,7 +596,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 - **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, 가격 4종(`DECIMAL(18,4)`), `volume`, `trading_value`
 - **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
-- **인덱스**: `trade_date` 단독 — 특정 날짜의 전체 종목 cross-section 조회 최적화 (수익률 랭킹·시장 폭 지표 등 cross-sectional 피처 계산, 수집 데이터 품질 검증). `(stock_id, trade_date)` 유니크 키는 leading column이 `stock_id`이므로 날짜 단독 조건 커버 불가
+- **인덱스**: `trade_date` 단독 — 특정 날짜의 전체 종목 cross-section 조회 최적화 (수익률 랭킹·시장 폭 지표 등 cross-sectional 피처 계산, 수집 데이터 품질 검증). `(stock_id, trade_date)` 유니크 키는 leading column이 `stock_id`이므로 날짜 단독 조건 커버 불가 ([ADR-019](ADR/ADR-019-timeseries-trade-date-index-strategy.md))
 - **설계 결정**: 가격 컬럼 `DECIMAL(18,4)` — 미국 주식 소수점 이하 가격과 한국 고가 종목(수십만 원대) 모두 커버. `volume`/`trading_value`는 `BIGINT DEFAULT 0` — 거래 정지일에도 레코드 존재 허용
 - **DDL**: `V2__collector_create_daily_ohlcv.sql`
 
@@ -606,6 +606,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 - **주요 컬럼**: `indicator_code`(지표 코드, Java ENUM → VARCHAR 저장), `trade_date`, OHLC 4종(`DECIMAL(20,4)`), `source`(데이터 소스)
 - **유니크 키**: `(indicator_code, trade_date)` — 지표당 일별 1건 보장
+- **인덱스**: `trade_date` 단독 — 특정 날짜의 전체 시장 지표 cross-section 조회 최적화. `indicator_code`가 선행 컬럼인 유니크 키로는 날짜 단독 조건 커버 불가
 - **설계 결정**: `stocks`와 FK 관계 없음 — 지표는 종목이 아닌 독립 엔티티. `source` 컬럼으로 Fallback 체인(3.4절)의 어느 소스에서 수집했는지 추적. Volume 미포함 — 환율/VIX 특성상 거래량 개념 없음 (OHLCV가 아닌 OHLC). `open_value`/`high_value`/`low_value` nullable — 일부 지표(VIX 등)는 소스에 따라 종가만 제공되는 경우가 있어 OHLC 전체 보장 불가
 - **DDL**: `V3__collector_create_market_indicators.sql`
 
@@ -644,7 +645,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 - **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, `short_sell_qty`, `short_sell_vol_rate`, `short_sell_amt`, `short_sell_amt_rate`, 누적 수량/금액 및 비중 4종
 - **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
-- **설계 결정**: 국내(`short_sale_domestic`)와 해외(`short_sale_overseas`)를 분리 — 수집 소스가 달라(국내: KIS API, 해외: FINRA Daily Short Volume + Short Interest 두 소스 병합) 컬럼 구조가 상이하므로 단일 테이블로 통합 불가. 비율 컬럼 `DECIMAL(7,4)` — KIS API 응답 정밀도 유지. `trade_date` 단독 인덱스 불필요 — 관심 종목 한정 소규모 데이터(~160건/일)로 날짜 단독 조건 조회 시에도 스캔 비용 미미
+- **설계 결정**: 국내(`short_sale_domestic`)와 해외(`short_sale_overseas`)를 분리 — 수집 소스가 달라(국내: KIS API, 해외: FINRA Daily Short Volume + Short Interest 두 소스 병합) 컬럼 구조가 상이하므로 단일 테이블로 통합 불가. 비율 컬럼 `DECIMAL(7,4)` — KIS API 응답 정밀도 유지. `trade_date` 단독 인덱스 추가 — 국내 전체 종목 수집 시 예상 규모(~2,700종목 × 250일 × 5년 ≈ 3.5M 행)가 NAS 환경(8GB RAM) 버퍼풀 상시 상주 불가 수준이므로 날짜 범위 쿼리 최적화 필요
 - **DDL**: `V6__collector_create_short_sale_domestic.sql`
 
 #### short_sale_overseas
@@ -653,7 +654,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 - **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, `short_volume`, `total_volume`, `short_interest`(LOCF 확장), `float_shares`, `si_pct_float`(LOCF 확장), `short_interest_date`(LOCF 기준점), `daily_collected_at`, `interest_collected_at`
 - **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
-- **설계 결정**: `short_interest`/`float_shares`/`si_pct_float`은 FINRA Short Interest가 반월(월 2회) 발표 데이터이므로 일별로 LOCF(Last Observation Carried Forward)로 채워 저장 — 분석 시 날짜 조인 없이 바로 활용 가능. `short_interest_date`로 실제 발표일 추적 가능. 두 소스 수집 시점을 각각 `daily_collected_at`/`interest_collected_at`으로 분리 기록. 두 소스 병합을 위해 INSERT ON DUPLICATE KEY UPDATE(UPSERT) 사용 — 시계열 테이블의 INSERT IGNORE 원칙 예외, [ADR-017](ADR/ADR-017-short-sale-table-split.md) 참조. UPSERT UPDATE SET 절은 수집 소스별 전용 컬럼만 갱신해야 한다 — FINRA Daily 수집 시 `short_volume`, `total_volume`, `daily_collected_at`만, FINRA Short Interest 수집 시 `short_interest`, `float_shares`, `si_pct_float`, `short_interest_date`, `interest_collected_at`만 SET 대상으로 지정하여 다른 소스의 컬럼을 NULL로 덮어쓰지 않는다.
+- **설계 결정**: `short_interest`/`float_shares`/`si_pct_float`은 FINRA Short Interest가 반월(월 2회) 발표 데이터이므로 일별로 LOCF(Last Observation Carried Forward)로 채워 저장 — 분석 시 날짜 조인 없이 바로 활용 가능. `short_interest_date`로 실제 발표일 추적 가능. 두 소스 수집 시점을 각각 `daily_collected_at`/`interest_collected_at`으로 분리 기록. 두 소스 병합을 위해 INSERT ON DUPLICATE KEY UPDATE(UPSERT) 사용 — 시계열 테이블의 INSERT IGNORE 원칙 예외, [ADR-017](ADR/ADR-017-short-sale-table-split.md) 참조. UPSERT UPDATE SET 절은 수집 소스별 전용 컬럼만 갱신해야 한다 — FINRA Daily 수집 시 `short_volume`, `total_volume`, `daily_collected_at`만, FINRA Short Interest 수집 시 `short_interest`, `float_shares`, `si_pct_float`, `short_interest_date`, `interest_collected_at`만 SET 대상으로 지정하여 다른 소스의 컬럼을 NULL로 덮어쓰지 않는다. `trade_date` 단독 인덱스 추가 — FINRA 데이터는 미국 전체 상장 종목 대상으로 `short_sale_domestic`과 동등 이상의 규모 예상. 날짜 범위 cross-section 쿼리 최적화
 - **DDL**: `V7__collector_create_short_sale_overseas.sql`
 
 #### macro_indicators
@@ -700,7 +701,7 @@ KIS 종합시황공시 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 
 
 기업 이벤트 통합 테이블. 배당/증자/분할/어닝 등을 `event_type` ENUM으로 구분하여 단일 테이블에 저장한다.
 
-- **주요 컬럼**: `stock_id`(FK → stocks), `event_type`(DIVIDEND/RIGHTS_ISSUE/SPLIT/EARNINGS, Java ENUM → VARCHAR 저장), `event_date`(기준일), `event_subtype`, `pay_date`, `stock_pay_date`, `odd_pay_date`, `cash_amount`, `cash_rate`, `stock_rate`, `face_value`, `stock_kind`, `is_high_dividend`
+- **주요 컬럼**: `stock_id`(FK → stocks), `event_type`(DIVIDEND/RIGHTS_ISSUE/SPLIT/EARNINGS, Java ENUM → VARCHAR 저장), `event_date`(기준일), `event_subtype`, `pay_date`, `stock_pay_date`, `odd_pay_date`, `cash_amount`, `cash_rate`, `stock_rate`, `face_value`, `stock_kind`, `high_dividend_flag`
 - **유니크 키**: `(stock_id, event_type, event_date)` — 종목·이벤트유형·기준일 조합으로 1건 보장
 - **설계 결정**: Phase 1 수집 대상은 DIVIDEND에 한정 — 테이블 구조는 RIGHTS_ISSUE/SPLIT/EARNINGS 확장을 고려해 설계. 배당 외 이벤트 유형의 컬럼은 해당 이벤트 수집 시 활용
 - **DDL**: `V12__collector_create_corporate_events.sql`
@@ -709,7 +710,7 @@ KIS 종합시황공시 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 
 
 해외선물 일봉 (ES, NQ, CL/WTI, VX). 개별 계약 코드와 연속선물을 동일 테이블에서 관리하며 미결제약정 컬럼을 포함한다.
 
-- **주요 컬럼**: `series_code`(선물 시리즈 코드, 예: ES/NQ/CL/VX), `contract_code`(개별 계약 코드 또는 CONTINUOUS), `exchange_code`, `trade_date`, OHLC 4종(`DECIMAL(18,6)`), `volume`, `open_interest`, `is_continuous`
+- **주요 컬럼**: `series_code`(선물 시리즈 코드, 예: ES/NQ/CL/VX), `contract_code`(개별 계약 코드 또는 `CONTINUOUS`), `exchange_code`, `trade_date`, OHLC 4종(`DECIMAL(18,6)`), `volume`, `open_interest`
 - **유니크 키**: `(series_code, contract_code, trade_date)` — 시리즈·계약·날짜 조합으로 1건 보장
 - **설계 결정**: `stocks` FK 없음 — 연속선물의 `series_code`(예: ES, NQ)가 종목 마스터와 무관한 독립 식별자. `daily_ohlcv`와 분리 — 미결제약정(`open_interest`) 등 선물 전용 컬럼과 만기 롤오버 처리가 필요해 주식과 통합 불가
 - **DDL**: `V13__collector_create_futures_daily.sql`
@@ -1278,35 +1279,48 @@ WebSocket 실시간 체결/호가 데이터는 ML 학습 피처로 사용하지 
 ### 10.2 CI/CD 파이프라인
 
 ```
-GitHub Push
+main 푸시 (on: push: main)
     │
     ▼
-GitHub Actions (CI)
-    │  빌드 + 테스트
-    │  테스트
-    │  이미지 푸시 → GHCR (GitHub Container Registry)
+GitHub Actions — CI (빌드 + 테스트)
+    │  semantic-release → Git 태그(v1.2.3) 생성
+    ▼
+태그 푸시 (on: push: tags)
     │
     ▼
-Watchtower (NAS에서 실행)
-    │  GHCR 폴링 → 신규 이미지 감지
-    │  자동 컨테이너 업데이트
+GitHub Actions — Docker (GHCR 빌드 + 푸시)
     │
+    ▼
+GitHub Actions — Deploy (self-hosted runner on NAS)
+    │  docker compose up -d --wait --wait-timeout 180 collector
     ▼
 Docker Compose (NAS)
-    │  서비스 재시작
+    │  healthcheck healthy 확인 후 완료
     ▼
-텔레그램 배포 완료 알림
+GitHub Actions UI — 성공/실패 즉시 확인
+    │
+    ├─ 실패 + 마이그레이션 없음 → 이전 digest로 자동 롤백
+    │
+    └─ 실패 + 마이그레이션 포함 → 자동 롤백 불가
+            │
+            ▼
+        텔레그램 알림 — 수동 롤백 필요
 ```
 
-- GHCR 접근 토큰은 최소 권한(`read:packages`)으로 설정
+**배포 역할 분담 (자동 vs 수동)**:
+- GitHub Actions CD는 앱 서비스 이미지 배포만 자동화한다 (위 흐름도 전체가 이 범위)
+- aaa-infra 레포의 설정 파일 변경(`docker-compose.yml`, Nginx 설정 등)은 개발자가 `scp`로 NAS에 수동 배포한다
+  - `deploy.yml`은 `--project-directory "$AAA_INFRA_DIR"`로 NAS 호스트의 `docker-compose.yml`을 직접 참조하므로, 설정 파일을 NAS에 먼저 배포해야 CD가 올바르게 동작한다
+
+- `docker compose up` 방식의 배포 중 다운타임(컨테이너 재생성 → healthy 확인까지 수십 초~수분)을 허용된 트레이드오프로 수용 ([ADR-020](ADR/ADR-020-zero-downtime-deployment-deferred.md))
+- GHCR 인증은 `GITHUB_TOKEN`을 사용. 빌드+푸시 단계(`docker.yml`)는 `permissions: packages: write`, Deploy 단계(self-hosted runner pull)는 `permissions: packages: read`로 각각 선언하여 최소 권한 원칙을 적용 ([ADR-018](ADR/ADR-018-github-actions-cd.md))
 
 **Docker 이미지 태그 전략**:
 - 릴리스 시 GHCR에 3가지 태그 동시 push:
   - `:v1.2.3` — 불변 태그, 롤백 및 감사 기준점
-  - `:latest` — Watchtower 폴링 대상 (docker-compose.yml에서 앱 서비스가 사용)
+  - `:latest` — 앱 서비스 배포 대상 (docker-compose.yml에서 앱 서비스가 사용)
   - `:sha-<commit>` — 트레이서빌리티, 디버깅
-- Watchtower는 semver 태그 간 업그레이드를 감지하지 못함 → 앱 서비스는 `:latest` 사용 필수
-- 인프라 이미지(MySQL, Redis, Watchtower)는 고정 버전 태그 사용 → Dependabot PR로 관리
+- 인프라 이미지(MySQL, Redis)는 고정 버전 태그 사용 → Dependabot PR로 관리
 
 **자동 버저닝 (semantic-release)**:
 - 커밋 메시지 기반 SemVer 자동 결정: `feat` → minor, `fix`/`perf` → patch, `!` → major, `revert` → patch (기본 fallback)
@@ -1314,17 +1328,34 @@ Docker Compose (NAS)
 - Gitmoji + Conventional Commits 하이브리드 형식 지원: `@semantic-release/commit-analyzer`의 커스텀 `headerPattern`으로 `✨ feat(scope): ...` 파싱
 - Java 서비스: semantic-release + `gradle-semantic-release-plugin` (`gradle.properties` 버전 자동 업데이트)
 - Python 서비스: python-semantic-release + 커스텀 파서 (`pyproject.toml` 버전 자동 업데이트)
-- 흐름: main 머지 → semantic-release → Git 태그(v1.2.3) → `on: push: tags` → Docker Buildx → GHCR push → Watchtower 감지
+- 흐름: main 머지 → semantic-release → Git 태그(v1.2.3) → `on: push: tags` → Docker Buildx → GHCR push → GitHub Actions Deploy (self-hosted runner)
 
 **의존성 자동 업데이트 (Dependabot)**:
 - 레포별 `.github/dependabot.yml` 개별 설정 (5개 독립 레포)
 - 에코시스템: aaa-infra(`docker-compose` + `github-actions`), Java 서비스(`gradle`), aaa-analyzer(`uv`)
 - 스케줄: `weekly`, 레포별 요일 분산으로 PR 집중 방지
 - Dependabot Security Updates: 즉시 활성화 (CVE 감지 시 자동 PR)
-- 역할 분담: Watchtower = GHCR 빌드 앱 서비스 자동 배포, Dependabot = 인프라 이미지 + 라이브러리 의존성 PR 관리
+- 역할 분담: GitHub Actions Deploy = GHCR 빌드 앱 서비스 자동 배포, Dependabot = 인프라 이미지 + 라이브러리 의존성 PR 관리
 - ignore 정책 (`docker-compose` 에코시스템):
   - MySQL(`mysql`): 메이저/마이너 업그레이드 ignore → 패치만 자동 PR. 8.4 LTS 고정 정책, 스키마 호환성 검토 후 수동 진행
   - Redis(`redis`): 메이저 업그레이드 ignore → 마이너·패치 자동 PR. Streams API 등 주요 변경 동반 시 수동 검토
+
+**GitHub Actions 환경 설정**:
+
+GitHub → {repo} → Settings → Secrets and variables → Actions 에서 등록.
+
+Repository Variables:
+
+| 변수명 | 설명 | 예시값 |
+|--------|------|--------|
+| `AAA_INFRA_DIR` | NAS에서 aaa-infra docker-compose 디렉토리 절대 경로 | `/volume1/docker/aaa-infra` |
+
+Repository Secrets:
+
+| 시크릿명 | 설명 | 발급 방법 |
+|----------|------|-----------|
+| `TELEGRAM_BOT_TOKEN` | Telegram 알림 봇 토큰. CD 배포 실패(마이그레이션 포함) 시 수동 롤백 알림에 사용. Phase 3 aaa-notifier에서도 동일 시크릿 사용 예정 | BotFather → `/newbot` 명령으로 발급 |
+| `TELEGRAM_CHAT_ID` | Telegram 알림 수신 chat ID (`TELEGRAM_BOT_TOKEN`과 동일 용도) | `@userinfobot` 또는 Bot API `getUpdates`로 확인 |
 
 ### 10.3 Docker Compose 구성
 
@@ -1338,23 +1369,15 @@ Docker Compose (NAS)
 | aaa-trader | GHCR | - |
 | mysql | Docker Hub (mysql:8.4) | 3306 |
 | redis | Docker Hub (redis:8.6) | 6379 |
-| watchtower | GHCR (nicholas-fedor 포크) | - |
 
 **Docker 네트워크**:
 - `aaa-network` 네트워크: MySQL, Redis, 전체 애플리케이션 서비스 (collector, analyzer, notifier, trader)
-- Watchtower: Docker socket만 접근, `aaa-network` 연결 불필요 (default 네트워크 사용). 포크 선택 배경은 [ADR-004](ADR/ADR-004-watchtower-fork.md) 참조
 - MySQL(3306), Redis(6379) 포트는 호스트에 바인딩하지 않음 (`expose`만 사용, `ports` 미사용)
 - 서브넷 고정(`172.20.0.0/24`) 이유:
   1. Docker 기본 브리지(`docker0`)는 `172.17.0.0/16`, Compose 자동 할당은 `172.17~19.x.x`부터 시작. `172.20.x.x`로 명시 지정하여 충돌 방지
   2. NAS에서 여러 Docker Compose 스택 공존 시 자동 할당끼리 서브넷이 겹쳐 라우팅이 무음 실패할 수 있음. 고정으로 예측 가능성 확보
   3. 재시작 후에도 서브넷 불변이므로 호스트 방화벽(iptables) 규칙이 깨지지 않음
-  - `/24` 선택: 현재 ~7개 컨테이너 대비 254 호스트로 충분. 향후 스택 추가 시 `172.21.0.0/24` 이후 대역 사용
-
-**Watchtower 감시 범위**:
-- Opt-in 라벨 모드(`WATCHTOWER_LABEL_ENABLE=true`): `com.centurylinklabs.watchtower.enable: "true"` 라벨이 있는 컨테이너만 감시
-- 감시 대상: GHCR에서 빌드되는 애플리케이션 서비스 (collector, analyzer, notifier, trader). 각 서비스 정의 시 라벨 부여 필수
-- 감시 제외: MySQL, Redis (Docker Hub 버전 고정 이미지), Watchtower 자체 (`latest` 태그 안정성 우선)
-- NAS 멀티 스택 공존 시 다른 스택의 컨테이너가 의도하지 않게 업데이트되는 것을 방지
+  - `/24` 선택: 현재 ~6개 컨테이너 대비 254 호스트로 충분. 향후 스택 추가 시 `172.21.0.0/24` 이후 대역 사용
 
 **서비스별 JVM 메모리 제한 (8GB 기준)**
 
@@ -1376,9 +1399,8 @@ Docker Compose (NAS)
 | aaa-analyzer | ~500MB |
 | aaa-notifier | ~600MB |
 | aaa-trader | ~450MB |
-| Watchtower | ~128MB |
-| **합계** | **~4,044MB (49%)** |
-| **여유** | **~4,148MB (51%)** |
+| **합계** | **~3,916MB (48%)** |
+| **여유** | **~4,276MB (52%)** |
 
 Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-on-Write로 최악의 경우 데이터 메모리의 2배 소비. fragmentation, output buffer 오버헤드 포함.
 

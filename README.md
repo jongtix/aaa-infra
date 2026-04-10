@@ -46,14 +46,13 @@ docker compose down
 | MySQL | 단일 DB, 서비스별 사용자·권한 격리 |
 | Redis | Streams (서비스 간 이벤트 버스) + 캐싱 |
 | Docker Compose | 서비스 오케스트레이션 |
-| Watchtower | GHCR 폴링 → 자동 컨테이너 업데이트 |
-| GitHub Actions | CI/CD — Docker 이미지 빌드 → GHCR 푸시 |
+| GitHub Actions | CI/CD — Docker 이미지 빌드 → GHCR 푸시 → self-hosted runner 배포 |
 
 ## 배포 환경
 
 - **프로덕션**: UGREEN DXP2800 NAS (Intel N100, 8GB RAM)
 - **ML 학습**: MacBook (SSH 접속, 학습 결과 NFS/SMB로 NAS 전송)
-- **배포 흐름**: GitHub Push → GitHub Actions 빌드 → GHCR → Watchtower 자동 업데이트
+- **배포 흐름**: GitHub Push → GitHub Actions 빌드 → GHCR → self-hosted runner에서 docker compose up
 
 ## 디렉토리 구조
 

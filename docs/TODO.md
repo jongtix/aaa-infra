@@ -35,13 +35,13 @@
 - [x] ACL 기반 인증 (`aclfile`) — `default` 유저 비활성화, `admin` 유저(healthcheck·관리용), `appuser`에 `-@dangerous` 적용
 
 ### 0-5. CI/CD 파이프라인
-- ~[ ] GitHub Actions 워크플로우 — Docker 이미지 빌드~ → Phase 1 이월 (빌드 대상 앱 서비스 없음)
-- ~[ ] GHCR 이미지 푸시 설정~ → Phase 1 이월 (빌드 대상 앱 서비스 없음)
-- [x] Watchtower GHCR 폴링 — `docker-compose.yml` opt-in 라벨 모드 설정 완료. 앱 서비스 추가 시 라벨 부여로 활성화
+- [x] GitHub Actions 워크플로우 — Release(semantic-release) + Docker(GHCR 빌드+푸시) + Deploy(self-hosted runner) 3단계 체인
+- [x] GHCR 이미지 푸시 설정 — `docker.yml` 워크플로 + GHCR 패키지 권한 설정
+- [x] Watchtower 서비스 제외 — GitHub Actions CD로 대체 (ADR-018)
 - [x] Dependabot 설정 — `docker-compose` + `github-actions` 에코시스템 (weekly, 월요일 15:00 KST)
 - [x] Docker 이미지 태그 전략 수립 — TECHSPEC 10.2절 + ADR-005 확정 (semver + latest + sha 3중 태그)
 
 ### 완료 기준
-- [x] Docker Compose `up` 시 MySQL, Redis, Watchtower 정상 기동
-- ~[ ] GitHub Push → GHCR 빌드 → Watchtower 자동 업데이트 동작 확인~ → Phase 1 이월
+- [x] Docker Compose `up` 시 MySQL, Redis 정상 기동
+- [x] GitHub Push → GHCR 빌드 → GitHub Actions Deploy 자동 배포 동작 확인
 - [x] `.env.*` 파일이 git 커밋에 포함되지 않음을 pre-commit hook으로 검증
