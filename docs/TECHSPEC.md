@@ -360,6 +360,36 @@
 - 종목 추가/삭제는 KIS MTS에서만 관리 (시스템 내 편집 불가)
 - ML 등급 변경은 텔레그램 명령어로만 가능
 
+**동기화 상세 흐름** (`WatchlistSyncService.sync()`):
+
+| 단계 | 내용 |
+|------|------|
+| 1. 그룹 목록 조회 | KIS 관심종목 그룹 목록 API (`fetchGroups`) |
+| 2. 그룹별 종목 조회 | VirtualThread 병렬 처리. 실패 그룹은 skip (best-effort) |
+| 3. 중복 제거 | dedup 키: `jongCode + ":" + exchCode` |
+| 4. Market 판별 | `fid_mrkt_cls_code` + `exch_code` → Market enum ([ADR-021](ADR/ADR-021-market-enum-mapping.md) 참조) |
+| 5. 종목 기본정보 조회 | VirtualThread 병렬 처리. 실패 시 warn 로그 + null 반환 (해당 종목 StockInfo 없이 진행) |
+| 6. upsert | `WatchlistWriter.upsertAll()` (`@Transactional`) |
+
+**5단계 종목 기본정보 조회 분기**:
+
+| 조건 | 처리 |
+|------|------|
+| Market = KRX/US → INDEX | API 호출 없음 |
+| `jongCode` M-prefix → COMMODITY | API 호출 없음 |
+| Market = KOSPI/KOSDAQ | 주식기본조회 API (`CTPF1002R`) |
+| Market = NASDAQ/NYSE/AMEX | 해외주식 상품기본정보 API (`CTPF1702R`) |
+
+**6단계 upsert 분기**:
+
+| 조건 | 처리 |
+|------|------|
+| 신규 종목 | INSERT. StockInfo 없으면 `assetType=STOCK` 기본값 |
+| 기존 + 이름 변경 | `updateNameKoAndActivate()` |
+| 기존 + 비활성 상태 | `activate()` |
+| 기존 + 변경 없음 | no-op |
+| Market 미판별 | skip |
+
 ### 3.7 시간외 데이터 수집 정책
 
 **미국 Pre/After-Hours**
@@ -584,10 +614,10 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 종목 마스터. 국내/해외 주식, ETF, 업종지수를 통합 관리한다. 수집 대상 종목의 기준 정보를 담으며, 다른 시계열 테이블이 FK로 참조하는 중심 테이블이다.
 
-- **주요 컬럼**: `symbol`(종목코드), `market`(시장, Java ENUM → VARCHAR 저장), `asset_type`(자산유형, Java ENUM → VARCHAR 저장), `active`(수집 활성 여부)
+- **주요 컬럼**: `symbol`(종목코드), `market`(시장, Java ENUM → VARCHAR 저장), `asset_type`(자산유형, Java ENUM → VARCHAR 저장), `active`(수집 활성 여부), `watchlist_removed_at`(관심목록 제거 시각, NULL=현재 수집 중)
 - **유니크 키**: `(symbol, market)` — 동일 종목코드가 시장별로 존재 가능 (예: 삼성전자 KRX vs OTC)
 - **인덱스**: `(market, asset_type)` — 시장별·자산유형별 수집 대상 필터링 최적화
-- **설계 결정**: `active` 필드로 상장폐지·거래정지 종목을 논리 삭제 처리. 물리 삭제 시 FK 참조 무결성 파괴 방지. 종목 메타데이터(상장 여부, 종목명 등) 변경 시 UPDATE 사용 — 종목당 현재 상태 1건만 유지하는 마스터 테이블이므로 시계열 테이블의 INSERT IGNORE 원칙 비적용
+- **설계 결정**: `active` 필드로 상장폐지·거래정지 종목을 논리 삭제 처리. 물리 삭제 시 FK 참조 무결성 파괴 방지. 종목 메타데이터(상장 여부, 종목명 등) 변경 시 UPDATE 사용 — 종목당 현재 상태 1건만 유지하는 마스터 테이블이므로 시계열 테이블의 INSERT IGNORE 원칙 비적용. `watchlist_removed_at`은 관심목록 이탈 시각 추적 전용 — `active`(상장폐지·거래정지)와 역할 분리 ([ADR-022](ADR/ADR-022-watchlist-sync-stocks-update-strategy.md) 결정 5)
 - **DDL**: `V1__collector_create_stocks.sql`
 
 #### daily_ohlcv
