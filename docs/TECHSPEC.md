@@ -688,6 +688,15 @@ KIS 종합시황공시 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 
 - **설계 결정**: `institution_name`을 유니크 키 구성 요소로 포함 — 동일 종목·날짜에 복수 증권사 의견이 존재. `institution_name DEFAULT ''` — KIS API 응답에서 회원사명이 빈 문자열로 올 수 있어 NOT NULL 보장 처리
 - **DDL**: `V10__collector_create_analyst_estimates.sql`
 
+#### etf_metadata
+
+ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 정보를 stocks 테이블과 분리하여 저장한다.
+
+- **주요 컬럼**: `stock_id`(FK → stocks, UNIQUE — 1:1 관계 보증), `underlying_index_code`(기초지수 코드, KIS API `etf_trgt_nmix_bstp_code`), `leverage`(배수 TINYINT DEFAULT 1 — 1=일반·2=2배·3=3배), `inverse`(인버스 여부 BOOLEAN DEFAULT FALSE), `hedged`(환헤지 여부 BOOLEAN DEFAULT FALSE)
+- **유니크 키**: `stock_id` — 1:1 관계 DB 수준 보증
+- **설계 결정**: stocks 테이블에 nullable 컬럼을 추가하지 않고 별도 테이블로 분리 — ETF 전용 속성이 STOCK/INDEX 행에 NULL로 남으면 ML 파이프라인에서 NULL 임퓨테이션 오염(예: etf_leverage NULL → 레버리지 1배 혼동) 위험이 있고, CHECK 제약으로는 "ETF 행에서 ETF 컬럼 누락"을 방어할 수 없음. underlying_index_code는 실제 기초지수 단위로 세분화 여부를 1-5 구현 초기에 샘플 API 호출로 검증 예정. 향후 운용사명, 보수율 등 ETF 전용 피처 컬럼 추가 예정
+- **DDL**: `V15__collector_create_etf_metadata.sql`
+
 #### stock_grades
 
 종목 등급 (A/B/C/F). 분석 엔진이 산정한 현재 등급을 저장한다.
@@ -696,6 +705,19 @@ KIS 종합시황공시 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 
 - **유니크 키**: `stock_id` — 종목당 현재 등급 1건만 유지
 - **설계 결정**: 종목당 1건 유지(UPDATE 방식) — 등급 이력이 아닌 현재 상태 관리. 등급 변경 이력이 필요해지면 별도 이력 테이블 추가 검토
 - **DDL**: `V11__collector_create_stock_grades.sql`
+
+#### etf_representative_history
+
+중복 ETF 대표 교체 이력. 같은 기초지수를 추종하는 ETF 그룹에서 대표가 바뀔 때마다 한 행을 추가한다. analyzer의 모델 재학습 트리거 소스로 활용된다.
+
+- **주요 컬럼**:
+  - `group_key` VARCHAR(200) — `{거래소}:{기초지수코드}:{배수}:{방향}:{환헤지여부}` 형태의 5튜플 직렬화 값. ETF 그룹 식별자
+  - `stock_id` BIGINT — 신규 대표 종목의 `stocks.id` FK
+  - `prev_stock_id` BIGINT NULL — 이전 대표 종목의 `stocks.id` FK. 최초 선정 시 NULL
+  - `effective_from` DATETIME — 이 대표가 유효해진 시각 (주간 재계산 실행 시각)
+- **인덱스**: `(group_key, effective_from DESC)` — 그룹별 최신 대표 조회 최적화
+- **설계 결정**: append-only 이력 테이블. UPDATE 없음 — 교체 시 신규 행 INSERT만. `effective_to` 컬럼 없이 `effective_from` 기준 최신 1건을 현재 대표로 사용 (컬럼 수 최소화)
+- **DDL**: `V16__collector_create_etf_representative_history.sql`
 
 #### corporate_events
 
