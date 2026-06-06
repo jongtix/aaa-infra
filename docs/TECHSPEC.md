@@ -367,7 +367,7 @@
 | 1. 그룹 목록 조회 | KIS 관심종목 그룹 목록 API (`fetchGroups`) |
 | 2. 그룹별 종목 조회 | VirtualThread 병렬 처리. 실패 그룹은 skip (best-effort) |
 | 3. 중복 제거 | dedup 키: `jongCode + ":" + exchCode` |
-| 4. Market 판별 | `fid_mrkt_cls_code` + `exch_code` → Market enum ([ADR-021](ADR/ADR-021-market-enum-mapping.md) 참조) |
+| 4. Market 판별 | `fid_mrkt_cls_code` + `exch_code` → Market enum ([ADR-021](ADR/ADR-021-kis-market-code-mapping.md) 참조) |
 | 5. 종목 기본정보 조회 | VirtualThread 병렬 처리. 실패 시 warn 로그 + null 반환 (해당 종목 StockInfo 없이 진행) |
 | 6. upsert | `WatchlistWriter.upsertAll()` (`@Transactional`) |
 
