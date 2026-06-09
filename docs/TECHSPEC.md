@@ -87,8 +87,8 @@
 
 | 서비스 | 모듈 | 비활성화 시 영향 |
 |--------|------|-----------------|
-| collector | KIS 토큰 (계좌별) | 해당 계좌 API 호출 차단, 나머지 계좌·ML 추론·알림 정상 |
-| collector | KIS WebSocket (실시간) | 실시간 틱 수집 중단, REST 배치·ML 추론·알림 정상 |
+| collector | KIS Access Token (isa, REST) | 해당 계좌 REST API 호출 차단, 나머지 계좌·WebSocket·ML 추론·알림 정상 |
+| collector | KIS Approval Key (계좌별, WebSocket) | 해당 계좌 WebSocket 세션 실시간 틱 수집 중단, REST 배치·ML 추론·알림 정상 |
 | collector | 외부 API (환율/VIX 등) | 해당 피처 Fallback 또는 stale, 나머지 정상 |
 | analyzer | ML 추론 | 신호 생성 중단, 수집·알림(기존 신호)·주문 정상 |
 | notifier | 텔레그램 발송 | 알림 큐잉, 복구 후 요약 발송 |
@@ -460,7 +460,16 @@
 
 ### 3.8 KIS API 토큰 관리
 
-KIS API Access Token은 계좌(앱키)당 독립 발급·관리한다.
+KIS API는 Access Token과 Approval Key 두 가지 토큰을 관리한다. 계좌(앱키)당 독립 발급·관리된다.
+
+**토큰 종류 및 역할**
+
+| 토큰 | 사용처 | 발급 주기 | 설명 |
+|------|--------|----------|------|
+| Access Token | REST API 호출 | Lazy (최초 사용 시점) | 단일 계좌(isa) REST 호출용. 필요할 때만 발급 |
+| Approval Key | WebSocket 세션 | 매일 08:30 KST | 5개 계좌 모두 필요 (5개 WebSocket 세션 운영) |
+
+**설계 배경**: REST API는 isa 1계좌만 소비하므로, 5계좌 Access Token 일괄 발급은 불필요한 API 호출. Approval Key는 5개 WebSocket 세션을 유지하기 위해 매일 08:30 일괄 갱신 필요.
 
 **시크릿 보호**
 
@@ -484,26 +493,30 @@ KIS API Access Token은 계좌(앱키)당 독립 발급·관리한다.
 
 **토큰 특성**
 
-| 항목 | 값 |
-|------|-----|
-| 유효 기간 | 24시간 (KIS API 기준) |
-| 발급 API | `POST /oauth2/tokenP` |
-| 계좌 수 | 5개 (앱키 5개 독립 관리, [PRD 7.1절](PRD.md#71-kis-api-제약) 참조) |
+| 항목 | Access Token | Approval Key |
+|------|-------------|--------------|
+| 유효 기간 | 24시간 (KIS API 기준) | 24시간 (KIS API 기준) |
+| 발급 API | `POST /oauth2/tokenP` | `POST /oauth2/Approval` |
+| 발급 기준 | appkey + secret | appkey + secret |
+| 발급 전략 | Lazy (호출 시) | 매일 08:30 일괄 |
+| 계좌 수 | 1개 (isa만) | 5개 (앱키 5개 독립 관리) |
 
 **갱신 전략**
 
-| 경로 | 동작 |
-|------|------|
-| 정상 (스케줄) | 매일 장 시작 전 `@Scheduled` cron으로 5개 계좌 토큰 일괄 발급 |
-| 방어 (Lazy) | API 호출 시 401 응답 수신 → 즉시 재발급 후 원래 요청 재시도 |
-| 갱신 실패 | 최대 3회 재시도 (exponential backoff). 3회 실패 시 해당 계좌 안전 모드 진입 + 시스템봇 즉시 알림 |
+| 토큰 | 경로 | 동작 |
+|------|------|------|
+| Access Token | 정상 (Lazy) | `getValidToken(alias)` 최초 호출 시 발급 (캐시 미스) |
+| Access Token | 방어 (401) | API 호출 시 401 응답 수신 → 즉시 재발급 후 원래 요청 재시도 |
+| Approval Key | 정상 (스케줄) | 매일 08:30 `@Scheduled` cron으로 5개 계좌 일괄 발급 |
+| Approval Key | 방어 (WebSocket) | 승인 요청 거부 시 즉시 재발급 후 재연결 |
+| 모두 | 갱신 실패 | 최대 3회 재시도 (exponential backoff). 3회 실패 시 해당 계좌 안전 모드 진입 + 시스템봇 즉시 알림 |
 
 **동시성 제어**
 
 | 항목 | 내용 |
 |------|------|
 | 제어 단위 | 계좌 단위 JVM 락 |
-| 적용 경로 | 방어(Lazy) 갱신 — 동일 계좌에 대한 중복 재발급 방지 |
+| 적용 경로 | 방어(401) Access Token 재발급 — 동일 계좌에 대한 중복 재발급 방지 |
 | 구현 방식 | JVM ReentrantLock (단일 인스턴스 배포 전제) |
 | 전환 조건 | 다중 인스턴스 배포 결정 시 Redis 분산 락(SET NX + TTL)으로 교체 |
 

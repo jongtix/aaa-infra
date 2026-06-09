@@ -96,9 +96,10 @@ Phase 4 (aaa-trader: 반자동 주문)
 
 ### 1-2. KIS API 토큰 관리
 
-- 앱키 5개 독립 토큰 발급 및 Redis 저장 구현 ([TECHSPEC 3.8절](TECHSPEC.md#38-kis-api-토큰-관리))
-- 스케줄 갱신: 매일 장 시작 전 `@Scheduled` cron으로 일괄 발급
-- Lazy 갱신: 401 응답 시 즉시 재발급 후 재시도
+- 앱키 5개 독립 Approval Key (WebSocket용) 일괄 발급 및 Redis 저장 구현 ([TECHSPEC 3.8절](TECHSPEC.md#38-kis-api-토큰-관리))
+- Approval Key 스케줄 갱신: 매일 08:30 KST `@Scheduled` cron으로 5개 계좌 일괄 발급
+- Access Token Lazy 발급: `getValidToken(alias)` 최초 호출 시점에만 발급 (REST API는 isa 1계좌만 소비)
+- Access Token 401 방어: API 호출 시 401 응답 수신 → 즉시 재발급 후 재시도
 - 갱신 실패 처리: 최대 3회 재시도 → 실패 시 안전 모드 진입 + 로그 기록 (텔레그램 알림은 Phase 3 이후)
 
 ### 1-3. CI/CD 파이프라인
