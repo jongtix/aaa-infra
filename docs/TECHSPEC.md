@@ -829,7 +829,7 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 |------------|--------|--------|------------|
 | `stream:tick:domestic` | collector | notifier (타이밍 평가) | 국내 실시간 체결/호가 틱 (`symbol` 필드 포함) |
 | `stream:tick:overseas` | collector | notifier (타이밍 평가) | 해외 실시간 체결/호가 틱 (`symbol` 필드 포함) |
-| `stream:daily:complete` | collector | analyzer | 일봉 수집 완료 이벤트 (`market` 필드 포함: `domestic` / `overseas`) |
+| `stream:daily:complete` | collector | analyzer | 일봉 수집 완료 이벤트 (`market`: `domestic`/`overseas`, 완전성 메타 `attempted`/`succeeded`/`skipped` 종목 수 — SPEC-COLLECTOR-BATCH-001 REQ-BATCH-042) |
 | `stream:signal:domestic` | analyzer | notifier | 국내 매매 신호 (`symbol`, 등급, confidence 필드 포함) |
 | `stream:signal:overseas` | analyzer | notifier | 해외 매매 신호 (`symbol`, 등급, confidence 필드 포함) |
 | `stream:alert` | notifier | trader (Phase 4) | 발송 완료 알림 이벤트 (`tier` 필드 포함) |
