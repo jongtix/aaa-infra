@@ -572,13 +572,13 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 **접근 보안**:
 - Flyway 전용 계정과 서비스 런타임 계정을 분리 ([ADR-016](ADR/ADR-016-flyway-schema-migration.md))
   - `flyway`: SELECT, INSERT, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES (Flyway 마이그레이션 전용. `spring.flyway.user`로 지정)
-  - `collector`: SELECT, INSERT + UPDATE(stocks, stock_grades, backfill_status, short_sale_overseas만). DELETE/DDL 없음
+  - `collector`: SELECT, INSERT + UPDATE(stocks, stock_grades, short_sale_overseas, etf_metadata만). DELETE/DDL 없음 ([ADR-026](ADR/ADR-026-collector-grant-two-tier-model.md))
   - `notifier`: SELECT, INSERT + 필요 테이블 UPDATE. `notification_log`는 SELECT/INSERT만 (INSERT-ONLY)
   - `trader`: SELECT, INSERT + 필요 테이블 UPDATE. `order_log`는 SELECT/INSERT만 (INSERT-ONLY)
   - `analyzer`: SELECT, INSERT (trading_signals에 INSERT, 나머지는 SELECT)
 - 서비스 런타임 계정에 DELETE/DDL 권한을 부여하지 않는다. DELETE가 필요한 경우 별도 ADR로 결정
 - `order_log`, `notification_log` 테이블: 해당 서비스(trader, notifier)의 DB 사용자 권한에서 INSERT-ONLY를 DB 수준으로 강제
-- 시계열 데이터 테이블은 `INSERT IGNORE`로 중복 방지하며 UPDATE를 사용하지 않는다
+- 시계열 데이터 테이블은 `INSERT IGNORE`로 중복 방지하며 UPDATE를 사용하지 않는다 ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md))
 - root 계정 원격 접속 금지
 - 포트(3306) 호스트 바인딩 금지 — Docker 내부 네트워크에서만 접근 (`expose`만 사용, `ports` 미사용)
 - 비밀번호는 `.env`로 관리 (3.8절 시크릿 보호 참조)
@@ -641,6 +641,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
 - **인덱스**: `trade_date` 단독 — 특정 날짜의 전체 종목 cross-section 조회 최적화 (수익률 랭킹·시장 폭 지표 등 cross-sectional 피처 계산, 수집 데이터 품질 검증). `(stock_id, trade_date)` 유니크 키는 leading column이 `stock_id`이므로 날짜 단독 조건 커버 불가 ([ADR-019](ADR/ADR-019-timeseries-trade-date-index-strategy.md))
 - **설계 결정**: 가격 컬럼 `DECIMAL(18,4)` — 미국 주식 소수점 이하 가격과 한국 고가 종목(수십만 원대) 모두 커버. `volume`/`trading_value`는 `BIGINT DEFAULT 0` — 거래 정지일에도 레코드 존재 허용
+- **설계 결정**: `daily_ohlcv`는 원주가(unadjusted)를 저장한다 — 기업 이벤트로 소급 변경되지 않는 불변 데이터로 시계열 불변성을 확보하고, 배당락·주식분할 조정은 분석 시점에 `corporate_events` 기반으로 계산한다 ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md))
 - **DDL**: `V2__collector_create_daily_ohlcv.sql`
 
 #### market_indicators
@@ -952,7 +953,7 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 - 수익률 범위 조정 시점: Phase 2에서 실 데이터 수익률 분포 기반으로 재조정
 - 조정 기준 원칙: 시장별 클래스 간 균형, 단기/중기별 변동성 차이 반영, 경계값 근처 샘플의 레이블 민감도 검토 (Label Smoothing, 변동성 비례 HOLD 범위 등)
 - Strict Causality: 피처는 추론 시점에 실제로 사용 가능한 데이터만 사용한다 (No Look-Ahead Bias)
-- 조정 종가: 배당락·주식분할 발생 시 조정 종가 사용 여부는 Phase 2 착수 시 결정 [TBD]
+- 조정 종가: `daily_ohlcv`는 원주가(unadjusted)를 저장하고, 배당락·주식분할 조정은 analyzer가 `corporate_events` 기반으로 분석 시점에 계산한다 (store raw, adjust on read) ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md))
 
 **앙상블 조합 규칙**
 
