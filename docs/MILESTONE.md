@@ -165,6 +165,8 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 ### 1-7. KIS REST 배치 수집
 
 - 국내 배치: OHLCV 일봉, 투자자별 매매동향, 공매도, 신용잔고, 재무제표, 업종지수, 금리, 증시자금, 배당/증자, 투자의견, 뉴스 제목 ([TECHSPEC 3.2절](TECHSPEC.md#32-kis-api-국내-수집-상세))
+- 액면교체(액면분할/액면병합) 이벤트 수집 → `corporate_events`(EventType.SPLIT) 멱등 저장 — analyzer 분할 조정(2-4절)의 선행 데이터 (SPEC-COLLECTOR-BATCH-005가 SPEC-COLLECTOR-SPLIT-001을 대체) ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md) §선행/병행 조건)
+- 증자(유상/무상) 이벤트 수집은 **확정 소비처 부재로 보류** — collector는 `corporate_events`에 write-only(소비·이벤트 발행 없음), analyzer 미구현, 문서상 가격조정 입력은 배당락·분할(SPLIT)만 명시([TECHSPEC corporate_events](TECHSPEC.md#corporate_events)). analyzer 설계 구체화 후 수요 재판단 — 추후 논의 (소비처 조사 2026-06-16)
 - 해외 배치: OHLCV, 해외선물, 배당/권리, 뉴스 제목 ([TECHSPEC 3.3절](TECHSPEC.md#33-kis-api-해외-수집-상세))
 - Rate Limit 준수: 초당 20건/계좌 × 5계좌 = 100건 ([TECHSPEC 3.1절](TECHSPEC.md#31-kis-api-제약-및-수용-설계))
 - `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지)
@@ -182,7 +184,7 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 - FINRA Daily Short Volume, FINRA Short Interest 수집 ([TECHSPEC 3.5절](TECHSPEC.md#35-단일-소스-외부-api))
 - `disclosures` 테이블 생성
 - DART OpenAPI 공시 폴링 (분당 1000회 제한)
-- 한국은행 ECOS: 기준금리, CPI, GDP, 경상수지
+- 한국은행 ECOS: 기준금리, CPI, GDP, 경상수지, 국고채(3/5/10년)·회사채 금리 (KIS `comp_interest` 미반환분 보강 — BATCH-003 실측 한계). ECOS 외부연동 SPEC 미착수 — 추후 논의
 - FRED API: GDP, CPI, DFF, UNRATE, DGS10, VIXCLS (120 req/min)
 - Fallback 전환 시 Redis 카운터 기록 ([TECHSPEC 5.3절](TECHSPEC.md#53-redis-카운터-phase-12-성능-지표))
 - 거시경제/환율/VIX 과거 데이터 백필: 각 API 제공 범위 내 최대 과거까지 수집 ([TECHSPEC 3.9절](TECHSPEC.md#39-과거-데이터-백필-전략))
