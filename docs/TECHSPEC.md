@@ -263,12 +263,16 @@
 | 공매도 | REST (`short_sale_domestic`, `short_sale_overseas`) | 일별 |
 | 신용잔고/대차거래 | REST | 3개 이상 API |
 | 재무제표 | REST | 7개 이상 API: 매출/영업이익/EPS/BPS/ROE 등 |
-| 업종지수 | REST | KOSPI/KOSDAQ/KOSPI200, 7개 이상 API |
-| 금리종합 | REST (`comp_interest`) | 국채/회사채 금리 |
+| 업종지수 | REST (U 전용 `inquire-daily-indexchartprice`) | KOSPI(0001)/KOSDAQ(1001) 종합. **주식 일봉 API(J) 사용 불가** — 아래 주1 참조 |
+| 금리종합 | REST (`comp_interest`) | 단기 시장금리 (국내 CD·콜 등 + 해외 금리지표) — 국고채/회사채 미반환(실측), ECOS로 보강 |
 | 증시자금종합 | REST (`mktfunds`) | 고객예탁금/신용잔고/MMF |
 | 배당/증자/분할 | REST | ksdinfo 계열 12개 이상 API |
 | 투자의견/추정실적 | REST (`estimate_perform`, `invest_opinion`) | |
 | 뉴스 (제목만) | REST (`news_title`) | 본문 없음 |
+
+> **주1 (지수 OHLCV는 U 전용 API로만 수집 — SPEC-COLLECTOR-BATCH-003 실측 2026-06-14)**: 지수(KOSPI/KOSDAQ 종합 등) OHLCV는 **U 전용 API `inquire-daily-indexchartprice`(TR `FHKUP03500100`, `FID_COND_MRKT_DIV_CODE=U`)** 로 수집한다. 주식 일봉 API `inquire-daily-itemchartprice`(TR `FHKST03010100`, `FID_COND_MRKT_DIV_CODE=J`)는 지수코드에 대해 `rt_cd=0`(정상처리)이지만 **`output2`가 빈 배열(0건)** 을 반환하므로 지수 수집에 사용할 수 없다. 실호출 확인: 코드 `0001` → J API 0건 / U API 9건(예: `20260612` 종가 8123.62); 대조군 주식 `005930` → J API 9건(주식은 J 정상). 코스피 종합=`0001`, 코스닥 종합=`1001`(KIS 업종코드표).
+>
+> **주2 (per-stock 일봉/수급 배치 대상은 asset_type IN (STOCK, ETF)로 한정 — SPEC-COLLECTOR-BATCH-003 실측)**: per-stock 일봉/수급 배치(`daily_ohlcv`·`investor_trend`·`short_sale_domestic`·`credit_balance`)의 수집 대상은 `asset_type IN (STOCK, ETF)`로 한정한다. `asset_type=INDEX` 종목은 watchlist sync가 `stocks`에 이미 등록(시장축 종목)하나, per-stock 배치가 이를 J API로 호출하면 빈 응답만 받아 rate-limit을 낭비하고 0건이 저장된다. 따라서 INDEX 종목은 per-stock 배치 대상에서 제외하고, 지수 OHLCV는 U 전용 경로(시장축 배치)로 수집한다.
 
 ### 3.3 KIS API 해외 수집 상세
 
@@ -625,7 +629,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 #### stocks
 
-종목 마스터. 국내/해외 주식, ETF, 업종지수를 통합 관리한다. 수집 대상 종목의 기준 정보를 담으며, 다른 시계열 테이블이 FK로 참조하는 중심 테이블이다.
+종목 마스터. 국내/해외 주식, ETF, 업종지수를 통합 관리한다. 수집 대상 종목의 기준 정보를 담으며, 다른 시계열 테이블이 FK로 참조하는 중심 테이블이다. 지수는 watchlist sync가 `asset_type=INDEX`로 자동 등록한다 — 국내 종합지수는 `market=KRX`(코스피 `0001`, 코스닥 `1001`), 해외 지수는 `market=US`(SPX/COMP/.DJI 등). (SPEC-COLLECTOR-BATCH-003 실측 2026-06-14)
 
 - **주요 컬럼**: `symbol`(종목코드), `market`(시장, Java ENUM → VARCHAR 저장), `asset_type`(자산유형, Java ENUM → VARCHAR 저장), `active`(수집 활성 여부), `watchlist_removed_at`(관심목록 제거 시각, NULL=현재 수집 중)
 - **유니크 키**: `(symbol, market)` — 동일 종목코드가 시장별로 존재 가능 (예: 삼성전자 KRX vs OTC)
@@ -637,6 +641,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 종목별 일봉 OHLCV 시계열. 국내/해외 주식, ETF, 업종지수를 `stocks.asset_type`으로 구분하여 단일 테이블에 통합한다.
 
+- **지수 저장 (SPEC-COLLECTOR-BATCH-003 실측 2026-06-14)**: 업종/종합지수는 `asset_type=INDEX`로 저장한다. 국내 종합지수는 `market=KRX`(코스피 `0001`, 코스닥 `1001`), 해외 지수는 `market=US`(예: `SPX`, `COMP`, `.DJI`)로 watchlist sync가 등록한다(`KisMarketResolver` "U"→KRX·"N"→US, `StockAssetTypeClassifier` KRX/US→INDEX). 지수 OHLCV는 **U 전용 API `inquire-daily-indexchartprice`(FHKUP03500100)** 로만 수집한다(주식 일봉 J API는 지수코드에 빈 `output2` 반환 — §3.2 주1). per-stock 일봉/수급 배치는 `asset_type IN (STOCK, ETF)`로 대상을 한정하여 INDEX를 제외한다(§3.2 주2).
 - **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, 가격 4종(`DECIMAL(18,4)`), `volume`, `trading_value`
 - **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
 - **인덱스**: `trade_date` 단독 — 특정 날짜의 전체 종목 cross-section 조회 최적화 (수익률 랭킹·시장 폭 지표 등 cross-sectional 피처 계산, 수집 데이터 품질 검증). `(stock_id, trade_date)` 유니크 키는 leading column이 `stock_id`이므로 날짜 단독 조건 커버 불가 ([ADR-019](ADR/ADR-019-timeseries-trade-date-index-strategy.md))
@@ -720,7 +725,7 @@ KIS 종합시황공시 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 
 - **주요 컬럼**: `serial_no`(내용 조회용 일련번호), `published_at`, `provider_code`, `title`, `category_code`, `source`, `stock_code1`~`stock_code5`(관련 종목코드)
 - **유니크 키**: `serial_no` — KIS API 응답의 고유 식별자
 - **인덱스**: `published_at` — 시간 범위 조회 최적화
-- **설계 결정**: `stock_code1`~`stock_code5` 비정규화 구조 — KIS API 응답이 관련 종목코드를 정확히 5개 고정 필드로 제공하므로 별도 관계 테이블 없이 비정규화 저장. `stocks` FK 없음 — 종목코드가 `stocks` 마스터에 없는 경우도 있어 참조 무결성 강제 불가
+- **설계 결정**: `stock_code1`~`stock_code5` 비정규화 구조 — KIS news-title 응답은 관련 종목코드를 `iscd1`~`iscd10`(10개) 및 종목명 `kor_isnm1`~`kor_isnm10`으로 반환하나(SPEC-COLLECTOR-BATCH-003 v0.5.0 실측 2026-06-15 — 이전 "정확히 5개 고정 제공" 기술은 사실 오류로 정정), 뉴스 피처(종목별 카운트) 목적상 상위 5개로 충분하다고 판단하여 **상위 5개(`stock_code1`~`stock_code5`)만 비정규화 저장**한다(`iscd6`~`iscd10` 및 종목명은 미저장 — 종목명은 `stocks` 마스터로 대체). 별도 관계 테이블 없이 비정규화 저장. `stocks` FK 없음 — 종목코드가 `stocks` 마스터에 없는 경우도 있어 참조 무결성 강제 불가
 - **DDL**: `V9__collector_create_news_headlines.sql`
 
 #### analyst_estimates
@@ -770,6 +775,7 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 - **주요 컬럼**: `stock_id`(FK → stocks), `event_type`(DIVIDEND/RIGHTS_ISSUE/SPLIT/EARNINGS, Java ENUM → VARCHAR 저장), `event_date`(기준일), `event_subtype`, `pay_date`, `stock_pay_date`, `odd_pay_date`, `cash_amount`, `cash_rate`, `stock_rate`, `face_value`, `stock_kind`, `high_dividend_flag`
 - **유니크 키**: `(stock_id, event_type, event_date)` — 종목·이벤트유형·기준일 조합으로 1건 보장
 - **설계 결정**: Phase 1 수집 대상은 DIVIDEND에 한정 — 테이블 구조는 RIGHTS_ISSUE/SPLIT/EARNINGS 확장을 고려해 설계. 배당 외 이벤트 유형의 컬럼은 해당 이벤트 수집 시 활용
+- **후속 우선순위** (소비처 조사 2026-06-16): SPLIT은 가격조정(배당락·분할, §store-raw-adjust-on-read) 선행 데이터로 우선 — KIS 국내 SPLIT API discovery 선행. RIGHTS_ISSUE(증자)는 확정 소비처 부재(가격조정 입력은 배당락·분할만 명시, analyzer 미구현)로 수집 보류 — analyzer 설계 후 재판단
 - **DDL**: `V12__collector_create_corporate_events.sql`
 
 #### futures_daily
@@ -1138,7 +1144,8 @@ PRD 6.2절에 정의된 A/B/C/F 등급을 자동 분류하는 기준.
 | CPI (한국) | 한국은행 ECOS | 월 |
 | GDP 성장률 (한국) | 한국은행 ECOS | 분기 |
 | 경상수지 (한국) | 한국은행 ECOS | 월 |
-| 국채/회사채 금리 | KIS `comp_interest` | 일 |
+| 단기 시장금리 (CD·콜 등) | KIS `comp_interest` | 일 |
+| 국고채(3/5/10년)·회사채 금리 | 한국은행 ECOS | 일 |
 | 기준금리 (미국, DFF) | FRED | 일 |
 | 국채 10년물 (미국, DGS10) | FRED | 일 |
 | CPI (미국, CPIAUCSL) | FRED | 월 |
