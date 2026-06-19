@@ -126,6 +126,12 @@ dirs=(
     "${AAA_HDD_BASE}/logs/mysql"
     "${AAA_HDD_BASE}/logs/redis"
     "${AAA_HDD_BASE}/logs/aaa-collector"
+    # 관측성 스택(OBSV-001): 신규 bind-mount 소스 — 사전 생성 필요
+    "${AAA_HDD_BASE}/data/victoriametrics"
+    "${AAA_HDD_BASE}/data/alertmanager"
+    "${AAA_SSD_BASE}/config/victoriametrics"
+    "${AAA_SSD_BASE}/config/vmalert"
+    "${AAA_SSD_BASE}/config/alertmanager"
 )
 
 for dir in "${dirs[@]}"; do
@@ -163,6 +169,19 @@ for dir in "${chown_app_dirs[@]}"; do
     info "  chown $APP_UID:$APP_UID + chmod 750 $dir"
 done
 
+# 관측성(OBSV-001): Alertmanager는 nobody(65534)로 실행되며 nflog/silences를 /alertmanager에 기록.
+# VictoriaMetrics는 root 실행이라 데이터 디렉토리 chown 불필요.
+AM_UID=65534
+chown_am_dirs=(
+    "${AAA_HDD_BASE}/data/alertmanager"
+)
+
+for dir in "${chown_am_dirs[@]}"; do
+    chown $AM_UID:$AM_UID "$dir"
+    chmod 750 "$dir"
+    info "  chown $AM_UID:$AM_UID + chmod 750 $dir"
+done
+
 echo ""
 
 # =============================================================================
@@ -176,6 +195,9 @@ chown_config_dirs=(
     "${AAA_SSD_BASE}/config/mysql"
     "${AAA_SSD_BASE}/config/mysql/initdb.d"
     "${AAA_SSD_BASE}/config/redis"
+    "${AAA_SSD_BASE}/config/victoriametrics"
+    "${AAA_SSD_BASE}/config/vmalert"
+    "${AAA_SSD_BASE}/config/alertmanager"
 )
 
 for dir in "${chown_config_dirs[@]}"; do
@@ -205,12 +227,19 @@ echo "    ${AAA_SSD_BASE}/config/mysql/my.cnf"
 echo "    ${AAA_SSD_BASE}/config/mysql/initdb.d/01-init-collector.sh  (chmod +x 필수)"
 echo "    ${AAA_SSD_BASE}/config/redis/redis.conf"
 echo "    ${AAA_SSD_BASE}/config/redis/users.acl"
+echo "    ${AAA_SSD_BASE}/config/victoriametrics/scrape.yml"
+echo "    ${AAA_SSD_BASE}/config/vmalert/rules.yml"
+echo "    ${AAA_SSD_BASE}/config/alertmanager/alertmanager.yml"
 echo ""
 echo "  시크릿 파일 (배치 후 chmod 600 적용):"
 echo "    ${AAA_SSD_BASE}/secrets/.env.mysql"
 echo "    ${AAA_SSD_BASE}/secrets/.env.redis"
 echo "    ${AAA_SSD_BASE}/secrets/.env.common"
 echo "    ${AAA_SSD_BASE}/secrets/.env.collector"
+echo ""
+echo "  Alertmanager 토큰 파일 (값-전용: KEY= 없이 값만, 후행 개행 없이 — bot_token_file/chat_id_file로 직접 읽음):"
+echo "    ${AAA_SSD_BASE}/secrets/alertmanager.bot_token   (GitHub Actions TELEGRAM_BOT_TOKEN과 동일 운영봇 토큰 값, 신규 봇 불필요)"
+echo "    ${AAA_SSD_BASE}/secrets/alertmanager.chat_id     (시스템 chat id 값)"
 echo ""
 info "2) docker compose up -d 로 기동하세요."
 echo ""
