@@ -17,6 +17,11 @@ docs/.claude/
 .env
 .env.*
 !.env.example
+# Alertmanager value-only token secrets (real files live in ${AAA_SSD_BASE}/secrets/, never committed)
+alertmanager.bot_token
+alertmanager.chat_id
+!alertmanager.bot_token.example
+!alertmanager.chat_id.example
 
 # Docker
 docker-compose.override.yml
