@@ -1,0 +1,42 @@
+# =============================================================================
+# Alertmanager 라우팅 — 모든 알림 → 시스템봇(Telegram) 단일 receiver
+# SPEC-COLLECTOR-OBSV-001 TI-005 + TI-006 + TI-007
+# =============================================================================
+# 런타임 마운트: ${AAA_SSD_BASE}/config/alertmanager/alertmanager.yml → /etc/alertmanager/alertmanager.yml:ro
+#
+# [토큰 미커밋 — A안] Alertmanager는 config YAML 내 $ENV 치환을 지원하지 않는다.
+#   → docker-compose.yml의 compose 네이티브 secrets가 값-전용 파일
+#     ${AAA_SSD_BASE}/secrets/alertmanager.{bot_token,chat_id}를 컨테이너에 마운트.
+#   → bot_token_file/chat_id_file로 그 파일을 직접 읽는다(실값 미커밋, 경로만 기록).
+#   파일 경로(컨테이너 내부, compose secrets 기본 마운트):
+#     /run/secrets/am_bot_token   (0444, nobody 읽기 가능)
+#     /run/secrets/am_chat_id     (0444, nobody 읽기 가능)
+
+route:
+  receiver: system-bot-telegram
+  # DP5 보수 초기값(M5 라이브 튜닝 전제) — REQ-052 상태 전이 1회 발송은 AM 기본 동작이 충족,
+  #   repeat_interval은 미복구(지속) 장애의 재알림 주기(알림 피로 방지).
+  group_by: ["alertname", "batch"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: system-bot-telegram
+    telegram_configs:
+      # send_resolved: 장애 발생 1회 + 복구(resolved) 1회 발송(REQ-052 상태 전이).
+      - send_resolved: true
+        # bot_token_file/chat_id_file: 실값 미커밋, compose secrets로 마운트된 값-전용 파일에서 로드.
+        bot_token_file: /run/secrets/am_bot_token
+        chat_id_file: /run/secrets/am_chat_id
+        parse_mode: HTML
+        # parse_mode: HTML에서 summary/description의 <, >, & 가 Telegram HTML 파싱을 깨뜨려
+        #   실제 알림이 무음 전송 실패할 수 있으므로 html 이스케이프를 적용한다(batch 라벨 등 동적값 방어).
+        message: |
+          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>[AAA collector] {{ .Status | toUpper }}</b>
+          {{ range .Alerts }}• {{ .Annotations.summary | html }}
+          {{ .Annotations.description | html }}
+          {{ end }}
+
+# DP7 발송 실패 복원력(REQ-054): Alertmanager 내장 재시도(미복구 alert를 보류 상태로 유지하여
+#   다음 평가/repeat_interval 주기에 자연 재시도) + 발송 실패 AM 로그에 기록. 영속 큐잉·보조 채널 미도입(후속).
