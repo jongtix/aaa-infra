@@ -5,6 +5,10 @@
 
 # Claude Code
 .claude/settings.local.json
+docs/.claude/
+
+# MoAI (정본 산출물은 aaa/.moai 에 위치 — 이 레포에서 moai 실행 시 잘못 생기는 stray 무시)
+.moai/
 
 # OS
 .DS_Store
