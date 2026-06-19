@@ -1,0 +1,109 @@
+# =============================================================================
+# vmalert 알림 룰 — collector 수집 정상성 판정 (Prometheus alerting-rule 포맷)
+# SPEC-COLLECTOR-OBSV-001 TI-003 + TI-004
+# =============================================================================
+# vmalert가 `-rule=/etc/vmalert/rules.yml`로 로드한다.
+# 런타임 마운트: ${AAA_SSD_BASE}/config/vmalert/rules.yml → /etc/vmalert/rules.yml:ro
+#
+# 메트릭 노출명은 collector 소스 Grep 실측(tasks-infra [D5]) — 추론 금지:
+#   aaa_collector_market_open                        (gauge 1/0, batch 라벨 없음)
+#   aaa_collector_market_gate_last_update_seconds    (gauge KST epoch, 부팅 후 미갱신 시 0.0)
+#   aaa_collector_batch_completeness_ratio           (gauge, label batch)
+#   aaa_collector_batch_last_load_seconds            (gauge KST epoch, label batch)
+#   up{job="collector"}                              (VM 스크랩 합성 메트릭)
+#
+# 휴장 억제(REQ-043) 핵심 = `and on() aaa_collector_market_open == 1` 조인:
+#   market_open 은 batch 라벨이 없고 batch 메트릭은 batch 라벨이 있어 라벨셋이 다르다.
+#   `and on()`(공집합 매칭)으로 라벨 무시 교집합을 만들어 "장중일 때만" 게이팅한다.
+#   게이트가 0이거나 market_open 시계열이 부재(absent)하면 `and on() ...==1`이 빈 벡터가 되어
+#   (a)/(b) 룰은 발화하지 않는다 → 휴장/게이트부재 자동 억제(REQ-043 구조적 충족).
+
+groups:
+  # ---------------------------------------------------------------------------
+  # 그룹 1: collector 생존 — 게이트 무관(휴장 중에도 발화)
+  # ---------------------------------------------------------------------------
+  - name: collector-liveness
+    # 평가 주기: 스크랩 30s와 정합
+    interval: 30s
+    rules:
+      # TI-003 collector-down: 연속 스크랩 실패(30s×3=90s)
+      # [D1·HARD] job="collector"는 scrape.yml의 job_name: collector와 일치 필수.
+      - alert: CollectorDown
+        expr: up{job="collector"} == 0
+        for: 90s
+        labels:
+          severity: critical
+          component: collector
+        annotations:
+          summary: "collector 스크랩 실패(다운) — 90s 연속"
+          description: "VictoriaMetrics가 collector /actuator/prometheus 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 2: 수집 미달/정지 — 장중 게이트 ANDing(휴장 억제)
+  # ---------------------------------------------------------------------------
+  - name: collector-collection-gap
+    interval: 30s
+    rules:
+      # TI-004a 충족률 미달: ratio < 0.70 AND 장중
+      # 초기값 0.70(spec AC-8, M5 라이브 튜닝 전제). batch 라벨별 개별 발화.
+      - alert: CollectorBatchCompletenessLow
+        expr: |
+          (aaa_collector_batch_completeness_ratio < 0.70)
+          and on() (aaa_collector_market_open == 1)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "배치 충족률 미달 — {{ $labels.batch }} < 70%"
+          description: "장중(market_open==1) 배치 {{ $labels.batch }} 충족률 {{ $value }} < 0.70. 휴장 시 억제됨."
+
+      # TI-004b 신선도 갭: 마지막 적재 후 경과 > 28h AND 장중
+      # 28h = 일1회 배치 cron(~24h) + 마진(spec AC-8, M5 튜닝 전제).
+      - alert: CollectorBatchStale
+        expr: |
+          ((time() - aaa_collector_batch_last_load_seconds) > 28 * 3600)
+          and on() (aaa_collector_market_open == 1)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "배치 신선도 갭 — {{ $labels.batch }} > 28h 미적재"
+          description: "장중(market_open==1) 배치 {{ $labels.batch }} 마지막 적재 후 28h 초과 경과. 휴장 시 억제됨."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 3: 게이트 신선도 — 억제·collector-down과 독립 발화(REQ-046)
+  # ---------------------------------------------------------------------------
+  - name: collector-gate-health
+    interval: 30s
+    rules:
+      # TI-004d 게이트-staleness: 게이트가 set 된 적 있으나(>0) 30h 초과 미갱신.
+      # 게이트 신선도 임계 30h = spec.md §2.4 REQ-034 단일 출처(게이트 cron 일1회 ~24h + 마진 6h).
+      # [HARD] `> 0` 가드: boot-unset(==0)을 제외 — x=0이면 time()-x는 항상 30h 초과라 오발하므로 분리.
+      # [D3] cron 연속 실패는 별도 카운터 없이 이 staleness가 포섭(last-update 정지=stale).
+      - alert: CollectorGateStale
+        expr: |
+          ((time() - aaa_collector_market_gate_last_update_seconds) > 30 * 3600)
+          and (aaa_collector_market_gate_last_update_seconds > 0)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "시장 세션 게이트 stale — 30h 초과 미갱신"
+          description: "collector UP이나 게이트 last-update가 30h 초과 미갱신(cron 침묵 실패 포함). 억제·다운과 독립 발화."
+
+      # TI-004d boot-unset: 게이트가 부팅 후 한 번도 설정되지 않음(==0).
+      # [D3·HARD] `for: 26h` — 게이트 cron은 일1회(~24h). 26h(24h 사이클 + 마진 2h) 동안 줄곧 0이면
+      #   "한 사이클이 지나도 게이트가 끝내 설정되지 않음"으로 판정. 매 부팅/배포 직후에는
+      #   다음 cron(최대 ~24h 내)이 곧 게이트를 set 하므로 26h 임계를 넘기지 못해 오발하지 않는다.
+      - alert: CollectorGateUnset
+        expr: aaa_collector_market_gate_last_update_seconds == 0
+        for: 26h
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "시장 세션 게이트 미설정 고착 — 부팅 후 26h 미갱신"
+          description: "게이트 last-update가 부팅 후 26h(>1 cron 사이클) 동안 0 유지. 부팅 직후 오발 방지용 26h for 적용."
