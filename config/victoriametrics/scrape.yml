@@ -1,0 +1,20 @@
+# =============================================================================
+# VictoriaMetrics promscrape 설정 — collector 수집 정상성 메트릭 스크랩
+# SPEC-COLLECTOR-OBSV-001 TI-001
+# =============================================================================
+# VM가 `-promscrape.config=/etc/victoriametrics/scrape.yml`로 로드한다(Prometheus 호환 포맷).
+# 런타임 마운트: ${AAA_SSD_BASE}/config/victoriametrics/scrape.yml → /etc/victoriametrics/scrape.yml:ro
+global:
+  # 스크랩 주기 30s: collector healthcheck(30s)와 정합, NAS(N100) 부하 보수.
+  # collector-down 룰의 `for: 90s`(=30s×3 연속 실패)와 결합되므로 변경 시 룰도 함께 조정.
+  scrape_interval: 30s
+
+scrape_configs:
+  # [D1·HARD] job_name 은 반드시 `collector` — vmalert collector-down 룰의
+  # `up{job="collector"}==0` 과 일치해야 한다. 불일치 시 collector-down 알림 영구 미발화.
+  - job_name: collector
+    metrics_path: /actuator/prometheus
+    scheme: http
+    static_configs:
+      # aaa-network 내부 DNS. collector는 expose 8080(호스트 미공개).
+      - targets: ["aaa-collector:8080"]
