@@ -117,7 +117,7 @@ Watchtower는 CD 역할에서 제거된다.
 
   **Telegram 토큰 관리 방식**:
 
-  - 봇 토큰(`TELEGRAM_BOT_TOKEN`)과 채팅 ID(`TELEGRAM_CHAT_ID`)는 GitHub Actions repo secret으로 관리한다.
+  - 시스템봇 토큰(`TELEGRAM_SYSTEM_BOT_TOKEN`)과 운영자 chat ID(`TELEGRAM_OPERATOR_CHAT_ID`)는 GitHub Actions repo secret으로 관리한다.
   - Deploy job의 `env:` 블록을 통해서만 주입한다. 스텝 단위 env 선언이나 인라인 참조는 사용하지 않는다.
   - `echo "::add-mask::$BOT_TOKEN"` / `echo "::add-mask::$CHAT_ID"`로 명시적 마스킹을 적용하고, `set +x`로 명령어 echo를 비활성화하여 로그에 값이 출력되지 않도록 한다.
   - `curl -K -` 패턴으로 토큰을 URL에 직접 삽입하지 않고 stdin으로 전달하여, curl의 verbose 로그나 프로세스 목록에서도 토큰이 노출되지 않는다.

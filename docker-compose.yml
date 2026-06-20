@@ -265,7 +265,7 @@ services:
       start_period: 30s
 
 # --- Secrets: Alertmanager Telegram 토큰 (값-전용 파일, 미커밋 NAS 런타임 시크릿) ---
-# 각 파일 내용은 값만(KEY= 없음, 후행 개행 없이). 기존 운영봇 TELEGRAM_BOT_TOKEN/CHAT_ID 값 재사용
+# 각 파일 내용은 값만(KEY= 없음, 후행 개행 없이). 기존 시스템봇 TELEGRAM_SYSTEM_BOT_TOKEN/TELEGRAM_OPERATOR_CHAT_ID 값 재사용
 # (신규 봇 발급 없음). 배포 전 NAS에 직접 배치 — scripts/init-nas.sh 안내 참조.
 # 컨테이너 내부엔 /run/secrets/am_bot_token · /run/secrets/am_chat_id 로 마운트된다.
 secrets:

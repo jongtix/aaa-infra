@@ -141,13 +141,15 @@
 | 봇 | 용도 | 발신 서비스 |
 |----|------|-------------|
 | 매매봇 | Tier 1/2 신호 알림, 인라인 버튼, 주문 결과, 주문 명령 수신, 일일 리포트 | notifier, trader |
-| 시스템봇 | 장애 알림, 안전 모드, 자동 복구 결과, 자원 경고 | notifier, collector, analyzer |
+| 시스템봇 | 장애 알림, 안전 모드, 자동 복구 결과, 자원 경고, CD 배포 실패 알림, 수집 정상성 알림 | notifier, collector, analyzer, CD 워크플로(GitHub Actions), Alertmanager(OBSV-001) |
+
+**현재 구성** (2026-06-20): 시스템봇 = `@aaa_notifier_bot`(BotFather, 1:1 DM, 표시이름 `AAA System`). 원래 notifier용으로 만든 봇을 시스템봇으로 재배정 확정 — CD·OBSV가 토큰 공유, 코드는 토큰만 참조(봇 username 미참조). 매매봇은 Phase 3 신규 생성(`TELEGRAM_TRADE_BOT_TOKEN`). chat_id는 운영자 user id로 두 봇 공통.
 
 **독립성 보장**:
 - 각 봇은 별도 Bot Token으로 운영
 - 한쪽 봇의 토큰 만료·rate limit·장애가 다른 봇에 영향 없음
 - 환경 변수로 토큰 분리 관리
-- [TBD - Phase 3 착수 전] 봇 토큰 유출 시 대응 절차 정의 (BotFather 즉시 재발급 → 환경 변수 교체 → 서비스 재시작)
+- [TBD - Phase 3 착수 전] 봇 토큰 유출 시 대응 절차 정의 (BotFather 즉시 재발급 → **토큰 사본 전체 교체**: GitHub Actions repo secret `TELEGRAM_SYSTEM_BOT_TOKEN` + NAS 값-전용 파일 `${AAA_SSD_BASE}/secrets/alertmanager.bot_token` → 서비스/워크플로 재적용)
 
 ---
 
@@ -1441,8 +1443,8 @@ Repository Secrets:
 
 | 시크릿명 | 설명 | 발급 방법 |
 |----------|------|-----------|
-| `TELEGRAM_BOT_TOKEN` | Telegram 알림 봇 토큰. CD 배포 실패(마이그레이션 포함) 시 수동 롤백 알림에 사용. Phase 3 aaa-notifier에서도 동일 시크릿 사용 예정 | BotFather → `/newbot` 명령으로 발급 |
-| `TELEGRAM_CHAT_ID` | Telegram 알림 수신 chat ID (`TELEGRAM_BOT_TOKEN`과 동일 용도) | `@userinfobot` 또는 Bot API `getUpdates`로 확인 |
+| `TELEGRAM_SYSTEM_BOT_TOKEN` | 시스템봇 토큰(현 `@aaa_notifier_bot`, 표시이름 AAA System). CD 배포 실패 알림 + SPEC-COLLECTOR-OBSV-001 수집정상성 알림에 사용. Phase 3 aaa-notifier 장애/자원경고에서도 동일 시크릿 사용 예정 | BotFather → `/newbot` 명령으로 발급 |
+| `TELEGRAM_OPERATOR_CHAT_ID` | 운영자 수신 chat ID. 1:1 DM이라 운영자 user id와 동일 — 봇 무관, 매매봇도 재사용 | `@userinfobot` 또는 Bot API `getUpdates`로 확인 |
 
 ### 10.3 Docker Compose 구성
 
