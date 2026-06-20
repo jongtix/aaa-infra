@@ -9,8 +9,12 @@
 #     ${AAA_SSD_BASE}/secrets/alertmanager.{bot_token,chat_id}를 컨테이너에 마운트.
 #   → bot_token_file/chat_id_file로 그 파일을 직접 읽는다(실값 미커밋, 경로만 기록).
 #   파일 경로(컨테이너 내부, compose secrets 기본 마운트):
-#     /run/secrets/am_bot_token   (0444, nobody 읽기 가능)
-#     /run/secrets/am_chat_id     (0444, nobody 읽기 가능)
+#     /run/secrets/am_bot_token   (호스트 파일 권한 미러 — 0644 필요, 아래 주의)
+#     /run/secrets/am_chat_id     (호스트 파일 권한 미러 — 0644 필요, 아래 주의)
+#   [배포 실측 2026-06-20] compose(non-swarm)는 secrets의 uid/gid/mode를 무시한다(기동 시 경고).
+#     → /run/secrets/* 는 호스트 파일 권한을 그대로 미러하므로, 호스트
+#       ${AAA_SSD_BASE}/secrets/alertmanager.{bot_token,chat_id}를 0644로 둬야
+#       nobody(65534) 실행 AM이 읽는다(0600이면 NOT_READABLE). secrets 디렉토리 700이 호스트 노출 차단.
 
 route:
   receiver: system-bot-telegram
