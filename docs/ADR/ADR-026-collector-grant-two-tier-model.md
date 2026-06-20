@@ -42,9 +42,10 @@ ADR-022가 명시한 "nameKo/nameEn만 갱신"은 **애플리케이션 코드 �
 | `stock_grades` | 상태 — 재등급 시 갱신 (`StockGradePersistService`) |
 | `short_sale_overseas` | FINRA Daily/Short Interest 이중 소스 UPSERT 병합 ([ADR-017](ADR-017-short-sale-table-split.md), TECHSPEC §4) |
 | `etf_metadata` | 메타 upsert — `EtfMetadataWriter.upsert()`의 `existing.updateFrom()` |
+| `backfill_status` | 상태 — 백필 진행점 전진(`last_collected_date`/`attempt_count`/`status` UPDATE). 시딩=INSERT IGNORE(Tier-1), 진행점 전진=UPDATE(Tier-2) (SPEC-COLLECTOR-BACKFILL-001, 아래 개정 참고) |
 
 TECHSPEC §4(`:575`)는 두 가지를 정정한다:
-- **`backfill_status` 제거** — 해당 테이블은 존재하지 않는다(마이그레이션 부재). 미구현 테이블을 권한 목록에 두지 않는다.
+- **`backfill_status` 제거** — (본 ADR 제정 시점 2026-06-13) 해당 테이블은 존재하지 않았다(마이그레이션 부재). 미구현 테이블을 권한 목록에 두지 않았다. → **2026-06-20 재추가**: SPEC-COLLECTOR-BACKFILL-001이 `backfill_status` 테이블(V24)을 생성하면서 Tier-2로 재등재한다(아래 개정 절 참고).
 - **`etf_metadata` 추가** — 실제 갱신되나 목록에서 누락돼 있었다.
 
 나머지 12개 테이블(`daily_ohlcv`, `market_indicators`, `investor_trend`, `credit_balance`, `short_sale_domestic`, `macro_indicators`, `news_headlines`, `analyst_estimates`, `corporate_events`, `futures_daily`, `financials`, `etf_representative_history`)은 Tier 1(INSERT 전용)로 둔다. `financials`/`analyst_estimates`/`news_headlines`는 현재 증거상 INSERT 전용이며, 갱신 필요가 확인되면 결정 3의 검증이 포착한다.
@@ -87,7 +88,7 @@ collector는 어떤 테이블에도 DELETE 권한을 갖지 않는다. 물리 �
 
 ## 결과
 
-collector 권한을 테이블 단위 2-tier로 확정하고, 누락된 Tier-2 UPDATE GRANT(`stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata`)를 복원한다. TECHSPEC §4를 정정(`backfill_status` 제거, `etf_metadata` 추가)하고, init 스크립트를 레포로 버전 관리하며 라이브 GRANT 일치를 검증한다. 이로써 마스터/상태 테이블의 UPDATE 실패(잠재 1142)가 해소되고, 시계열·로그 테이블의 DB 강제 불변성은 유지된다.
+collector 권한을 테이블 단위 2-tier로 확정하고, 누락된 Tier-2 UPDATE GRANT(`stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata`, 그리고 2026-06-20 개정으로 `backfill_status`)를 복원한다. TECHSPEC §4를 정정(`backfill_status` 제거, `etf_metadata` 추가)하고, init 스크립트를 레포로 버전 관리하며 라이브 GRANT 일치를 검증한다. 이로써 마스터/상태 테이블의 UPDATE 실패(잠재 1142)가 해소되고, 시계열·로그 테이블의 DB 강제 불변성은 유지된다.
 
 ### 긴급도
 
@@ -104,3 +105,30 @@ collector의 Tier-2 UPDATE 누락은 **현재 production에서 watchlist sync(�
 - `01-init-collector.sh`를 aaa-infra 레포로 이관 + Tier 모델 반영
 - GRANT 일치 검증 메커니즘 구현(통합 테스트 또는 배포 헬스체크)
 - TECHSPEC §4 정정(`:575` — `backfill_status` 제거, `etf_metadata` 추가, 본 ADR 링크)
+
+---
+
+## 개정 — 2026-06-20: `backfill_status` Tier-2 재등재 (SPEC-COLLECTOR-BACKFILL-001)
+
+본 ADR 제정 시점(2026-06-13)에는 `backfill_status` 테이블이 존재하지 않아 Tier-2 목록에서 제거됐다(결정 2). SPEC-COLLECTOR-BACKFILL-001이 KIS 과거 데이터 백필을 도입하며 `backfill_status` 테이블(마이그레이션 V24, aaa-collector)을 생성했고, 이에 따라 Tier-2로 재등재한다.
+
+### 권한 구분 — 시딩(INSERT)과 진행점 전진(UPDATE)
+
+`backfill_status`는 두 가지 쓰기 경로가 권한 티어를 가른다.
+
+- **시딩 = INSERT IGNORE (Tier-1로 충분)**: cron 진입부에서 활성 관심종목 × 시장별 data_table 누락 행을 `INSERT IGNORE`로 생성한다. UPDATE 권한이 필요 없다.
+- **진행점 전진 = UPDATE (Tier-2 필요)**: 윈도우 1구간 커밋 시 `last_collected_date`/`attempt_count`/`status`를 제자리 갱신한다. 이 경로가 Tier-2 UPDATE 권한을 요구하므로 `backfill_status`를 Tier-2 허용목록에 둔다. (이는 결정 1의 분류 규칙 "행이 쓰인 뒤 제자리 갱신되는가? → Yes" 그대로다.)
+
+`ON DUPLICATE KEY UPDATE`는 사용하지 않는다(시딩은 INSERT IGNORE, 진행점은 평이한 UPDATE). 따라서 Tier-1 INSERT IGNORE 회귀 가드(`Tier1InsertIgnoreGuardTest`)의 허용목록에는 `backfill_status`를 추가하지 않는다 — 해당 가드는 비-허용목록 테이블의 `ON DUPLICATE KEY UPDATE` 사용만 차단하며, `backfill_status`는 그 패턴을 쓰지 않으므로 가드 대상이 아니다.
+
+### 적용 순서 (스키마 생성 후 root 수동 1회)
+
+GRANT는 결정 3의 버전관리 원칙대로 코드(`config/mysql/grants/collector-tier2-grants.sql`)로 관리하며, 테이블 생성 이후 root로 적용한다.
+
+1. **initdb.d** (`01-init-collector.sh`) — DB 단위 `SELECT, INSERT ON aaa.*` (MySQL 최초 init, 스키마 생성 전).
+2. **collector Flyway** — `backfill_status` 테이블 생성(V24). aaa-collector 부팅 시 자동.
+3. **`collector-tier2-grants.sql`** — 테이블 단위 `GRANT UPDATE ON aaa.backfill_status` (스키마 생성 후 root 수동 1회). MySQL 8.4는 미존재 테이블에 테이블 단위 GRANT를 거부(ERROR 1146)하므로 Flyway 이후여야 한다.
+
+### 기동 self-check 연동 (CR-01)
+
+aaa-collector `DbGrantVerifier.TIER2_TABLES`에 `backfill_status`를 추가했다(별도 레포 커밋). 이 root 수동 GRANT가 누락된 채 부팅하면 기동 self-check가 fail-fast(부팅 실패)한다 — 정상 부팅 후 진행점 UPDATE만 SQL 1142로 침묵 실패하는 무한루프를 기동 시점에 차단한다(REQ-BACKFILL-035a).
