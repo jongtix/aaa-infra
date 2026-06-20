@@ -157,7 +157,10 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    # read_only:true + tmpfs:/tmp는 TI-009 라이브 헬스 검증 후 적용 검토(데이터는 마운트 볼륨이라 호환 가능성 높음).
+    # [적용 2026-06-20] TI-009 라이브 헬스 검증(e2e firing 텔레그램 수신) 통과 후 적용. 데이터는 HDD 볼륨 마운트라 호환.
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       # wget -qO-: stdout 출력만(디스크 미기록) → read-only FS와도 호환. 이미지에 /bin/sh·wget 존재 확인됨.
       test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:8428/health | grep -q OK"]
@@ -237,8 +240,11 @@ services:
     #   기본 0444로 마운트돼 nobody(65534)가 읽을 수 있다(bind-mount uid 처리 불요).
     #   이미지 기본 CMD(--config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager)가
     #   본 마운트 경로와 일치하므로 entrypoint/command 오버라이드 불필요.
-    # 시크릿 소유권을 AM 런타임 유저 nobody(65534)로 고정·소유자 읽기전용(0400).
-    #   주의: 65534에 결합됨 — 향후 이미지가 런타임 유저를 변경하면 uid/gid 재검토 필요.
+    # [배포 실측 2026-06-20] compose(non-swarm)는 secrets의 uid/gid/mode를 무시한다(기동 시 경고).
+    #   → /run/secrets/* 는 호스트 파일 권한을 그대로 미러하므로, 호스트
+    #     ${AAA_SSD_BASE}/secrets/alertmanager.{bot_token,chat_id}를 0644로 둬야
+    #     nobody(65534) 실행 AM이 읽는다(0600이면 NOT_READABLE). secrets 디렉토리 700이 호스트 노출 차단.
+    #   아래 uid/gid/mode는 Swarm 전용이라 현재 무효지만 의도 문서화 겸 유지.
     secrets:
       - source: am_bot_token
         uid: "65534"
@@ -255,7 +261,10 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    # read_only:true + tmpfs:/tmp는 TI-009 라이브 헬스 검증 후 적용 검토(데이터는 마운트 볼륨이라 호환 가능성 높음).
+    # [적용 2026-06-20] TI-009 라이브 헬스 검증(e2e firing 텔레그램 수신) 통과 후 적용. 데이터는 HDD 볼륨 마운트라 호환.
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       # Alertmanager /-/healthy → "OK". 이미지에 /bin/sh·wget 존재 확인됨.
       test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:9093/-/healthy | grep -q OK"]
