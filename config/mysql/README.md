@@ -10,7 +10,7 @@ collector 권한은 테이블 단위 2-tier로 관리한다. 컬럼 단위 GRANT
 | Tier | 성격 | 권한 | 대상 |
 |------|------|------|------|
 | Tier-1 | 한 번 쓰면 불변(시계열·이벤트·로그) | `SELECT, INSERT` (db 단위) | `daily_ohlcv` 등 12개 |
-| Tier-2 | 제자리 갱신이 본질(마스터·상태) | `SELECT, INSERT` + 테이블 `UPDATE` | `stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata` |
+| Tier-2 | 제자리 갱신이 본질(마스터·상태) | `SELECT, INSERT` + 테이블 `UPDATE` | `stocks`, `stock_grades`, `short_sale_overseas`, `etf_metadata`, `backfill_status` |
 
 collector는 어떤 테이블에도 `DELETE`/DDL을 갖지 않는다(소프트 삭제 — ADR-022 / ADR-026 결정 4).
 
