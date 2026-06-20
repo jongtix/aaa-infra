@@ -45,3 +45,28 @@
 - [x] Docker Compose `up` 시 MySQL, Redis 정상 기동
 - [x] GitHub Push → GHCR 빌드 → GitHub Actions Deploy 자동 배포 동작 확인
 - [x] `.env.*` 파일이 git 커밋에 포함되지 않음을 pre-commit hook으로 검증
+
+---
+
+## Phase 1: 수집 관측성 (SPEC-COLLECTOR-OBSV-001)
+
+### 1-O1. collector 계측 (M1+M3 — aaa-collector)
+- [x] 틱 수집 메트릭 (`aaa_collector_batch_completeness_ratio`, `aaa_collector_batch_last_load_seconds`)
+- [x] 시장 게이트 메트릭 (`aaa_collector_market_open`, `aaa_collector_market_gate_last_update_seconds`)
+- [x] INSERT IGNORE 침묵 드롭 행별 캡처 (warning-count 관측성)
+- [x] `/actuator/prometheus` 엔드포인트 노출
+
+### 1-O2. 관측성 인프라 스택 (M2+M4 — aaa-infra, OBSV-001)
+- [x] VictoriaMetrics 단노드 서비스 추가 + collector 스크랩 설정 (`scrape_interval: 30s`)
+- [x] vmalert 서비스 추가 + 룰 5개 (`CollectorDown`/`CompletenessLow`/`BatchStale`/`GateStale`/`GateUnset`)
+- [x] Alertmanager 서비스 추가 + 시스템봇 Telegram receiver (`bot_token_file`/`chat_id_file`)
+- [x] compose 네이티브 `secrets:` 토큰 주입 (값-전용 파일, `chmod 644` 필수)
+- [x] `read_only: true` + `tmpfs: /tmp` 전 OBSV 컨테이너 적용
+- [x] `init-nas.sh` OBSV 디렉토리·토큰 파일 프로비저닝 안내 추가
+- [x] NAS 수동 배포 완료 (SMB 복사, 2026-06-20)
+
+### 완료 기준
+- [x] VM → collector 스크랩 `up` 실측 (121 samples)
+- [x] RAM 실사용 합 ~53M < limit 384M (TI-008)
+- [x] vmalert-tool unittest 11/11 SUCCESS (`config/vmalert/rules_test.yaml`)
+- [x] 라이브 CollectorDown firing → AM → 시스템봇 텔레그램 FIRING 수신·resolved 해소 (TI-009, 2026-06-20)
