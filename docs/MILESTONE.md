@@ -167,7 +167,8 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 - 국내 배치: OHLCV 일봉, 투자자별 매매동향, 공매도, 신용잔고, 재무제표, 업종지수, 금리, 증시자금, 배당/증자, 투자의견, 뉴스 제목 ([TECHSPEC 3.2절](TECHSPEC.md#32-kis-api-국내-수집-상세))
 - 액면교체(액면분할/액면병합) 이벤트 수집 → `corporate_events`(EventType.SPLIT) 멱등 저장 — analyzer 분할 조정(2-4절)의 선행 데이터 (SPEC-COLLECTOR-BATCH-005가 SPEC-COLLECTOR-SPLIT-001을 대체) ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md) §선행/병행 조건)
 - 증자(유상/무상) 이벤트 수집은 **확정 소비처 부재로 보류** — collector는 `corporate_events`에 write-only(소비·이벤트 발행 없음), analyzer 미구현, 문서상 가격조정 입력은 배당락·분할(SPLIT)만 명시([TECHSPEC corporate_events](TECHSPEC.md#corporate_events)). analyzer 설계 구체화 후 수요 재판단 — 추후 논의 (소비처 조사 2026-06-16)
-- 해외 배치: OHLCV, 해외선물, 배당/권리, 뉴스 제목 ([TECHSPEC 3.3절](TECHSPEC.md#33-kis-api-해외-수집-상세))
+- 해외 배치 OHLCV 일봉: 미국 STOCK+ETF per-stock 수집 (SPEC-COLLECTOR-OVERSEAS-OHLCV-001 — 완료)
+- 해외 배치 잔여: 해외선물, 배당/권리, 뉴스 제목 ([TECHSPEC 3.3절](TECHSPEC.md#33-kis-api-해외-수집-상세))
 - Rate Limit 준수: 초당 20건/계좌 × 5계좌 = 100건 ([TECHSPEC 3.1절](TECHSPEC.md#31-kis-api-제약-및-수용-설계))
 - `@Scheduled` cron 표현식만 사용 (`fixedDelay` 금지)
 - 일봉 수집 완료 시 `stream:daily:complete` 이벤트 발행 (`market` 필드: `domestic` / `overseas`) ([TECHSPEC 5.1절](TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스))
@@ -191,11 +192,11 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 
 ### 1-9. 장애 감지 및 시스템 알림
 
-- 수집 정상 여부 Redis 카운터 추적 (마지막 수집 타임스탬프 또는 분당 수집 건수) ([TECHSPEC 10.4절](TECHSPEC.md#104-모니터링-전략))
-- 장중 일정 시간 이상 수집 건수 0 → 로그 기록 (텔레그램 알림은 Phase 3 이후)
-- 수집 누락률, 수집 지연 p95 Redis 카운터 기록 ([TECHSPEC 5.3절](TECHSPEC.md#53-redis-카운터-phase-12-성능-지표))
-- `stream:system:collector` 장애 이벤트 발행 ([TECHSPEC 5.1절](TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스))
-- NAS 자원 모니터링 (디스크/RAM/CPU) + 3단계 임계치 알림 ([TECHSPEC 10.5절](TECHSPEC.md#105-자원-모니터링-임계값-nas), [PRD 10.5절](PRD.md#105-자원-모니터링))
+- 수집 정상성 추적: Micrometer 게이지 + VictoriaMetrics 외부 스크랩 (TECHSPEC §10.4 Redis 카운터 방식을 SPEC-COLLECTOR-OBSV-001이 대체 — 완료)
+- 장중 수집 미달/정지 감지: vmalert `CollectorBatchStale`/`CollectorBatchCompletenessLow` + Alertmanager 텔레그램 경보 (SPEC-COLLECTOR-OBSV-001 — 완료)
+- 수집 지연 p95 계측 (Micrometer histogram — OBSV-001 범위 밖, 미구현)
+- `stream:system:collector` 장애 이벤트 발행 — Phase 3 전까지 Alertmanager 직접 경로 사용 중, stream 이벤트 미구현 ([TECHSPEC 5.1절](TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스))
+- NAS 자원 모니터링 (디스크/RAM/CPU) + 3단계 임계치 알림 — node_exporter 미도입, 미구현 ([TECHSPEC 10.5절](TECHSPEC.md#105-자원-모니터링-임계값-nas), [PRD 10.5절](PRD.md#105-자원-모니터링))
 
 ### 완료 기준 (Phase 1)
 
@@ -205,7 +206,7 @@ Phase 0에서 이월된 CI/CD 항목 구현.
 - 수집 누락률 < 1% (장중 기준)
 - 데이터 파이프라인 장애 시 자동 복구 (Fallback 체인 동작 확인)
 - 수집 지연 < 5초 (실시간 체결 기준)
-- 일봉 수집 완료 이벤트가 `stream:daily:complete`에 `market` 필드(`domestic`/`overseas`) 포함하여 정상 발행됨을 확인
+- 일봉 수집 완료 이벤트가 `stream:daily:complete`에 `market` 필드(`domestic`/`overseas`) 포함하여 정상 발행됨을 확인 (코드 완료 — 라이브 관측 확인 필요)
 - 일일 리포트 항목 (수집 누락률, 지연 p95, Fallback 내역, 자동 복구 횟수) 데이터 산출 확인 (텔레그램 발송은 Phase 3)
 - 모든 관심 종목의 과거 데이터 백필 완료 (`backfill_status` 전 항목 완료 확인)
 - 관심 종목 일봉 수익률 분포 확인 — TECHSPEC 6.1절 초안 경계값의 클래스 비율이 극단적으로 편향되지 않음을 확인 (정밀 조정은 Phase 2)
