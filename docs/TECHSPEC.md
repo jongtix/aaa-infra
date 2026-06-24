@@ -602,7 +602,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 | 수급 데이터 | `investor_trend`, `short_sale_domestic`, `short_sale_overseas`, `credit_balance` | collector |
 | 거시경제 | `macro_indicators` | collector |
 | 재무제표 | `financials` | collector |
-| 뉴스 | `news_headlines` | collector |
+| 뉴스 | `domestic_news_headlines`, `overseas_news_headlines` | collector |
 | 공시 | `disclosures` (1-8절 설계) | collector |
 | 기업 이벤트 | `corporate_events` | collector |
 | 투자의견 | `analyst_estimates` | collector |
@@ -618,7 +618,8 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - `extended_hours`: 미국 Pre-Market/After-Hours 스냅샷(2~3회/일). `session` ENUM('PRE','AFTER')으로 구분. 스키마 설계는 1-8절(외부 API 수집)에서 정의
 - `investor_trend`: 투자자별 매매동향. 외국인·기관·개인 3개 투자자 그룹으로 확정 (프로그램매매 컬럼 미포함 — KIS API 응답에 별도 제공되지 않음)
 - `macro_indicators`: ECOS/FRED 거시경제 + 금리종합(`comp_interest`) + 증시자금종합(`mktfunds`). 지표 코드 + 날짜 + 값 구조
-- `news_headlines`: 국내/해외 뉴스 제목 ([7.5절](#75-뉴스-피처) 피처 계산용)
+- `domestic_news_headlines`: 국내 뉴스 제목 ([7.5절](#75-뉴스-피처) 피처 계산용). V9에서 `news_headlines`로 생성 후 V26에서 RENAME(국내/해외 대칭 명명)
+- `overseas_news_headlines`: 해외(미국) 뉴스 제목 (V27, `news_key` 유니크). 국내와 키·종목 구조 차이로 별도 테이블
 - `disclosures`: DART 공시 데이터. 스키마 설계는 1-8절(외부 API 수집)에서 정의
 - `corporate_events`: 배당/증자/분할/어닝 등 기업 이벤트 통합. `event_type` ENUM으로 구분
 - `analyst_estimates`: 투자의견/추정실적
@@ -720,15 +721,25 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 ### 4.3 Phase 1 — Priority 3 테이블
 
-#### news_headlines
+#### domestic_news_headlines
 
-KIS 종합시황공시 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 원시 데이터로 사용된다.
+KIS 종합시황공시 국내 뉴스 제목 시계열. 뉴스 피처 계산(7.5절)의 원시 데이터로 사용된다. (V9에서 `news_headlines`로 생성, V26에서 해외 대칭 명명을 위해 `domestic_news_headlines`로 RENAME — SPEC-COLLECTOR-OVERSEAS-ETC-001)
 
 - **주요 컬럼**: `serial_no`(내용 조회용 일련번호), `published_at`, `provider_code`, `title`, `category_code`, `source`, `stock_code1`~`stock_code5`(관련 종목코드)
-- **유니크 키**: `serial_no` — KIS API 응답의 고유 식별자
-- **인덱스**: `published_at` — 시간 범위 조회 최적화
+- **유니크 키**: `serial_no` (제약명 `uk_domestic_news_headlines_serial`) — KIS API 응답의 고유 식별자
+- **인덱스**: `idx_domestic_news_headlines_published_at` — 시간 범위 조회 최적화
 - **설계 결정**: `stock_code1`~`stock_code5` 비정규화 구조 — KIS news-title 응답은 관련 종목코드를 `iscd1`~`iscd10`(10개) 및 종목명 `kor_isnm1`~`kor_isnm10`으로 반환하나(SPEC-COLLECTOR-BATCH-003 v0.5.0 실측 2026-06-15 — 이전 "정확히 5개 고정 제공" 기술은 사실 오류로 정정), 뉴스 피처(종목별 카운트) 목적상 상위 5개로 충분하다고 판단하여 **상위 5개(`stock_code1`~`stock_code5`)만 비정규화 저장**한다(`iscd6`~`iscd10` 및 종목명은 미저장 — 종목명은 `stocks` 마스터로 대체). 별도 관계 테이블 없이 비정규화 저장. `stocks` FK 없음 — 종목코드가 `stocks` 마스터에 없는 경우도 있어 참조 무결성 강제 불가
-- **DDL**: `V9__collector_create_news_headlines.sql`
+- **DDL**: `V9__collector_create_news_headlines.sql`(생성) → `V26__collector_rename_news_headlines_to_domestic.sql`(RENAME)
+
+#### overseas_news_headlines
+
+KIS 해외뉴스종합제목(TR HHPSTH60100C1, `NATION_CD=US`) 시계열. 미국 종목 뉴스 피처용. 국내와 키 필드·종목 구조가 달라 별도 테이블로 분리한다(SPEC-COLLECTOR-OVERSEAS-ETC-001).
+
+- **주요 컬럼**: `news_key`(KIS 고유 키), `published_at`(`data_dt`+`data_tm`), `info_gb`, `class_cd`, `class_name`, `source`, `nation_cd`, `exchange_cd`, `symbol`, `symbol_name`, `title`
+- **유니크 키**: `news_key` — 페이징 경계 inclusive 중복을 `INSERT IGNORE`로 멱등 흡수
+- **인덱스**: `idx_overseas_news_headlines_published_at` — 시간 범위 조회 최적화
+- **설계 결정**: 페이징 커서는 `DATA_DT`/`DATA_TM`(직전 응답 마지막 행 주입, `CTS` 무효 — T0 실측). 거시·원자재 뉴스는 `symbol`/`symbol_name`/`exchange_cd` 빈 문자열 정상 저장
+- **DDL**: `V27__collector_create_overseas_news_headlines.sql`
 
 #### analyst_estimates
 
@@ -774,9 +785,9 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 
 기업 이벤트 통합 테이블. 배당/증자/분할/어닝 등을 `event_type` ENUM으로 구분하여 단일 테이블에 저장한다.
 
-- **주요 컬럼**: `stock_id`(FK → stocks), `event_type`(DIVIDEND/RIGHTS_ISSUE/SPLIT/EARNINGS, Java ENUM → VARCHAR 저장), `event_date`(기준일), `event_subtype`, `pay_date`, `stock_pay_date`, `odd_pay_date`, `cash_amount`, `cash_rate`, `stock_rate`, `face_value`, `stock_kind`, `high_dividend_flag`
+- **주요 컬럼**: `stock_id`(FK → stocks), `event_type`(DIVIDEND/RIGHTS_ISSUE/SPLIT/EARNINGS, Java ENUM → VARCHAR 저장), `event_date`(기준일), `event_subtype`, `pay_date`, `stock_pay_date`, `odd_pay_date`, `ex_dividend_date`, `cash_amount`, `cash_rate`, `stock_rate`, `face_value`, `stock_kind`, `high_dividend_flag`
 - **유니크 키**: `(stock_id, event_type, event_date)` — 종목·이벤트유형·기준일 조합으로 1건 보장
-- **설계 결정**: Phase 1 수집 대상은 DIVIDEND에 한정 — 테이블 구조는 RIGHTS_ISSUE/SPLIT/EARNINGS 확장을 고려해 설계. 배당 외 이벤트 유형의 컬럼은 해당 이벤트 수집 시 활용
+- **설계 결정**: 수집 대상은 DIVIDEND(국내 배당 + 해외 현금배당) — 테이블 구조는 RIGHTS_ISSUE/SPLIT/EARNINGS 확장을 고려해 설계. 배당 외 이벤트 유형의 컬럼은 해당 이벤트 수집 시 활용. `ex_dividend_date`(배당락일, V25 nullable 추가 — SPEC-COLLECTOR-OVERSEAS-ETC-001)는 해외 현금배당의 `div_lock_dt` 매핑용이며 **국내 배당 행은 NULL**(국내 배당 수집은 배당락일 미채움 — analyzer 배당락 조정 시 비대칭 인지 필요). 해외 비현금배당(증자·상폐)은 확정 소비처 생길 때 후속 SPEC
 - **후속 우선순위** (소비처 조사 2026-06-16): SPLIT은 가격조정(배당락·분할, §store-raw-adjust-on-read) 선행 데이터로 우선 — KIS 국내 SPLIT API discovery 선행. RIGHTS_ISSUE(증자)는 확정 소비처 부재(가격조정 입력은 배당락·분할만 명시, analyzer 미구현)로 수집 보류 — analyzer 설계 후 재판단
 - **DDL**: `V12__collector_create_corporate_events.sql`
 

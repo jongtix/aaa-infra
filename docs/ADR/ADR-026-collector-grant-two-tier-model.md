@@ -48,7 +48,7 @@ TECHSPEC §4(`:575`)는 두 가지를 정정한다:
 - **`backfill_status` 제거** — (본 ADR 제정 시점 2026-06-13) 해당 테이블은 존재하지 않았다(마이그레이션 부재). 미구현 테이블을 권한 목록에 두지 않았다. → **2026-06-20 재추가**: SPEC-COLLECTOR-BACKFILL-001이 `backfill_status` 테이블(V24)을 생성하면서 Tier-2로 재등재한다(아래 개정 절 참고).
 - **`etf_metadata` 추가** — 실제 갱신되나 목록에서 누락돼 있었다.
 
-나머지 12개 테이블(`daily_ohlcv`, `market_indicators`, `investor_trend`, `credit_balance`, `short_sale_domestic`, `macro_indicators`, `news_headlines`, `analyst_estimates`, `corporate_events`, `futures_daily`, `financials`, `etf_representative_history`)은 Tier 1(INSERT 전용)로 둔다. `financials`/`analyst_estimates`/`news_headlines`는 현재 증거상 INSERT 전용이며, 갱신 필요가 확인되면 결정 3의 검증이 포착한다.
+나머지 13개 테이블(`daily_ohlcv`, `market_indicators`, `investor_trend`, `credit_balance`, `short_sale_domestic`, `macro_indicators`, `domestic_news_headlines`, `overseas_news_headlines`, `analyst_estimates`, `corporate_events`, `futures_daily`, `financials`, `etf_representative_history`)은 Tier 1(INSERT 전용)로 둔다. `financials`/`analyst_estimates`/`domestic_news_headlines`/`overseas_news_headlines`는 현재 증거상 INSERT 전용이며, 갱신 필요가 확인되면 결정 3의 검증이 포착한다. (두 뉴스 테이블은 db 단위 `GRANT SELECT, INSERT ON aaa.*`로 자동 커버 — 별도 테이블 GRANT 불요. SPEC-COLLECTOR-OVERSEAS-ETC-001)
 
 ### 결정 3 — GRANT 버전관리 및 검증
 
@@ -96,7 +96,7 @@ collector의 Tier-2 UPDATE 누락은 **현재 production에서 watchlist sync(�
 
 ### 한계
 
-- `financials`/`analyst_estimates`/`news_headlines`의 Tier 1 분류는 현재 코드 증거 기반이다. 향후 갱신 요구가 생기면 결정 3의 검증이 포착하고 재분류한다.
+- `financials`/`analyst_estimates`/`domestic_news_headlines`/`overseas_news_headlines`의 Tier 1 분류는 현재 코드 증거 기반이다. 향후 갱신 요구가 생기면 결정 3의 검증이 포착하고 재분류한다.
 - init 스크립트는 데이터 디렉토리 최초 초기화 시에만 실행되므로, 기존 라이브 DB에는 GRANT를 별도로 적용(`GRANT ... ON aaa.<table> TO 'collector'@'%'`)해야 한다. 스크립트 수정만으로는 기존 DB에 반영되지 않는다.
 
 ### 후속 작업
