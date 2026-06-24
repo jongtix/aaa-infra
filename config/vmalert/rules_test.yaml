@@ -201,3 +201,67 @@ tests:
         groupname: collector-gate-health
         alertname: CollectorGateUnset
         exp_alerts: []
+
+  # ===========================================================================
+  # 룰 6: CollectorWebSocketNoSubscription — 장중 틱 구독 무음 탐지
+  # SPEC-OBSV-WEBSOCKET-001 TI-WS-001/002/003/004
+  # ===========================================================================
+
+  # TI-WS-001. [발화] tick_active_subscriptions==0 AND market_open==1 → 3m 이상 → firing.
+  # 장 개시 후 3m5s 평가: subscriptions=0 유지, market_open=1 유지 → for:3m 충족.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '0+0x20'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+            exp_annotations:
+              summary: "국내 WebSocket 구독 종목 0 — 틱 수집 완전 중단"
+              description: "장중(market_open==1)에 tick_active_subscriptions가 3분 이상 0. WebSocket 장 개시 실패 또는 전체 구독 해제 의심."
+
+  # TI-WS-002. [휴장 억제] subscriptions==0 이지만 market_open==0(장외/휴장) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '0+0x20'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts: []
+
+  # TI-WS-003. [장 개시 엣지 오발 방지] market_open 전환 후 3m 이내 subscriptions 회복 → 미발화.
+  # 0~2m: subscriptions=0, 2m~: subscriptions=10(정상 연결) — for:3m 미충족.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '0 0 0 0 10 10 10 10 10 10'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts: []
+
+  # TI-WS-004. [absent 억제] tick_active_subscriptions 시계열 부재 → 미발화(REQ-003).
+  # market_open==1 이지만 subscriptions 시계열 자체가 없으면 expr이 빈 벡터 → 구조적 억제.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts: []

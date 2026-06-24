@@ -107,3 +107,25 @@ groups:
         annotations:
           summary: "시장 세션 게이트 미설정 고착 — 부팅 후 26h 미갱신"
           description: "게이트 last-update가 부팅 후 26h(>1 cron 사이클) 동안 0 유지. 부팅 직후 오발 방지용 26h for 적용."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 4: WebSocket 구독 무음 — 장중 틱 수집 완전 중단 탐지(SPEC-OBSV-WEBSOCKET-001)
+  # ---------------------------------------------------------------------------
+  - name: collector-websocket
+    interval: 30s
+    rules:
+      # TI-WS-001~004 장중 구독 0 → 3m 지속 시 발화. 장외·absent 시 억제.
+      # `and on() (aaa_collector_market_open == 1)` — 기존 휴장 억제 패턴 재사용.
+      # market_open 이 국내 전용이므로 발화 범위는 국내 장중으로 한정된다.
+      # tick_active_subscriptions absent 시 expr이 빈 벡터 → 구조적 억제(REQ-003).
+      - alert: CollectorWebSocketNoSubscription
+        expr: |
+          (aaa_collector_tick_active_subscriptions == 0)
+          and on() (aaa_collector_market_open == 1)
+        for: 3m
+        labels:
+          severity: critical
+          component: collector
+        annotations:
+          summary: "국내 WebSocket 구독 종목 0 — 틱 수집 완전 중단"
+          description: "장중(market_open==1)에 tick_active_subscriptions가 3분 이상 0. WebSocket 장 개시 실패 또는 전체 구독 해제 의심."
