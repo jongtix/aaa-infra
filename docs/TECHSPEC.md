@@ -282,7 +282,7 @@
 |--------|-----------|-------------|
 | OHLCV | REST | 장 마감 후 1회 |
 | 실시간 체결 | WebSocket | 미국 0분 지연 (무료 실시간) |
-| 호가 (Level 1) | WebSocket | 미국 1단계 호가 |
+| 호가 (10단계) | WebSocket | 미국 10단계 호가 (HDFSASP0, 71필드, 평문 — 실측 정정 2026-06-24) |
 | 해외선물 | REST | ES, NQ, CL/WTI, VX(VIX 선물) |
 | VIX 선물 실시간 | WebSocket (KIS) | VIX 지수와 괴리 있음, 보조 지표로 활용 |
 | 배당/권리 | REST | 2개 API 조합 |
