@@ -46,9 +46,12 @@ groups:
     rules:
       # TI-004a 충족률 미달: ratio < 0.70 AND 장중
       # 초기값 0.70(spec AC-8, M5 라이브 튜닝 전제). batch 라벨별 개별 발화.
+      # [SPEC-OBSV-BATCH-COVERAGE-001] batch 필터: 100h·8d·1h·무게이트 임계 배치는 별도 그룹에서 처리.
+      #   completeness 비적용 대상: overseas-*(stale-only), domestic-financial-ratio/etf-representative(주배치, 운영 관찰 전 stale-only),
+      #   domestic-news(발행량 변동 큰 10분 배치, §3.3), watchlist-sync-us(무게이트 stale-only).
       - alert: CollectorBatchCompletenessLow
         expr: |
-          (aaa_collector_batch_completeness_ratio < 0.70)
+          (aaa_collector_batch_completeness_ratio{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us"} < 0.70)
           and on() (aaa_collector_market_open == 1)
         for: 5m
         labels:
@@ -60,9 +63,11 @@ groups:
 
       # TI-004b 신선도 갭: 마지막 적재 후 경과 > 28h AND 장중
       # 28h = 일1회 배치 cron(~24h) + 마진(spec AC-8, M5 튜닝 전제).
+      # [SPEC-OBSV-BATCH-COVERAGE-001] batch 필터: 100h·8d·1h·무게이트 임계 배치는 별도 그룹에서 처리.
+      #   overseas-*(100h 무게이트), domestic-financial-ratio/etf-representative(8d), domestic-news(1h), watchlist-sync-us(28h 무게이트) 제외.
       - alert: CollectorBatchStale
         expr: |
-          ((time() - aaa_collector_batch_last_load_seconds) > 28 * 3600)
+          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us"}) > 28 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
         labels:
@@ -129,3 +134,115 @@ groups:
         annotations:
           summary: "국내 WebSocket 구독 종목 0 — 틱 수집 완전 중단"
           description: "장중(market_open==1)에 tick_active_subscriptions가 3분 이상 0. WebSocket 장 개시 실패 또는 전체 구독 해제 의심."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 5: 해외(미국) 일봉·공매도 Daily stale — 100h 무억제
+  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-007/008
+  # ---------------------------------------------------------------------------
+  # overseas-daily(OverseasDailyOhlcvScheduler, MON-FRI 16:30 ET) +
+  # overseas-shortsale-daily(ShortSaleOverseasScheduler, MON-FRI 10:00 ET)
+  # MON-FRI 잡이라 국내 market_open 억제가 주말 커버 불가 → 무억제.
+  # 100h = 정상 주말 갭(72h) + 미국 3일 연휴 최대 갭(96h) + 마진 4h.
+  # absent 시 `time()-absent`가 빈 벡터 → REQ-010 구조적 억제.
+  - name: collector-collection-gap-overseas
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          (time() - aaa_collector_batch_last_load_seconds{batch=~"overseas-daily|overseas-shortsale-daily"}) > 100 * 3600
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "해외 배치 신선도 갭 — {{ $labels.batch }} > 100h 미적재"
+          description: "해외(미국) MON-FRI 배치 {{ $labels.batch }} 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-007/008)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 6: 해외 공매도 잔고(반월) stale — 18d 무억제
+  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-009
+  # ---------------------------------------------------------------------------
+  # overseas-shortsale-interest(ShortSaleOverseasScheduler Interest, 반월 미국장).
+  # FINRA Equity Short Interest 공시 주기 ~15~16일 + 공시 지연 마진 → 18d.
+  # absent 시 구조적 억제(REQ-010).
+  - name: collector-collection-gap-overseas-interest
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          (time() - aaa_collector_batch_last_load_seconds{batch="overseas-shortsale-interest"}) > 18 * 24 * 3600
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "해외 공매도 잔고 신선도 갭 — overseas-shortsale-interest > 18d 미적재"
+          description: "FINRA 반월 공매도 잔고 마지막 적재 후 18일 초과 경과(반월 주기 15~16일 + 공시 지연 마진). 게이트 억제 없음(REQ-009)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 7: 국내 주간 배치 stale — 8d + 장중 게이트
+  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-005
+  # ---------------------------------------------------------------------------
+  # domestic-financial-ratio(FinancialRatioScheduler, 토요일 08:00 KST) +
+  # domestic-etf-representative(EtfRepresentativeScheduler, 월요일 07:50 KST)
+  # completeness 미적용(운영 관찰 전 stale-only, §3.3).
+  # 8d = 7일 주기 + 마진 1일. 장중 억제 재사용(REQ-005).
+  - name: collector-collection-gap-weekly
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          ((time() - aaa_collector_batch_last_load_seconds{batch=~"domestic-financial-ratio|domestic-etf-representative"}) > 8 * 24 * 3600)
+          and on() (aaa_collector_market_open == 1)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "주간 배치 신선도 갭 — {{ $labels.batch }} > 8d 미적재"
+          description: "장중(market_open==1) 주간 배치 {{ $labels.batch }} 마지막 적재 후 8일(7일 주기 + 마진 1일) 초과 경과. 휴장 시 억제됨(REQ-005)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 8: 국내 뉴스 배치 stale — 1h + 장중 게이트
+  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-006
+  # ---------------------------------------------------------------------------
+  # domestic-news(NewsScheduler, 장중 10분 간격 09~15시 KST MON-FRI).
+  # 발행량 변동이 커 completeness 비적용, stale-only(§3.3 REQ-006).
+  # 1h = 10분 주기 기준 6회 연속 실패 허용 + 마진.
+  # 뉴스 수집창(09~15시)이 market_open과 겹치므로 동일 억제 패턴 재사용.
+  - name: collector-collection-gap-news
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          ((time() - aaa_collector_batch_last_load_seconds{batch="domestic-news"}) > 1 * 3600)
+          and on() (aaa_collector_market_open == 1)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "뉴스 배치 신선도 갭 — domestic-news > 1h 미적재"
+          description: "장중(market_open==1) 뉴스 배치 10분 주기 수집이 1h 이상 중단됨. 휴장 시 억제됨(REQ-006)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 9: 미국 관심종목 동기화 stale — 28h 무억제(무게이트)
+  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-013
+  # ---------------------------------------------------------------------------
+  # watchlist-sync-us(WatchlistSyncScheduler.syncUs, 매일 ET 08:50 — MON-FRI 아닌 매일).
+  # WatchlistSyncService.sync()가 휴장 가드 없이 무조건 돌아 주말 갭이 없으므로 100h 아닌 28h 적용.
+  # 국내 market_open이 ET 스케줄과 무관 → 게이트 억제 제거(무게이트 stale-only).
+  # 28h = 24h 매일 주기 + 마진 4h. absent 시 구조적 억제(REQ-010).
+  - name: collector-collection-gap-watchlist-us
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          (time() - aaa_collector_batch_last_load_seconds{batch="watchlist-sync-us"}) > 28 * 3600
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "미국 관심종목 동기화 신선도 갭 — watchlist-sync-us > 28h 미적재"
+          description: "미국 관심종목 동기화(매일 ET 08:50) 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-013)."
