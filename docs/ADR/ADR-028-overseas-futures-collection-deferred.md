@@ -7,7 +7,7 @@
 
 ## 맥락
 
-[TECHSPEC §3.3](../TECHSPEC.md#33-kis-api-해외-수집-상세)과 `futures_daily` 테이블 설계(§4)는 해외선물 4종(ES, NQ, CL/WTI, VX(VIX 선물))을 KIS REST(`daily-ccnl`, TR `HHDFC55020100`)로 수집하는 것을 Phase 1 범위로 정의했다. `aaa-collector/docs/TODO.md` 1-7절의 "해외 배치 잔여 3종"(해외선물·배당/권리·뉴스) 중 하나다.
+[TECHSPEC §3.3](../TECHSPEC.md#33-kis-api-해외-수집-상세)과 `futures_daily` 테이블 설계(§4)는 해외선물 4종(ES, NQ, CL/WTI, VX(VIX 선물))을 KIS REST(`daily-ccnl`, TR `HHDFC55020100`)로 수집하는 것을 Phase 1 범위로 정의했다. `aaa/TODO.md` 보류 항목의 "해외선물 수집" 중 하나다.
 
 SPEC 작성에 앞서 KIS API 명세와 비용 구조를 실측·확인한 결과, 해외선물 데이터는 **API 유료시세 신청이 전제**되어야 수집 가능함이 확인되었다.
 
@@ -85,7 +85,7 @@ ES/NQ/CL 수집 시 최소 CME + NYMEX 2개 거래소 구독 = 월 약 442 USD(�
 ## 결과
 
 - 해외선물 수집 코드는 구현하지 않는다. `futures_daily` 스키마는 향후 재개를 위해 유지한다.
-- `aaa-collector/docs/TODO.md` 1-7절 "해외선물" 항목을 보류로 표기하고 본 ADR을 참조한다.
+- `aaa/TODO.md` 보류 항목에 해외선물 수집을 ADR-028 참조로 기재한다.
 - "해외 배치 잔여 3종" 중 배당/권리·뉴스 2종(무료)만 SPEC 작성·구현을 진행한다.
 - 미국 증시 방향성·변동성·원자재 신호는 SPX/NDX 지수, VIX 지수, FRED 거시지표로 대체한다.
 

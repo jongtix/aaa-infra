@@ -390,4 +390,4 @@ NAS 온프레미스 운영, ML 학습은 MacBook에서 분리 수행. 배포 환
 
 ---
 
-*문서 관련 문의 사항은 [MILESTONE.md](MILESTONE.md) 및 [TECHSPEC.md](TECHSPEC.md) 참조*
+*문서 관련 문의 사항은 [MILESTONE.md](../../MILESTONE.md) 및 [TECHSPEC.md](TECHSPEC.md) 참조*
