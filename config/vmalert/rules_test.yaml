@@ -399,6 +399,29 @@ tests:
         alertname: CollectorWebSocketSessionDisconnected
         exp_alerts: []
 
+  # TI-WS-012. [상태 전이] connected=1→0 전환 후 5m 지속 → 발화.
+  #     전환 전 정상 연결 기간이 for:5m 카운터를 리셋하는지 검증.
+  # steps 0~3: connected=1(2m), steps 4~15: connected=0 — for:5m 충족(t=420s=step 14) 후 발화.
+  # 7m30s = 450s = step 15 → 시리즈 16개 필요(steps 0~15)
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 7m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+            exp_annotations:
+              summary: "WebSocket 세션 연결 끊김 — stock"
+              description: "장중(market_open==1) alias=stock 세션이 5분 이상 disconnected 상태. partial failure 의심."
+
   # ===========================================================================
   # SPEC-OBSV-BATCH-COVERAGE-001 — 신규 배치 모니터링 사각 해소
   # ===========================================================================

@@ -139,6 +139,7 @@ groups:
           description: "장중(market_open==1)에 tick_active_subscriptions가 3분 이상 0. WebSocket 장 개시 실패 또는 전체 구독 해제 의심."
 
       # TI-WS-005~011 장중 특정 alias 세션 끊김 → 5m 지속 시 발화. 장외·absent 시 억제.
+      # severity: warning — 특정 alias 부분 장애(full critical은 CollectorWebSocketNoSubscription).
       # `and on() (aaa_collector_market_open == 1)` — 기존 휴장 억제 패턴 재사용(REQ-002).
       # alias 라벨 벡터 매칭으로 alias별 개별 발화(REQ-004). CollectorWebSocketNoSubscription과 독립(REQ-005).
       - alert: CollectorWebSocketSessionDisconnected
