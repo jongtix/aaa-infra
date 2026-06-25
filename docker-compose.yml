@@ -311,7 +311,7 @@ services:
 
   # --- Vector: collector 로그 tail → VictoriaLogs 적재 (SPEC-OBSV-LOGS-001) ---
   vector:
-    image: timberio/vector:0.56.0
+    image: timberio/vector:0.56.0-debian
     container_name: aaa-vector
     restart: unless-stopped
     # APP_UID=1004: collector 로그 디렉토리(1004 소유, chmod 750) 읽기 권한 확보.
