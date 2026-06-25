@@ -273,6 +273,75 @@ services:
       retries: 3
       start_period: 30s
 
+  # --- VictoriaLogs: collector JSON ECS 로그 수집·저장·조회 (SPEC-OBSV-LOGS-001) ---
+  victorialogs:
+    # VictoriaLogs는 VictoriaMetrics 제품군이나 별도 버전 체계. v1.51.0 핀 고정.
+    image: victoriametrics/victoria-logs:v1.51.0
+    container_name: aaa-victorialogs
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+    expose:
+      # 9428 내부 전용. 외부 접근은 SSH 터널(결정 A, §1.2). 호스트 포트 바인딩 금지.
+      - "9428"
+    volumes:
+      - ${AAA_HDD_BASE}/data/victorialogs:/victoria-logs-data
+    command:
+      - "-retentionPeriod=90d"
+      - "-storageDataPath=/victoria-logs-data"
+    logging: *default-logging
+    networks:
+      - aaa-network
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:9428/health | grep -q OK"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # --- Vector: collector 로그 tail → VictoriaLogs 적재 (SPEC-OBSV-LOGS-001) ---
+  vector:
+    image: timberio/vector:0.56.0
+    container_name: aaa-vector
+    restart: unless-stopped
+    # APP_UID=1004: collector 로그 디렉토리(1004 소유, chmod 750) 읽기 권한 확보.
+    # 권한 완화(chmod 확장) 대신 실행 UID로 읽기 권한을 확보하는 방식(REQ-007).
+    user: "1004:1004"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+    volumes:
+      # 로그 읽기(읽기 전용): collector 로그 디렉토리. :ro — vector 장애가 collector에 무영향(REQ-018).
+      - ${AAA_HDD_BASE}/logs/aaa-collector:/var/log/aaa-collector:ro
+      # 체크포인트(쓰기 가능): vector가 마지막 읽은 위치를 기록해 재시작 시 중복 적재 방지.
+      - ${AAA_HDD_BASE}/data/vector:/var/lib/vector
+      # 파이프라인 설정(읽기 전용): IaC — 레포 커밋, 런타임 마운트.
+      - ${AAA_SSD_BASE}/config/vector/vector.yaml:/etc/vector/vector.yaml:ro
+    logging: *default-logging
+    networks:
+      - aaa-network
+    depends_on:
+      - victorialogs
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
 # --- Secrets: Alertmanager Telegram 토큰 (값-전용 파일, 미커밋 NAS 런타임 시크릿) ---
 # 각 파일 내용은 값만(KEY= 없음, 후행 개행 없이). 기존 시스템봇 TELEGRAM_SYSTEM_BOT_TOKEN/TELEGRAM_OPERATOR_CHAT_ID 값 재사용
 # (신규 봇 발급 없음). 배포 전 NAS에 직접 배치 — scripts/init-nas.sh 안내 참조.
