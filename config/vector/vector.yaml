@@ -3,7 +3,7 @@
 # 수집 방식: inode 기반 tail + 체크포인트 → JSON ECS 파싱 → VictoriaLogs 적재
 # 누락 한계: 활성 파일 롤 시 압축-재생성 윈도우(best-effort, SPEC-OBSV-LOGS-001 §1.1)
 
-# 글로벌: 체크포인트 위치 (컨테이너 내부 /var/lib/vector, 호스트 ${AAA_HDD_BASE}/data/vector 마운트)
+# 글로벌: 체크포인트 위치 (컨테이너 내부 /var/lib/vector, 호스트 data/vector bind-mount)
 data_dir: /var/lib/vector
 
 sources:
@@ -24,9 +24,9 @@ transforms:
     inputs:
       - collector_logs
     # collector가 이미 JSON ECS 구조로 출력하므로 라인 전체를 JSON 파싱 후 필드 보존.
-    # parse_json 실패 시(비정상 로그 라인) 파이프라인 중단 방지: 원본 메시지를 그대로 보존해 적재 계속.
+    # parse_json 실패 시(비정상 로그 라인) 원본 이벤트 그대로 유지해 파이프라인 계속.
     source: |
-      . = parse_json(.message) ?? {message: .message}
+      . = parse_json(.message) ?? .
 
 sinks:
   victorialogs:
