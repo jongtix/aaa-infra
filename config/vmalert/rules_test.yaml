@@ -267,6 +267,139 @@ tests:
         exp_alerts: []
 
   # ===========================================================================
+  # 룰 13: collector-websocket — CollectorWebSocketSessionDisconnected
+  # SPEC-OBSV-WS-SESSION-001 TI-WS-005~011
+  # ===========================================================================
+  # 세션별(alias) partial failure 감지. for:5m + 장중 게이트.
+  # 시리즈 길이: 5m30s = 330s → N = 330/30 = 11 steps (여유 포함 15)
+
+  # TI-WS-005. [발화] session_connected==0 AND market_open==1 → 5m 지속 → firing.
+  # alias 라벨이 발화 알림에 보존되는지 확인(REQ-004).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+            exp_annotations:
+              summary: "WebSocket 세션 연결 끊김 — stock"
+              description: "장중(market_open==1) alias=stock 세션이 5분 이상 disconnected 상태. partial failure 의심."
+
+  # TI-WS-006. [장외 억제] session_connected==0 이지만 market_open==0(장외/휴장) → 미발화(REQ-002).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # TI-WS-007. [absent 억제] session_connected 시계열 부재 + market_open==1 → 미발화(REQ-003).
+  #     expr이 빈 벡터 → 구조적 억제.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # TI-WS-008. [정상 미발화] session_connected==1(연결 중) + market_open==1 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '1+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # TI-WS-009. [partial failure 핵심] stock=0, dc=1, market_open==1 → stock만 발화, dc 미발화.
+  #     SPEC의 존재 이유: NoSubscription과 달리 특정 alias만 끊긴 partial failure 감지.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_websocket_session_connected{alias="dc"}'
+        values: '1+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+            exp_annotations:
+              summary: "WebSocket 세션 연결 끊김 — stock"
+              description: "장중(market_open==1) alias=stock 세션이 5분 이상 disconnected 상태. partial failure 의심."
+
+  # TI-WS-010. [alias별 독립 발화 — REQ-004] stock=0, dc=0, market_open==1 → 두 개의 독립 알림.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_websocket_session_connected{alias="dc"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+            exp_annotations:
+              summary: "WebSocket 세션 연결 끊김 — stock"
+              description: "장중(market_open==1) alias=stock 세션이 5분 이상 disconnected 상태. partial failure 의심."
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: dc
+            exp_annotations:
+              summary: "WebSocket 세션 연결 끊김 — dc"
+              description: "장중(market_open==1) alias=dc 세션이 5분 이상 disconnected 상태. partial failure 의심."
+
+  # TI-WS-011. [for:5m 미만 억제] 연결 끊김이 4m30s 시점에서 아직 for:5m 미충족 → 미발화.
+  #     for:5m 설정값 정확성 검증. 만약 for 값이 잘못됐다면 이 케이스에서 실패한다.
+  # 4m30s = 270s → 시리즈 N = 270/30 = 9 steps
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x9'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x9'
+    alert_rule_test:
+      - eval_time: 4m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # ===========================================================================
   # SPEC-OBSV-BATCH-COVERAGE-001 — 신규 배치 모니터링 사각 해소
   # ===========================================================================
   # 시간 모델: last_load_seconds=0 이면 time()-0=eval_time → "eval_time 만큼 경과"를 재현.

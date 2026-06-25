@@ -138,6 +138,21 @@ groups:
           summary: "국내 WebSocket 구독 종목 0 — 틱 수집 완전 중단"
           description: "장중(market_open==1)에 tick_active_subscriptions가 3분 이상 0. WebSocket 장 개시 실패 또는 전체 구독 해제 의심."
 
+      # TI-WS-005~011 장중 특정 alias 세션 끊김 → 5m 지속 시 발화. 장외·absent 시 억제.
+      # `and on() (aaa_collector_market_open == 1)` — 기존 휴장 억제 패턴 재사용(REQ-002).
+      # alias 라벨 벡터 매칭으로 alias별 개별 발화(REQ-004). CollectorWebSocketNoSubscription과 독립(REQ-005).
+      - alert: CollectorWebSocketSessionDisconnected
+        expr: |
+          (aaa_collector_websocket_session_connected == 0)
+          and on() (aaa_collector_market_open == 1)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+        annotations:
+          summary: "WebSocket 세션 연결 끊김 — {{ $labels.alias }}"
+          description: "장중(market_open==1) alias={{ $labels.alias }} 세션이 5분 이상 disconnected 상태. partial failure 의심."
+
   # ---------------------------------------------------------------------------
   # 그룹 5: 해외(미국) 일봉·공매도 Daily stale — 100h 무억제
   # SPEC-OBSV-BATCH-COVERAGE-001 REQ-007/008
