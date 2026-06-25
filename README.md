@@ -45,6 +45,11 @@ docker compose down
 |-----------|------|
 | MySQL | 단일 DB, 서비스별 사용자·권한 격리 |
 | Redis | Streams (서비스 간 이벤트 버스) + 캐싱 |
+| VictoriaMetrics | 수집 정상성 메트릭 스크랩/저장 (TSDB) |
+| vmalert | 룰 평가 → Alertmanager 통지 |
+| Alertmanager | 라우팅/억제 → 시스템봇(Telegram) 발송 |
+| VictoriaLogs | collector JSON ECS 로그 저장·조회 (90일) |
+| Vector | collector 로그 tail → VictoriaLogs 적재 |
 | Docker Compose | 서비스 오케스트레이션 |
 | GitHub Actions | CI/CD — Docker 이미지 빌드 → GHCR 푸시 → self-hosted runner 배포 |
 
@@ -75,6 +80,26 @@ aaa-infra/
 # pre-commit hook 설치 (.env 파일 커밋 방지)
 pip install pre-commit && pre-commit install
 ```
+
+## 로그 조회 (VMUI)
+
+VictoriaLogs는 9428 포트를 내부 전용으로만 노출한다. SSH 터널로 안전하게 접근한다.
+
+```bash
+# 1. VictoriaLogs 컨테이너 IP 확인
+docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' aaa-victorialogs
+
+# 2. SSH 터널 개설 (<container-ip>는 위 명령 결과로 치환)
+ssh -L 9428:<container-ip>:9428 nas-ugreen
+
+# 3. 브라우저에서 VMUI 접속
+#    http://localhost:9428/select/vmui/
+```
+
+LogsQL 예시:
+- 전체 로그 조회: `{service.name="aaa-collector"}`
+- ERROR 레벨만: `{service.name="aaa-collector", log.level="ERROR"}`
+- 키워드 검색: `{service.name="aaa-collector"} word("Exception")`
 
 ## 로드맵
 
