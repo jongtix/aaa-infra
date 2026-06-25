@@ -132,6 +132,10 @@ dirs=(
     "${AAA_SSD_BASE}/config/victoriametrics"
     "${AAA_SSD_BASE}/config/vmalert"
     "${AAA_SSD_BASE}/config/alertmanager"
+    # 로그 수집 스택(SPEC-OBSV-LOGS-001): bind-mount 소스 사전 생성
+    "${AAA_HDD_BASE}/data/victorialogs"
+    "${AAA_HDD_BASE}/data/vector"
+    "${AAA_SSD_BASE}/config/vector"
 )
 
 for dir in "${dirs[@]}"; do
@@ -161,6 +165,8 @@ done
 
 chown_app_dirs=(
     "${AAA_HDD_BASE}/logs/aaa-collector"
+    # vector 체크포인트 디렉토리: APP_UID(1004) 소유 필수 — vector가 체크포인트를 기록해야 재시작 후 중복 적재 방지(REQ-013)
+    "${AAA_HDD_BASE}/data/vector"
 )
 
 for dir in "${chown_app_dirs[@]}"; do
@@ -171,6 +177,8 @@ done
 
 # 관측성(OBSV-001): Alertmanager는 nobody(65534)로 실행되며 nflog/silences를 /alertmanager에 기록.
 # VictoriaMetrics는 root 실행이라 데이터 디렉토리 chown 불필요.
+# 로그 스택(SPEC-OBSV-LOGS-001): VictoriaLogs는 root 실행이라 data/victorialogs chown 불필요(DP2).
+# data/vector는 APP_UID(1004) 소유 필수 — chown_app_dirs에 포함.
 AM_UID=65534
 chown_am_dirs=(
     "${AAA_HDD_BASE}/data/alertmanager"
@@ -198,6 +206,7 @@ chown_config_dirs=(
     "${AAA_SSD_BASE}/config/victoriametrics"
     "${AAA_SSD_BASE}/config/vmalert"
     "${AAA_SSD_BASE}/config/alertmanager"
+    "${AAA_SSD_BASE}/config/vector"
 )
 
 for dir in "${chown_config_dirs[@]}"; do
@@ -230,6 +239,7 @@ echo "    ${AAA_SSD_BASE}/config/redis/users.acl"
 echo "    ${AAA_SSD_BASE}/config/victoriametrics/scrape.yml"
 echo "    ${AAA_SSD_BASE}/config/vmalert/rules.yml"
 echo "    ${AAA_SSD_BASE}/config/alertmanager/alertmanager.yml"
+echo "    ${AAA_SSD_BASE}/config/vector/vector.yaml"
 echo ""
 echo "  시크릿 파일 (배치 후 chmod 600 적용):"
 echo "    ${AAA_SSD_BASE}/secrets/.env.mysql"
