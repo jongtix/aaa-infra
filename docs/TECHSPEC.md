@@ -1553,6 +1553,17 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 - 구현 방식: `@Scheduled` cron으로 주기적 카운터 점검 (별도 Watchdog 프로세스 불필요)
 - 역할: 비즈니스 계층 감시 (프로세스는 정상이나 수집이 멈춘 침묵 장애 감지)
 
+**로그 수집 스택 (SPEC-OBSV-LOGS-001)**:
+
+| 항목 | 내용 |
+|------|------|
+| 수집 에이전트 | Vector 0.56.0 (collector JSON ECS `.log` tail, `*.gz` 제외) |
+| 로그 저장소 | VictoriaLogs v1.51.0 (90일 보존, `/victoria-logs-data`) |
+| 수집 범위 | collector 한정 (mysql/redis 제외 — 결정 C) |
+| 조회 | SSH 터널 → VMUI/LogsQL (`http://localhost:9428/select/vmui/`) |
+| 메트릭 스택과 관계 | 독립 (VM/vmalert/AM 변경 없음) |
+| ADR | ADR-029 로그 스택 선택 |
+
 ### 10.5 자원 모니터링 임계값 (NAS)
 
 | 자원 | 1단계 경고 | 2단계 경고 | 3단계 (위험) |
@@ -1563,6 +1574,7 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 
 - **디스크**: SSD write amplification 80% 초과 시 심화. 90% 초과 시 MySQL 쓰기 실패 위험
 - **CPU**: 순간 스파이크(배치+추론 겹침)는 정상. 5분 이동평균 기준으로 지속 고부하만 감지
+- **VictoriaLogs 디스크 (HDD volume2)**: 90일 `-retentionPeriod` 보수 추정 상한 ~150GB (ADR-011 30일/50GB raw gz cap 근거 × 3). NAS HDD volume2 실측 여유 9.7TB(33% 사용, 2026-06-25) 대비 ~1.5% — 현재 충분. 90일 실측 점유가 추정을 크게 벗어나면 retention 단축 또는 `-retention.maxDiskSpaceUsageBytes` 도입 검토(DP6, ADR-029).
 
 ### 10.6 데이터 백업 정책
 
