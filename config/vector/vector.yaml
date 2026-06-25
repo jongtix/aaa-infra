@@ -24,8 +24,9 @@ transforms:
     inputs:
       - collector_logs
     # collector가 이미 JSON ECS 구조로 출력하므로 라인 전체를 JSON 파싱 후 필드 보존.
+    # parse_json 실패 시(비정상 로그 라인) 파이프라인 중단 방지: 원본 메시지를 그대로 보존해 적재 계속.
     source: |
-      . = parse_json!(.message)
+      . = parse_json(.message) ?? {message: .message}
 
 sinks:
   victorialogs:

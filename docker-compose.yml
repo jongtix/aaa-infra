@@ -333,7 +333,8 @@ services:
     networks:
       - aaa-network
     depends_on:
-      - victorialogs
+      victorialogs:
+        condition: service_healthy
     cap_drop:
       - ALL
     security_opt:
