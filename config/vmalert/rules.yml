@@ -49,6 +49,9 @@ groups:
       # [SPEC-OBSV-BATCH-COVERAGE-001] batch 필터: 100h·8d·1h·무게이트 임계 배치는 별도 그룹에서 처리.
       #   completeness 비적용 대상: overseas-*(stale-only), domestic-financial-ratio/etf-representative(주배치, 운영 관찰 전 stale-only),
       #   domestic-news(발행량 변동 큰 10분 배치, §3.3), watchlist-sync-us(무게이트 stale-only).
+      # [유지보수] aaa-collector에 신규 스케줄러 추가 시:
+      #   기본 28h+gate 임계 → 이 필터 변경 불필요.
+      #   커스텀 임계(100h/18d/8d/1h 등) → 이 정규식에 추가 AND 별도 그룹 생성. 누락 시 오발.
       - alert: CollectorBatchCompletenessLow
         expr: |
           (aaa_collector_batch_completeness_ratio{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us"} < 0.70)
