@@ -306,19 +306,22 @@
 | 2순위 (Fallback 1) | FRED `VIXCLS` | Close만 제공 |
 | 3순위 (Fallback 2) | yfinance `^VIX` | 15분 지연 |
 
-**Pre/After-Hours 1분봉**
+**Pre/After-Hours 가격 스냅샷** ([ADR-030](ADR/ADR-030-extended-hours-gap-only-volume-deferred.md))
 
-| 순위 | 소스 | 특이사항 |
-|------|------|---------|
-| 1순위 (Primary) | yfinance (`prepost=True`) | 1분봉 7일 제한 → 매일 수집 필수. tenacity exponential backoff 적용 |
-| 2순위 (Fallback 1) | Alpaca Free API | Paper Trading 계좌, IEX 데이터 |
-| 3순위 (Fallback 2) | Polygon.io Free | 5 req/min 제한 |
+| 항목 | 내용 |
+|------|------|
+| 소스 | yahoo v8 chart (`interval=1m` + `includePrePost=true`) 단일 |
+| 수집 단위 | 세션별 가격 스냅샷 2~3회/일 (1분봉 시계열은 저장하지 않음) |
+| 거래량 | **미수집** — yahoo는 시간외 거래량을 구조적으로 0으로 반환 (ADR-030 실측) |
 
-**yfinance 안정화 전략**:
-- retry: tenacity, exponential backoff (4s → 8s → 16s → 32s → 64s, 최대 5회)
-- Rate Limit: 요청 간 2~3초 딜레이, 배치 처리
-- DB 캐싱: 수집 즉시 저장, 누락 구간만 재요청
-- source 메타데이터: 출처 기록 (fallback 추적용)
+> 갭(가격) 산출에는 세션별 마지막 가격 스냅샷만 필요하므로 1분봉 시계열을 저장하지 않는다. 거래량 확보용이던 Alpaca/Polygon Fallback은 무료 티어 대표성·rate limit 한계로 도입하지 않는다(ADR-030). 명세: `api-specs/yahoo-finance/02-extended-hours.md`.
+
+**yahoo 시간외 수집 안정화 전략**:
+- 헤더: `User-Agent: Mozilla/5.0` 필수 (없으면 403)
+- retry: 지수 백오프 재시도
+- Rate Limit: 요청 간 2~3초 딜레이, 종목 순차 처리 (스냅샷 2~3회/일이라 시간외 세션 내 수용)
+- 세션 마지막 `close` 추출: `meta.currentTradingPeriod`로 PRE/POST 구간 판정
+- source 메타데이터: `source="YAHOO"`
 
 ### 3.5 단일 소스 외부 API
 
@@ -402,9 +405,9 @@
 
 | 항목 | 정책 |
 |------|------|
-| 수집 방식 | 스냅샷 2~3회/일 (실시간 스트리밍 아님) |
+| 수집 방식 | 가격 스냅샷 2~3회/일 (실시간 스트리밍 아님). 거래량 미수집 ([ADR-030](ADR/ADR-030-extended-hours-gap-only-volume-deferred.md)) |
 | ML 추론 | 시간외 전용 신호 생성 안 함 |
-| 피처 활용 | 정규장 모델 입력 피처로만 사용 (갭 방향/크기, 거래량 이상치 등) |
+| 피처 활용 | 정규장 모델 입력 피처로만 사용 (갭 방향/크기). 거래량 이상치 피처는 보류 (ADR-030) |
 
 **한국 장전/장후 시간외**
 
@@ -425,23 +428,27 @@
 | Pre-Market | 전일 정규장 종가 | (Pre 현재가 - 전일 종가) / 전일 종가 × 100 |
 | After-Hours | 당일 정규장 종가 | (AH 현재가 - 당일 종가) / 당일 종가 × 100 |
 
-**비정상 거래량 계산**
+**비정상 거래량 계산 — 보류** ([ADR-030](ADR/ADR-030-extended-hours-gap-only-volume-deferred.md))
 
-- 기준 통계량: 중앙값(Median) — 평균은 어닝일 거래량에 왜곡되므로 사용하지 않음
-- 기간: 직근 20영업일 동일 세션(Pre-Market / After-Hours) 전체를 하나의 버킷으로 계산
-- 계산: `volume_ratio = 금일 거래량 / 20영업일 중앙값`
-- 중앙값 0인 경우 (평소 시간외 거래 없는 종목): 배율 대신 절대 거래량 기준으로 전환, 최소 거래량 필터 충족 시 알림
+> 무료 데이터 소스로는 신뢰성 있는 미국 시간외 거래량을 확보할 수 없음이 실측으로 확인되어(yahoo 시간외 거래량 0, Alpaca IEX ~2.4% 대표성) 보류한다. 아래 설계는 거래량 소스 확보 시 재도입을 위해 보존한다.
+>
+> - 기준 통계량: 중앙값(Median) — 평균은 어닝일 거래량에 왜곡되므로 사용하지 않음
+> - 기간: 직근 20영업일 동일 세션(Pre-Market / After-Hours) 전체를 하나의 버킷으로 계산
+> - 계산: `volume_ratio = 금일 거래량 / 20영업일 중앙값`
+> - 중앙값 0인 경우 (평소 시간외 거래 없는 종목): 배율 대신 절대 거래량 기준으로 전환, 최소 거래량 필터 충족 시 알림
 
-**최소 거래량 필터 (Floor)**
+**최소 거래량 필터 (Floor) — 보류** ([ADR-030](ADR/ADR-030-extended-hours-gap-only-volume-deferred.md))
 
-노이즈 방지를 위해 아래 조건을 모두 충족해야 알림을 발송한다.
-
-| 조건 | 기준 |
-|------|------|
-| 거래량 OR 거래대금 | [TBD] 주 이상 OR [TBD] $ 이상 |
-| 체결 건수 | [TBD] 건 이상 (수집 가능 시) |
-
-모든 수치는 설정값으로 외부화하여 운영 중 조정 가능하게 구현한다.
+> 거래량 기반 필터로, 비정상 거래량 계산과 함께 보류한다. 거래량 소스 확보 시 재도입을 위해 보존한다.
+>
+> 노이즈 방지를 위해 아래 조건을 모두 충족해야 알림을 발송한다.
+>
+> | 조건 | 기준 |
+> |------|------|
+> | 거래량 OR 거래대금 | [TBD] 주 이상 OR [TBD] $ 이상 |
+> | 체결 건수 | [TBD] 건 이상 (수집 가능 시) |
+>
+> 모든 수치는 설정값으로 외부화하여 운영 중 조정 가능하게 구현한다.
 
 **이벤트 태깅**
 
@@ -449,9 +456,9 @@
 
 | 이벤트 | 데이터 소스 | 수집 주기 |
 |--------|-----------|-----------|
-| 어닝 (EARNINGS) | yfinance | 일 1회 배치 |
-| 배당락일 (DIVIDEND_EX) | yfinance | 일 1회 배치 |
-| 주식 분할 (STOCK_SPLIT) | yfinance | 일 1회 배치 |
+| 어닝 (EARNINGS) | yahoo | 일 1회 배치 |
+| 배당락일 (DIVIDEND_EX) | yahoo | 일 1회 배치 |
+| 주식 분할 (STOCK_SPLIT) | yahoo | 일 1회 배치 |
 
 - 이벤트 유효 기간: 이벤트일로부터 24시간
 - 이벤트 API 장애 시: 태그 없이 알림 발송 (알림 기능 자체는 중단 없음)
@@ -461,7 +468,7 @@
 | 조건 | 임계값 | 알림 유형 |
 |------|--------|-----------|
 | 갭 | [TBD] % 이상 | 주의 환기 (매매 신호 아님) |
-| 비정상 거래량 | [TBD] 배 (중앙값 대비) | 주의 환기 |
+| 비정상 거래량 | — | 보류 ([ADR-030](ADR/ADR-030-extended-hours-gap-only-volume-deferred.md)) |
 | 그 외 가격 변동 | - | 알림 없음 |
 
 ### 3.8 KIS API 토큰 관리
@@ -615,7 +622,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - `daily_ohlcv`: 국내/해외 주식, ETF, 업종지수(KOSPI/KOSDAQ/KOSPI200), 시장지수(SPX/NDX) 포함. `asset_type` ENUM으로 구분. 일봉 전용
 - `market_indicators`: 환율(USDKRW), VIX 등 일봉 OHLC 형태의 시장 지표. 주식과 변환 로직이 달라 별도 관리
 - `futures_daily`: 해외선물(ES, NQ, CL/WTI, VX). 미결제약정 등 선물 전용 컬럼 포함, 만기 롤오버 처리
-- `extended_hours`: 미국 Pre-Market/After-Hours 스냅샷(2~3회/일). `session` ENUM('PRE','AFTER')으로 구분. 스키마 설계는 1-8절(외부 API 수집)에서 정의
+- `extended_hours`: 미국 Pre-Market/After-Hours **가격 스냅샷**(2~3회/일). `session` ENUM('PRE','AFTER')으로 구분. **거래량 컬럼 없음**(yahoo 시간외 거래량 구조적 0, [ADR-030](ADR/ADR-030-extended-hours-gap-only-volume-deferred.md)). 갭 % 계산은 소비측에서 수행. 스키마 설계는 1-8절(외부 API 수집)에서 정의
 - `investor_trend`: 투자자별 매매동향. 외국인·기관·개인 3개 투자자 그룹으로 확정 (프로그램매매 컬럼 미포함 — KIS API 응답에 별도 제공되지 않음)
 - `macro_indicators`: ECOS/FRED 거시경제 + 금리종합(`comp_interest`) + 증시자금종합(`mktfunds`). 지표 코드 + 날짜 + 값 구조
 - `domestic_news_headlines`: 국내 뉴스 제목 ([7.5절](#75-뉴스-피처) 피처 계산용). V9에서 `news_headlines`로 생성 후 V26에서 RENAME(국내/해외 대칭 명명)
@@ -1131,7 +1138,7 @@ PRD 6.2절에 정의된 A/B/C/F 등급을 자동 분류하는 기준.
 | 환율/VIX | 한국수출입은행/CBOE/FRED | 전 종목 공통 피처 |
 | 뉴스 (Phase 1) | KIS `news_title` | 개별 종목 |
 | 뉴스 감성 (Phase 2 이후) | 네이버 뉴스 API, GDELT | 개별 종목 |
-| 시간외 갭/거래량 | yfinance Pre/After-Hours | 미국 종목 |
+| 시간외 갭 | yahoo Pre/After-Hours 가격 | 미국 종목 (거래량 이상치는 보류, [ADR-030](ADR/ADR-030-extended-hours-gap-only-volume-deferred.md)) |
 | 종목 속성 | MySQL 종목 마스터 | 전 종목 (풀링 모델 구분용) |
 
 ### 7.2 기술적 지표 피처
