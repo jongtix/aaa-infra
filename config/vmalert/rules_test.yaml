@@ -780,7 +780,7 @@ tests:
         alertname: CollectorBatchStale
         exp_alerts: []
 
-  # ===========================================================================
+  # ====================================================================
   # SPEC-OBSV-SYSALERT-001: collector-safemode 룰 유닛테스트
   # ===========================================================================
   # 검증 목표:
@@ -843,3 +843,300 @@ tests:
         groupname: collector-safemode
         alertname: CollectorSafeModeEntered
         exp_alerts: []
+=======
+
+  # ===========================================================================
+  # 룰 10: node-resource — NAS 호스트 자원(디스크·RAM·CPU) (SPEC-INFRA-NODE-001)
+  # ===========================================================================
+  # interval: 60s (node-resource 그룹 평가 주기).
+  # 디스크 ratio: node_filesystem_size_bytes=100, node_filesystem_avail_bytes=<값>으로 사용률 재현.
+  # RAM: MemTotal=100, MemAvailable=<값>. CPU: node_load5=<값>(4코어, load/4=사용률).
+  # warning for:5m → eval_time 6m. critical for:2m → eval_time 3m. 미발화: 임계 직하값.
+
+  # TI-NODE-001. [디스크] NodeDiskWarning1 발화 — /volume1 75%(avail=25) > 70%, 6m (AC-3a / REQ-NE-005)
+  - interval: 60s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '25+0x7'
+      - series: 'node_filesystem_size_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '100+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskWarning1
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              mountpoint: /volume1
+              fstype: ext4
+            exp_annotations:
+              summary: "디스크 사용률 경고(1단계) — /volume1 > 70%"
+              description: "/volume1 사용률 75% > 70%. 5분 지속."
+
+  # TI-NODE-002. [디스크] NodeDiskWarning1 미발화 — /volume1 60%(avail=40) < 70%, 6m (AC-3b / REQ-NE-005)
+  - interval: 60s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '40+0x7'
+      - series: 'node_filesystem_size_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '100+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskWarning1
+        exp_alerts: []
+
+  # TI-NODE-003. [디스크] NodeDiskWarning2 발화 — /volume1 85%(avail=15) > 80%, 6m (AC-3a / REQ-NE-006)
+  - interval: 60s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '15+0x7'
+      - series: 'node_filesystem_size_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '100+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskWarning2
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              mountpoint: /volume1
+              fstype: ext4
+            exp_annotations:
+              summary: "디스크 사용률 경고(2단계) — /volume1 > 80%"
+              description: "/volume1 사용률 85% > 80%. 5분 지속."
+
+  # TI-NODE-004. [디스크] NodeDiskCritical 발화 — /volume1 95%(avail=5) > 90%, 3m (AC-3a / REQ-NE-007)
+  - interval: 60s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '5+0x4'
+      - series: 'node_filesystem_size_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '100+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: node-resource
+        alertname: NodeDiskCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: node
+              mountpoint: /volume1
+              fstype: ext4
+            exp_annotations:
+              summary: "디스크 사용률 위험(3단계) — /volume1 > 90%"
+              description: "/volume1 사용률 95% > 90%. 2분 지속 — 쓰기 실패 임박."
+
+  # TI-NODE-005. [디스크 absent] 시계열 부재 → NodeDiskWarning1 미발화 — 구조적 억제(AC-6 / REQ-NE-014)
+  - interval: 60s
+    input_series: []
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskWarning1
+        exp_alerts: []
+
+  # TI-NODE-006. [RAM] NodeMemoryWarning1 발화 — 75%(MemAvailable=25) > 70%, 6m (AC-4a / REQ-NE-008)
+  - interval: 60s
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes'
+        values: '25+0x7'
+      - series: 'node_memory_MemTotal_bytes'
+        values: '100+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeMemoryWarning1
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+            exp_annotations:
+              summary: "RAM 사용률 경고(1단계) — > 70%"
+              description: "호스트 메모리 사용률 75% > 70%. 5분 지속."
+
+  # TI-NODE-007. [RAM] NodeMemoryWarning1 미발화 — 60%(MemAvailable=40) < 70%, 6m (AC-4b / REQ-NE-008)
+  - interval: 60s
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes'
+        values: '40+0x7'
+      - series: 'node_memory_MemTotal_bytes'
+        values: '100+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeMemoryWarning1
+        exp_alerts: []
+
+  # TI-NODE-008. [RAM] NodeMemoryWarning2 발화 — 85%(MemAvailable=15) > 80%, 6m (AC-4a / REQ-NE-009)
+  - interval: 60s
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes'
+        values: '15+0x7'
+      - series: 'node_memory_MemTotal_bytes'
+        values: '100+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeMemoryWarning2
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+            exp_annotations:
+              summary: "RAM 사용률 경고(2단계) — > 80%"
+              description: "호스트 메모리 사용률 85% > 80%. 5분 지속."
+
+  # TI-NODE-009. [RAM] NodeMemoryCritical 발화 — 95%(MemAvailable=5) > 90%, 3m (AC-4a / REQ-NE-010)
+  - interval: 60s
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes'
+        values: '5+0x4'
+      - series: 'node_memory_MemTotal_bytes'
+        values: '100+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: node-resource
+        alertname: NodeMemoryCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: node
+            exp_annotations:
+              summary: "RAM 사용률 위험(3단계) — > 90%"
+              description: "호스트 메모리 사용률 95% > 90%. 2분 지속 — OOM Killer 위험."
+
+  # TI-NODE-010. [CPU] NodeCpuWarning1 발화 — load5=3.0(75%) > 70%, 6m (AC-5a / REQ-NE-011)
+  - interval: 60s
+    input_series:
+      - series: 'node_load5'
+        values: '3.0+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeCpuWarning1
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+            exp_annotations:
+              summary: "CPU 부하 경고(1단계) — load5/4 > 70%"
+              description: "5분 부하평균/코어수 75% > 70%. 5분 지속."
+
+  # TI-NODE-011. [CPU] NodeCpuWarning1 미발화 — load5=2.4(60%) < 70%, 6m (AC-5b / REQ-NE-011)
+  - interval: 60s
+    input_series:
+      - series: 'node_load5'
+        values: '2.4+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeCpuWarning1
+        exp_alerts: []
+
+  # TI-NODE-012. [CPU] NodeCpuWarning2 발화 — load5=3.6(90%>85%), 6m (AC-5a / REQ-NE-012)
+  - interval: 60s
+    input_series:
+      - series: 'node_load5'
+        values: '3.6+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeCpuWarning2
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+            exp_annotations:
+              summary: "CPU 부하 경고(2단계) — load5/4 > 85%"
+              description: "5분 부하평균/코어수 90% > 85%. 5분 지속."
+
+  # TI-NODE-013. [CPU] NodeCpuCritical 발화 — load5=3.8(95%) > 90%, 3m (AC-5a / REQ-NE-013)
+  - interval: 60s
+    input_series:
+      - series: 'node_load5'
+        values: '3.8+0x4'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: node-resource
+        alertname: NodeCpuCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: node
+            exp_annotations:
+              summary: "CPU 부하 위험(3단계) — load5/4 > 90%"
+              description: "5분 부하평균/코어수 95% > 90%. 2분 지속."
+
+  # TI-NODE-014. [디스크 다단계 동시 발화] 95%(avail=5) — W1·W2·Critical 동시 발화(6m) (AC-3a / REQ-NE-005~007)
+  # 주의: vmalert-tool은 alertname 필터로 단일 alert 검증. 3개 alertname을 각각 alert_rule_test 항목으로 분리.
+  - interval: 60s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '5+0x7'
+      - series: 'node_filesystem_size_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '100+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskWarning1
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              mountpoint: /volume1
+              fstype: ext4
+            exp_annotations:
+              summary: "디스크 사용률 경고(1단계) — /volume1 > 70%"
+              description: "/volume1 사용률 95% > 70%. 5분 지속."
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskWarning2
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              mountpoint: /volume1
+              fstype: ext4
+            exp_annotations:
+              summary: "디스크 사용률 경고(2단계) — /volume1 > 80%"
+              description: "/volume1 사용률 95% > 80%. 5분 지속."
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: node
+              mountpoint: /volume1
+              fstype: ext4
+            exp_annotations:
+              summary: "디스크 사용률 위험(3단계) — /volume1 > 90%"
+              description: "/volume1 사용률 95% > 90%. 2분 지속 — 쓰기 실패 임박."
+
+  # TI-NODE-015. [게이트 무관 발화] /volume1 75% + market_open=0(휴장) → NodeDiskWarning1 발화 (AC-7 / REQ-NE-015)
+  # market_open=0 시계열을 input_series에 포함해 휴장 상태에서도 알림이 발화함을 기계적으로 증명.
+  # node-resource 룰은 market_open과 AND하지 않으므로(REQ-NE-015), 0 입력은 발화에 영향 없음.
+  - interval: 60s
+    input_series:
+      - series: 'node_filesystem_avail_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '25+0x7'
+      - series: 'node_filesystem_size_bytes{mountpoint="/volume1",fstype="ext4"}'
+        values: '100+0x7'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x7'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeDiskWarning1
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              mountpoint: /volume1
+              fstype: ext4
+            exp_annotations:
+              summary: "디스크 사용률 경고(1단계) — /volume1 > 70%"
+              description: "/volume1 사용률 75% > 70%. 5분 지속."
