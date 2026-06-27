@@ -376,9 +376,8 @@ services:
     # node_exporter는 /host/proc·/sys·/rootfs 읽기 전용 + 메트릭 HTTP 노출만 → 루트 FS read-only, tmpfs 불필요.
     read_only: true
     healthcheck:
-      # /-/healthy: node_exporter v1.9.1(exporter-toolkit 기반)은 "Exporter is Healthy.\n"를 반환.
-      # victoriametrics/vmalert/alertmanager의 "OK" 패턴과 다름 — grep -q Healthy 사용.
-      test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:9100/-/healthy | grep -q Healthy"]
+      # v1.9.1은 /-/healthy 미제공(404). /metrics HTTP 200으로 대체(실측 확인).
+      test: ["CMD-SHELL", "wget -q --spider --tries=1 http://127.0.0.1:9100/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3
