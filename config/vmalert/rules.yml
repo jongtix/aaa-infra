@@ -294,3 +294,109 @@ groups:
         annotations:
           summary: "수집기 안전 모드 해제 — {{ $labels.module }}/{{ $labels.alias }}"
           description: "안전 모드 해제 감지. 정상 수집 재개 여부를 확인하세요."
+
+  # 그룹 11: NAS 호스트 자원 — 디스크·RAM·CPU 3단계 (SPEC-INFRA-NODE-001)
+  # ---------------------------------------------------------------------------
+  # 게이트 무관·24h 상시. 디스크는 mountpoint 라벨(/volume1·/volume2)로 각각 발화.
+  # CPU = node_load5/4 (N100 4코어 하드코딩, §5 V-1). absent 시 비교식 빈 벡터로 구조적 억제(REQ-NE-014).
+  - name: node-resource
+    interval: 60s
+    rules:
+      # --- 디스크: /volume[12] 사용률 70/80/90% ---
+      - alert: NodeDiskWarning1
+        expr: |
+          (1 - (node_filesystem_avail_bytes{mountpoint=~"/volume[12]",fstype!~"tmpfs|overlay|devtmpfs"}
+                / node_filesystem_size_bytes{mountpoint=~"/volume[12]",fstype!~"tmpfs|overlay|devtmpfs"})) > 0.70
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "디스크 사용률 경고(1단계) — {{ $labels.mountpoint }} > 70%"
+          description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 70%. 5분 지속."
+
+      - alert: NodeDiskWarning2
+        expr: |
+          (1 - (node_filesystem_avail_bytes{mountpoint=~"/volume[12]",fstype!~"tmpfs|overlay|devtmpfs"}
+                / node_filesystem_size_bytes{mountpoint=~"/volume[12]",fstype!~"tmpfs|overlay|devtmpfs"})) > 0.80
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "디스크 사용률 경고(2단계) — {{ $labels.mountpoint }} > 80%"
+          description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 80%. 5분 지속."
+
+      - alert: NodeDiskCritical
+        expr: |
+          (1 - (node_filesystem_avail_bytes{mountpoint=~"/volume[12]",fstype!~"tmpfs|overlay|devtmpfs"}
+                / node_filesystem_size_bytes{mountpoint=~"/volume[12]",fstype!~"tmpfs|overlay|devtmpfs"})) > 0.90
+        for: 2m
+        labels:
+          severity: critical
+          component: node
+        annotations:
+          summary: "디스크 사용률 위험(3단계) — {{ $labels.mountpoint }} > 90%"
+          description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 90%. 2분 지속 — 쓰기 실패 임박."
+
+      # --- RAM: 사용률 70/80/90% ---
+      - alert: NodeMemoryWarning1
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.70
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "RAM 사용률 경고(1단계) — > 70%"
+          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 70%. 5분 지속."
+
+      - alert: NodeMemoryWarning2
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.80
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "RAM 사용률 경고(2단계) — > 80%"
+          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 80%. 5분 지속."
+
+      - alert: NodeMemoryCritical
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
+        for: 2m
+        labels:
+          severity: critical
+          component: node
+        annotations:
+          summary: "RAM 사용률 위험(3단계) — > 90%"
+          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 90%. 2분 지속 — OOM Killer 위험."
+
+      # --- CPU: node_load5/4 70/85/90% ---
+      - alert: NodeCpuWarning1
+        expr: (node_load5 / 4) > 0.70
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "CPU 부하 경고(1단계) — load5/4 > 70%"
+          description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 70%. 5분 지속."
+
+      - alert: NodeCpuWarning2
+        expr: (node_load5 / 4) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "CPU 부하 경고(2단계) — load5/4 > 85%"
+          description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 85%. 5분 지속."
+
+      - alert: NodeCpuCritical
+        expr: (node_load5 / 4) > 0.90
+        for: 2m
+        labels:
+          severity: critical
+          component: node
+        annotations:
+          summary: "CPU 부하 위험(3단계) — load5/4 > 90%"
+          description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 90%. 2분 지속."
