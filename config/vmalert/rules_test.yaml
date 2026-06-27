@@ -843,7 +843,6 @@ tests:
         groupname: collector-safemode
         alertname: CollectorSafeModeEntered
         exp_alerts: []
-=======
 
   # ===========================================================================
   # 룰 10: node-resource — NAS 호스트 자원(디스크·RAM·CPU) (SPEC-INFRA-NODE-001)

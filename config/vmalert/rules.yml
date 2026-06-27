@@ -295,7 +295,43 @@ groups:
           summary: "수집기 안전 모드 해제 — {{ $labels.module }}/{{ $labels.alias }}"
           description: "안전 모드 해제 감지. 정상 수집 재개 여부를 확인하세요."
 
-  # 그룹 11: NAS 호스트 자원 — 디스크·RAM·CPU 3단계 (SPEC-INFRA-NODE-001)
+  # ---------------------------------------------------------------------------
+  # 그룹 11: 시장지표 소스 체인 Fallback 가시성 — SPEC-COLLECTOR-MARKETIND-002
+  # ---------------------------------------------------------------------------
+  # REQ-014: Primary 소스(KOREAEXIM/CBOE) 28h+ 미수집 경보 (State-Driven)
+  # REQ-015: 전 소스 탈진 즉시 경보 (Unwanted)
+  # 두 룰 모두 기존 system-bot-telegram receiver 사용.
+  - name: collector-market-indicator
+    interval: 30s
+    rules:
+      # REQ-014: Primary 소스(KOREAEXIM/CBOE) staleness > 28h AND market_open == 1
+      # `> 0` 가드: boot-unset(==0) 제외 — 초기값 0이면 time()-0 항상 28h 초과라 오발 방지.
+      - alert: MarketIndicatorPrimaryStale
+        expr: >
+          (
+            (time() - aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"}) > 28 * 3600
+          ) and (
+            aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"} > 0
+          ) and on() aaa_collector_market_open == 1
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "시장지표 Primary 소스({{ $labels.source }}) 28시간 이상 미수집"
+          description: "indicator={{ $labels.indicator }}, source={{ $labels.source }}"
+
+      # REQ-015: 전 소스 탈진 즉시 경보 (5분 내 increase > 0)
+      - alert: MarketIndicatorExhausted
+        expr: increase(aaa_collector_market_indicator_exhausted_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "시장지표 소스 체인 전원 탈진 — {{ $labels.indicator }} {{ $labels.method }}"
+          description: "indicator={{ $labels.indicator }}, method={{ $labels.method }}"
+
+  # ---------------------------------------------------------------------------
+  # 그룹 12: NAS 호스트 자원 — 디스크·RAM·CPU 3단계 (SPEC-INFRA-NODE-001)
   # ---------------------------------------------------------------------------
   # 게이트 무관·24h 상시. 디스크는 mountpoint 라벨(/volume1·/volume2)로 각각 발화.
   # CPU = node_load5/4 (N100 4코어 하드코딩, §5 V-1). absent 시 비교식 빈 벡터로 구조적 억제(REQ-NE-014).
