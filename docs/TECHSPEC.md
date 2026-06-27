@@ -127,7 +127,7 @@
 
 | 단계 | 행동 |
 |------|------|
-| 1. 원인 확인 | 시스템봇 알림 수신 → 서비스 로그에서 장애 원인 파악 |
+| 1. 원인 확인 | Alertmanager 경보 수신 → 서비스 로그에서 장애 원인 파악 |
 | 2. 조치 | 원인에 따라 서비스 재시작, 설정 변경 등 수행 |
 | 3. 안전 모드 해제 | 조치 완료 후 해제 |
 | 4. 정상 복귀 확인 | 해제 후 최소 1개 수집 주기(5분) 동안 수집 건수 정상 여부 확인 |
@@ -141,9 +141,14 @@
 | 봇 | 용도 | 발신 서비스 |
 |----|------|-------------|
 | 매매봇 | Tier 1/2 신호 알림, 인라인 버튼, 주문 결과, 주문 명령 수신, 일일 리포트 | notifier, trader |
-| 시스템봇 | 장애 알림, 안전 모드, 자동 복구 결과, 자원 경고, CD 배포 실패 알림, 수집 정상성 알림 | notifier, collector, analyzer, CD 워크플로(GitHub Actions), Alertmanager(OBSV-001) |
+| 시스템봇 | 장애 알림, 안전 모드, 자동 복구 결과, 자원 경고, CD 배포 실패 알림, 수집 정상성 알림 | CD 워크플로(GitHub Actions), Alertmanager(OBSV-001) |
 
 **현재 구성** (2026-06-20): 시스템봇 = `@aaa_notifier_bot`(BotFather, 1:1 DM, 표시이름 `AAA System`). 원래 notifier용으로 만든 봇을 시스템봇으로 재배정 확정 — CD·OBSV가 토큰 공유, 코드는 토큰만 참조(봇 username 미참조). 매매봇은 Phase 3 신규 생성(`TELEGRAM_TRADE_BOT_TOKEN`). chat_id는 운영자 user id로 두 봇 공통.
+
+**시스템봇 발신 경로 확정**:
+- 시스템 알림(장애·안전 모드·수집 이상·자원 경고)은 vmalert → Alertmanager → 시스템봇 경로로 일원화한다
+- notifier 자체 장애 포함 모든 서비스의 시스템 알림을 vmalert가 감지하여 발송한다
+- notifier는 매매봇(TELEGRAM_TRADE_BOT_TOKEN)만 사용한다 — 시스템봇 토큰을 보유하지 않는다
 
 **독립성 보장**:
 - 각 봇은 별도 Bot Token으로 운영
@@ -365,7 +370,7 @@
 | 2회 | 15:45 | 일과 중 변경분 반영, 미국 프리마켓(17:00/서머타임 16:00) 대비 |
 
 - 동기화 방식: KIS API → DB
-- 동기화 실패 시: 직전 DB 목록 유지 + 시스템봇 즉시 알림
+- 동기화 실패 시: 직전 DB 목록 유지 + Micrometer counter 계측 → vmalert 경보 (Phase 2 SPEC에서 룰 정의)
 - 종목 추가/삭제는 KIS MTS에서만 관리 (시스템 내 편집 불가)
 - ML 등급 변경은 텔레그램 명령어로만 가능
 
@@ -495,7 +500,7 @@ KIS API는 Access Token과 Approval Key 두 가지 토큰을 관리한다. 계�
 | `.env.redis` | Redis 컨테이너 전용 | REDIS_ADMIN_PASSWORD, REDISCLI_AUTH/REDISCLI_AUTH_USER, TZ |
 | `.env.collector` | collector 전용 | collector DB 계정, KIS 수집용 앱키 5개, 외부 API 키 (변수명은 `aaa-collector` 레포 `.env.example` 참조) |
 | `.env.analyzer` | analyzer 전용 | analyzer DB 계정 (변수명은 Phase 2 착수 시 `aaa-analyzer` 레포 `.env.example`에 작성) |
-| `.env.notifier` | notifier 전용 | notifier DB 계정, 매매봇 토큰, 시스템봇 토큰 (변수명은 Phase 3 착수 시 `aaa-notifier` 레포 `.env.example`에 작성) |
+| `.env.notifier` | notifier 전용 | notifier DB 계정, 매매봇 토큰(TELEGRAM_TRADE_BOT_TOKEN) (변수명은 Phase 3 착수 시 `aaa-notifier` 레포 `.env.example`에 작성) |
 | `.env.trader` | trader 전용 | trader DB 계정, KIS 주문용 앱키, 매매봇 토큰, 화이트리스트 (변수명은 Phase 4 착수 시 `aaa-trader` 레포 `.env.example`에 작성) |
 
 `TELEGRAM_TRADE_BOT_TOKEN`은 notifier와 trader 양쪽에 중복 존재한다 (의도된 중복).
@@ -522,7 +527,7 @@ KIS API는 Access Token과 Approval Key 두 가지 토큰을 관리한다. 계�
 | Access Token | 방어 (401) | API 호출 시 401 응답 수신 → 즉시 재발급 후 원래 요청 재시도 |
 | Approval Key | 정상 (스케줄) | 매일 08:30 `@Scheduled` cron으로 5개 계좌 일괄 발급 |
 | Approval Key | 방어 (WebSocket) | 승인 요청 거부 시 즉시 재발급 후 재연결 |
-| 모두 | 갱신 실패 | 최대 3회 재시도 (exponential backoff). 3회 실패 시 해당 계좌 안전 모드 진입 + 시스템봇 즉시 알림 |
+| 모두 | 갱신 실패 | 최대 3회 재시도 (exponential backoff). 3회 실패 시 해당 계좌 안전 모드 진입 + Micrometer counter 계측 (CollectorSafeMode vmalert 룰) |
 
 **동시성 제어**
 
@@ -860,13 +865,6 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | `stream:signal:domestic` | analyzer | notifier | 국내 매매 신호 (`symbol`, 등급, confidence 필드 포함) |
 | `stream:signal:overseas` | analyzer | notifier | 해외 매매 신호 (`symbol`, 등급, confidence 필드 포함) |
 | `stream:alert` | notifier | trader (Phase 4) | 발송 완료 알림 이벤트 (`tier` 필드 포함) |
-| `stream:system:{서비스명}` | collector, analyzer, trader | notifier (시스템봇 발송) | 장애 알림, 안전 모드 진입/해제, 자원 임계치 이벤트 |
-
-**시스템 이벤트 발송 구조**:
-- 각 서비스는 장애·복구 이벤트를 `stream:system:{서비스명}`에 발행한다
-- notifier가 구독하여 시스템봇으로 텔레그램 발송한다
-- notifier 자체 장애 시에는 직접 시스템봇 HTTP 호출로 발송한다 (1.2절 "직접 HTTP 호출 없음" 원칙의 유일한 예외)
-
 **Consumer Group 전략**:
 - 각 서비스는 Consumer Group으로 구독 (ACK 기반 메시지 처리 보장)
 - 그룹 이름: 구독 서비스명 (예: `notifier`, `analyzer`, `trader`)
@@ -885,7 +883,6 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | `stream:signal:domestic` | 500 | `~` (approximate) | 종목 수 증가 시 상향 |
 | `stream:signal:overseas` | 500 | `~` (approximate) | 종목 수 증가 시 상향 |
 | `stream:alert` | 500 | `~` (approximate) | 단일 스트림, `tier` 필드로 구분 |
-| `stream:system:{서비스명}` | 200 | 정확 | 서비스별 각각 |
 | `stream:dlq:{stream명}` | 500 | 정확 | 수동 확인 전 보존 필수 |
 
 - Phase 1~2 Consumer 부재 참고: `stream:tick:*`의 Consumer(notifier)는 Phase 3에서 구현. Phase 1~2 동안 Consumer Group 없이 발행만 수행하며, MAXLEN으로 메모리 상한을 제어한다. Phase 1 목적은 WebSocket → Redis Streams 경로 검증이며, 5,000건(약 100초치 버퍼)으로 충분하다.
@@ -1007,11 +1004,11 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 4. MacBook → NAS MySQL 직접 접속 (로컬 네트워크) → 시장별 전 종목(A·B등급) 수년 일봉 + 종목 속성 피처 조회 (시장별 독립 학습 데이터셋 구성)
 5. 학습 완료 → 모델 파일 NFS/SMB 공유 스토리지에 저장
 6. SSH 종료 → analyzer가 완료 인지 (exit code로 성공/실패 판별)
-7. `stream:system:analyzer` 이벤트 발행 (학습 결과 + 성능 지표, 텔레그램 알림은 Phase 3 이후)
+7. 학습 완료/실패 Micrometer 메트릭 계측 → vmalert 경보 발송 (Phase 2 착수 SPEC에서 상세 정의)
 
 - 학습 스크립트 타임아웃: 초기값 주간 재학습 4시간, 월간 Optuna 튜닝 36시간 (운영하며 조정). 초과 시 SSH 세션 강제 종료 + 실패 처리
-- 실패 시 처리 (WoL 실패·SSH 접속 실패·학습 실패 공통): 로그 기록 + 시스템 채널 알림 (Phase 3 이후 텔레그램). 직전 모델 파일 유지 (다음 추론 시 자동 로드)
-- 모델 미갱신 경고: 모델 파일명의 학습일자(`{시장}_{시간대}_{알고리즘}_{학습일자}.txt`)를 파싱하여 마지막 성공 학습 날짜를 추적. 4주 이상 미갱신 시 시스템 채널로 경고 알림
+- 실패 시 처리 (WoL 실패·SSH 접속 실패·학습 실패 공통): 로그 기록 + vmalert 경보 발송. 직전 모델 파일 유지 (다음 추론 시 자동 로드)
+- 모델 미갱신 경고: 모델 파일명의 학습일자(`{시장}_{시간대}_{알고리즘}_{학습일자}.txt`)를 파싱하여 마지막 성공 학습 날짜를 추적. 4주 이상 미갱신 시 vmalert 경보 발송
 - [TBD - Phase 2 착수 전] MacBook → NAS MySQL 접속 보안: 학습 전용 사용자(SELECT만) 분리, TLS/SSH 터널 적용 여부 결정
 
 **SSH 보안 최소 조치** (NAS ↔ MacBook, 동일 LAN 전제):
@@ -1473,7 +1470,7 @@ Repository Secrets:
 
 | 시크릿명 | 설명 | 발급 방법 |
 |----------|------|-----------|
-| `TELEGRAM_SYSTEM_BOT_TOKEN` | 시스템봇 토큰(현 `@aaa_notifier_bot`, 표시이름 AAA System). CD 배포 실패 알림 + SPEC-COLLECTOR-OBSV-001 수집정상성 알림에 사용. Phase 3 aaa-notifier 장애/자원경고에서도 동일 시크릿 사용 예정 | BotFather → `/newbot` 명령으로 발급 |
+| `TELEGRAM_SYSTEM_BOT_TOKEN` | 시스템봇 토큰(현 `@aaa_notifier_bot`, 표시이름 AAA System). CD 배포 실패 알림 + SPEC-COLLECTOR-OBSV-001 수집정상성 알림에 사용. notifier 장애 포함 모든 시스템 경보는 vmalert가 이 토큰으로 발송 | BotFather → `/newbot` 명령으로 발급 |
 | `TELEGRAM_OPERATOR_CHAT_ID` | 운영자 수신 chat ID. 1:1 DM이라 운영자 user id와 동일 — 봇 무관, 매매봇도 재사용 | `@userinfobot` 또는 Bot API `getUpdates`로 확인 |
 
 ### 10.3 Docker Compose 구성
@@ -1556,7 +1553,7 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 
 **실시간 수집 상태 감시 (Phase 1)**:
 - 수집 정상 여부를 Redis 카운터(마지막 수집 타임스탬프 또는 분당 수집 건수)로 추적
-- 장중 [TBD]분 이상 수집 건수가 0이면 시스템봇으로 즉시 알림
+- 장중 [TBD]분 이상 수집 건수가 0이면 Alertmanager OBSV-001 경보
 - 구현 방식: `@Scheduled` cron으로 주기적 카운터 점검 (별도 Watchdog 프로세스 불필요)
 - 역할: 비즈니스 계층 감시 (프로세스는 정상이나 수집이 멈춘 침묵 장애 감지)
 
