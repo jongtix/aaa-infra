@@ -299,6 +299,8 @@ groups:
   # ---------------------------------------------------------------------------
   # 게이트 무관·24h 상시. 디스크는 mountpoint 라벨(/volume1·/volume2)로 각각 발화.
   # CPU = node_load5/4 (N100 4코어 하드코딩, §5 V-1). absent 시 비교식 빈 벡터로 구조적 억제(REQ-NE-014).
+  # 다단계 동시 발화: 임계 초과 시 해당하는 모든 단계가 동시에 발화한다(예: 95% → W1+W2+Critical).
+  # 의도적 설계 — AM inhibit 룰 제외(§6). 상위 알림이 유실되더라도 하위 알림이 보장된다.
   - name: node-resource
     interval: 60s
     rules:
@@ -371,6 +373,8 @@ groups:
           description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 90%. 2분 지속 — OOM Killer 위험."
 
       # --- CPU: node_load5/4 70/85/90% ---
+      # node_load5/4: 5분 부하평균 ÷ 코어수(4, N100 하드코딩). 순수 CPU 사용률이 아닌 프록시.
+      # I/O 대기(D 상태) 포함. NAS 디스크 I/O 폭증 시 CPU 부하 없이도 지표 상승 가능(§5 V-1).
       - alert: NodeCpuWarning1
         expr: (node_load5 / 4) > 0.70
         for: 5m
