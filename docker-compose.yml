@@ -343,6 +343,47 @@ services:
     tmpfs:
       - /tmp
 
+  # --- node-exporter: NAS 호스트 자원(디스크·RAM·CPU) 메트릭 노출 (SPEC-INFRA-NODE-001) ---
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    container_name: aaa-node-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: "0.1"
+    expose:
+      # 9100 node_exporter 메트릭(내부 전용, VM 스크랩 대상).
+      - "9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/rootfs"
+      - "--path.sysfs=/host/sys"
+      # compose 이스케이프: $$ → 런타임 단일 $ (정규식 앵커 보존).
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    logging: *default-logging
+    networks:
+      - aaa-network
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # node_exporter는 /host/proc·/sys·/rootfs 읽기 전용 + 메트릭 HTTP 노출만 → 루트 FS read-only, tmpfs 불필요.
+    read_only: true
+    healthcheck:
+      # /-/healthy: node_exporter v1.9.1(exporter-toolkit 기반)은 "Exporter is Healthy.\n"를 반환.
+      # victoriametrics/vmalert/alertmanager의 "OK" 패턴과 다름 — grep -q Healthy 사용.
+      test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:9100/-/healthy | grep -q Healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 # --- Secrets: Alertmanager Telegram 토큰 (값-전용 파일, 미커밋 NAS 런타임 시크릿) ---
 # 각 파일 내용은 값만(KEY= 없음, 후행 개행 없이). 기존 시스템봇 TELEGRAM_SYSTEM_BOT_TOKEN/TELEGRAM_OPERATOR_CHAT_ID 값 재사용
 # (신규 봇 발급 없음). 배포 전 NAS에 직접 배치 — scripts/init-nas.sh 안내 참조.
