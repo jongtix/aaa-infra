@@ -18,3 +18,11 @@ scrape_configs:
     static_configs:
       # aaa-network 내부 DNS. collector는 expose 8080(호스트 미공개).
       - targets: ["aaa-collector:8080"]
+
+  # [SPEC-INFRA-NODE-001] NAS 호스트 자원(디스크·RAM·CPU) 메트릭 스크랩.
+  # 전역 scrape_interval: 30s 상속. node_exporter 기본 metrics_path=/metrics 생략.
+  - job_name: node
+    scheme: http
+    static_configs:
+      # aaa-network 내부 DNS. node-exporter는 expose 9100(호스트 미공개).
+      - targets: ["aaa-node-exporter:9100"]
