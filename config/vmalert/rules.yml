@@ -273,7 +273,7 @@ groups:
   # 메트릭: SafeModeManager.enter()/exit()가 Micrometer counter를 증가시킨다.
   # for: 0m — 안전 모드는 즉시 알림이 필요하며 지속 시간 조건 불필요.
   - name: collector-safemode
-    interval: 15s
+    interval: 30s
     rules:
       - alert: CollectorSafeModeEntered
         expr: increase(aaa_collector_safe_mode_enter_total[5m]) > 0
