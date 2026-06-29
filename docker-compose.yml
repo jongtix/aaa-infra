@@ -127,7 +127,7 @@ services:
   # --- VictoriaMetrics: 수집 정상성 메트릭 스크랩/저장 (외부 판정 TSDB) ---
   victoriametrics:
     # [HARD] VM·vmalert 동일 버전 태그 고정. latest 금지(mysql 8.4·redis 8.8 선례).
-    image: victoriametrics/victoria-metrics:v1.145.0
+    image: victoriametrics/victoria-metrics:v1.146.0
     container_name: aaa-victoriametrics
     restart: unless-stopped
     # [D2] VM 256M: 단노드 통상 RSS 100~200M+에 TSDB merge/쿼리 스파이크·OOM 크래시루프 마진.
