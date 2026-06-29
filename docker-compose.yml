@@ -172,7 +172,7 @@ services:
   # --- vmalert: VM 데이터로 룰 평가 → Alertmanager 통지 (외부 판정기) ---
   vmalert:
     # [HARD] VM과 동일 버전 태그(v1.145.0) — 같은 릴리스에서 함께 배포됨.
-    image: victoriametrics/vmalert:v1.145.0
+    image: victoriametrics/vmalert:v1.146.0
     container_name: aaa-vmalert
     restart: unless-stopped
     deploy:
