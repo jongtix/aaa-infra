@@ -1015,7 +1015,11 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 - 학습 스크립트 타임아웃: 초기값 주간 재학습 4시간, 월간 Optuna 튜닝 36시간 (운영하며 조정). 초과 시 SSH 세션 강제 종료 + 실패 처리
 - 실패 시 처리 (WoL 실패·SSH 접속 실패·학습 실패 공통): 로그 기록 + vmalert 경보 발송. 직전 모델 파일 유지 (다음 추론 시 자동 로드)
 - 모델 미갱신 경고: 모델 파일명의 학습일자(`{시장}_{시간대}_{알고리즘}_{학습일자}.txt`)를 파싱하여 마지막 성공 학습 날짜를 추적. 4주 이상 미갱신 시 vmalert 경보 발송
-- **MacBook → NAS MySQL 접속 보안** (analyzer 설계 [D-19], 2026-07-04 확정, 터널 목적지 2026-07-05 확정): MySQL은 10.3절 원칙("DB/Redis 호스트 바인딩 금지")의 루프백 한정 예외로 `127.0.0.1:3306:3306`에 바인딩되며(컨테이너 IP는 재생성 시 변동 가능해 목적지로 부적합), MacBook은 **SSH 로컬 포트포워딩 터널**(`ssh -L 13306:127.0.0.1:3306 nas-ugreen`, 기존 NAS 관리자 SSH 접근 재사용, 공개키 인증)로 접속한다 — 신규 네트워크 노출 없음(NAS 자기 자신만 도달 가능). 접속 계정은 **`trainer`**(`SELECT ON aaa.* `만, `analyzer` 런타임 계정의 `trading_signals` INSERT 권한과 분리 — 최소 권한 원칙, 4절 계정 명명 컨벤션 준수). host는 브리지 게이트웨이 추정치가 아닌 실측값으로 고정(터널 경유 접속의 `information_schema.processlist` 실측). SSH 자체는 위 "SSH 보안 최소 조치" 그대로 적용
+- **MacBook → NAS MySQL 접속 보안** (analyzer 설계 [D-19], 2026-07-04 확정 / 터널 목적지·SSH 계정 2026-07-05 구현 확정): MySQL은 10.3절 원칙("DB/Redis 호스트 바인딩 금지")의 루프백 한정 예외로 `127.0.0.1:3306:3306`에 바인딩되며(컨테이너 IP는 재생성 시 변동 가능해 목적지로 부적합), MacBook은 **SSH 로컬 포트포워딩 터널**로 접속한다 — 신규 네트워크 노출 없음(NAS 자기 자신만 도달 가능).
+  - **SSH 계정 — 원안 정정(2026-07-05)**: 원안 "기존 NAS 관리자 SSH 재사용"은 구현 시 기각. NAS sshd는 전역 `AllowTcpForwarding no`(포워딩 전면 차단)이며, 전역 `ForceCommand /etc/ssh/force_command.sh`(UGOS 관리 스크립트)가 admin 그룹 사용자에게 모든 명령을 허용해 관리자 키에는 authorized_keys 키 단위 제한(`command=`)이 실효 불가(전역 ForceCommand가 우선)하다는 것을 실측 확인.
+  - **확정 구성 — 터널 전용 비-admin 계정 `db_tunnel`**: nologin 셸 + 비밀번호 `*`(무효 — `passwd -l`의 `!!`는 OpenSSH가 공개키 인증까지 거부하므로 금지) + admin/docker 그룹 미소속. sshd `Match User db_tunnel` 블록으로 이 계정만 `AllowTcpForwarding yes` + `PermitOpen 127.0.0.1:3306`(목적지 서버단 고정) + `PermitTTY no`/`ForceCommand /usr/sbin/nologin`/`PasswordAuthentication no`. authorized_keys 키 옵션 `restrict,port-forwarding,permitopen="127.0.0.1:3306"`(키단 이중 제한). 전용 Ed25519 키(`trainer-tunnel-datagrip`)는 DataGrip/학습 터널에만 사용. 검증 3종 실측 통과(2026-07-05): MySQL 도달 성공 / 셸·명령 거부 / 3306 외 목적지 `administratively prohibited`.
+  - **주의**: sshd_config는 UGOS 펌웨어 관리 파일로 보임(force_command.sh 등) — 펌웨어 업데이트 후 `Match User db_tunnel` 블록 존치 확인 필요.
+  - 접속 계정은 **`trainer`**(`SELECT ON aaa.* `만, `analyzer` 런타임 계정의 `trading_signals` INSERT 권한과 분리 — 최소 권한 원칙, 4절 계정 명명 컨벤션 준수). host는 브리지 게이트웨이 추정치가 아닌 실측값으로 고정 — `172.20.0.1` 확정(터널 경유 접속의 `information_schema.processlist` 실측, 2026-07-05). SSH 자체는 위 "SSH 보안 최소 조치" 그대로 적용
 
 **SSH 보안 최소 조치** (NAS ↔ MacBook, 동일 LAN 전제):
 - 비밀번호 인증 비활성화 (`PasswordAuthentication no`), 공개키 인증만 허용
