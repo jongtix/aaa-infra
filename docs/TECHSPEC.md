@@ -1022,12 +1022,12 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
   - 접속 계정은 **`trainer`**(`SELECT ON aaa.* `만, `analyzer` 런타임 계정의 `trading_signals` INSERT 권한과 분리 — 최소 권한 원칙, 4절 계정 명명 컨벤션 준수). host는 브리지 게이트웨이 추정치가 아닌 실측값으로 고정 — `172.20.0.1` 확정(터널 경유 접속의 `information_schema.processlist` 실측, 2026-07-05). SSH 자체는 위 "SSH 보안 최소 조치" 그대로 적용
 
 **SSH 보안 최소 조치** (NAS ↔ MacBook, 동일 LAN 전제):
-- 비밀번호 인증 비활성화 (`PasswordAuthentication no`), 공개키 인증만 허용
+- **비밀번호 인증은 의도적으로 활성 상태 유지 (`PasswordAuthentication yes`)** — NAS 웹 UI(UGOS)의 터미널 접속 기능이 SSH 비밀번호 인증에 의존하므로 전역 비활성화하지 않는다(2026-07-05 확정, 정정: 과거 "공개키 인증만 허용"은 이 의존성을 검토하지 못한 오기였음). 완화 요인: 22번 포트 미표준(55522) 사용, 공유기에서 외부 미노출(LAN 전용)
+- MacBook↔NAS 자동화 흐름(D-19 SSH 터널 등)은 위 전역 설정과 별개로 **개별 계정 단위**에서 공개키 인증만 강제한다(예: `db_tunnel`은 `Match User` 블록에서 `PasswordAuthentication no` 개별 적용 — 6.2절 D-19 참조)
 - Ed25519 키 사용 (기존 RSA 4096이면 변경 불필요)
 - 키 생성 시 passphrase 설정 (MacBook Keychain 자동 관리)
 - `ServerAliveInterval 60` + `ServerAliveCountMax 3` (60초 keepalive, 3회 무응답 시 끊김 감지)
-- 공유기에서 22번 포트 외부 노출되지 않음을 확인
-- 네트워크 계층 제한(`ListenAddress` 등)은 미적용: 공개키 인증 + passphrase로 인증 계층이 충분히 방어되며, DHCP 환경에서 IP 고정 시 운영 장애 위험
+- 네트워크 계층 제한(`ListenAddress` 등)은 미적용: 공개키 인증(자동화 계정) + passphrase + 비표준 포트로 인증 계층이 충분히 방어되며, DHCP 환경에서 IP 고정 시 운영 장애 위험
 
 **모델 파일 관리**:
 - 저장 포맷: LightGBM/XGBoost 네이티브 포맷(`.txt`, `.json`, `.ubj`)만 사용. 역직렬화 보안 위험이 있는 포맷 사용 금지
@@ -1677,7 +1677,7 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 | 시크릿 관리 | 3.8절 시크릿 보호 | `.env` 공통+서비스별 분리, chmod 600, pre-commit hook, `.env.example` 혼합형 관리 |
 | MySQL 접근 | 4절 접근 보안 | 서비스별 전용 사용자, INSERT-ONLY 감사 로그, root 원격 접속 금지 |
 | Redis 접근 | 5절 접근 보안 | ACL 기반 인증(aclfile), 위험 명령어 차단(-@dangerous), 호스트 바인딩 금지 |
-| SSH 접근 | 6.2절 SSH 보안 최소 조치 | 공개키 인증만 허용, Ed25519, passphrase 설정 |
+| SSH 접근 | 6.2절 SSH 보안 최소 조치 | 전역 비밀번호 인증 의도적 유지(NAS 웹 UI 터미널 의존), 자동화 계정은 개별 공개키 강제, Ed25519, passphrase 설정 |
 | 모델 파일 | 6.2절 모델 파일 관리 | 네이티브 포맷만 사용, 역직렬화 위험 포맷 금지 |
 | 주문 안전 한도 | 9.2절 Safety Limits | 단일 주문 최대 금액, 일일 총 주문 한도 |
 | 주문 권한 | 9.3절 권한 제어 | Telegram User ID 화이트리스트, trader 단독 검사 |
