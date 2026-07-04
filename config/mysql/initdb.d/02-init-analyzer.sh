@@ -10,6 +10,13 @@
 #   trainer 계정만 D-19(2026-07-04) 선행 수동 생성 작업의 재현 가능성 확보를
 #   위해 내용을 먼저 기록해 둔다 — SCHEMA-001 착수 전까지 주석 해제 금지.
 #
+# [완료] trainer 계정은 2026-07-05 root로 수동 생성 완료(이 스크립트 미경유 — 직접 SQL).
+#   host='172.20.0.1'(브리지 게이트웨이, information_schema.processlist 실측 확정).
+#   SCHEMA-001에서 아래 블록을 활성화할 때 CREATE USER IF NOT EXISTS라 재실행은 안전하나,
+#   host가 위 실측값과 다르면 별도 계정으로 추가 생성되니 <TRAINER_HOST_TBD>를
+#   반드시 '172.20.0.1'로 맞출 것(또는 재실측 후 갱신). GRANT/MAX_USER_CONNECTIONS는
+#   아래 블록과 이미 동일하게 적용됨(SELECT ONLY, 3커넥션).
+#
 # 마운트: ${AAA_SSD_BASE}/config/mysql/initdb.d/ → /docker-entrypoint-initdb.d/:ro
 # MySQL 컨테이너 최초 기동 시(데이터 디렉토리 최초 초기화 시점) 1회만 실행된다.
 #   → 현재 데이터 디렉토리는 이미 초기화된 상태이므로, 이 파일이 저장소에
@@ -42,10 +49,10 @@
 # EOSQL
 
 # --- Phase 2: trainer 계정 (MacBook 학습 조회 전용, D-19 — SCHEMA-001에서 활성화) ---
-# [HARD] <TRAINER_HOST_TBD>를 실측값으로 교체한 뒤에만 주석 해제할 것.
+# host는 2026-07-05 실측 확정값('172.20.0.1') 반영 완료. 재실측 시에만 갱신할 것.
 # mysql -u root -p"${MYSQL_ROOT_PASSWORD}" <<-EOSQL
-#     CREATE USER IF NOT EXISTS 'trainer'@'<TRAINER_HOST_TBD>' IDENTIFIED BY '${MYSQL_TRAINER_PASSWORD}';
-#     GRANT SELECT ON ${MYSQL_DATABASE}.* TO 'trainer'@'<TRAINER_HOST_TBD>';
-#     ALTER USER 'trainer'@'<TRAINER_HOST_TBD>' WITH MAX_USER_CONNECTIONS 3;
+#     CREATE USER IF NOT EXISTS 'trainer'@'172.20.0.1' IDENTIFIED BY '${MYSQL_TRAINER_PASSWORD}';
+#     GRANT SELECT ON ${MYSQL_DATABASE}.* TO 'trainer'@'172.20.0.1';
+#     ALTER USER 'trainer'@'172.20.0.1' WITH MAX_USER_CONNECTIONS 3;
 #     FLUSH PRIVILEGES;
 # EOSQL
