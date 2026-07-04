@@ -598,7 +598,8 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 - `order_log`, `notification_log` 테이블: 해당 서비스(trader, notifier)의 DB 사용자 권한에서 INSERT-ONLY를 DB 수준으로 강제
 - 시계열 데이터 테이블은 `INSERT IGNORE`로 중복 방지하며 UPDATE를 사용하지 않는다 ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md))
 - root 계정 원격 접속 금지
-- 포트(3306) 호스트 바인딩 금지 — Docker 내부 네트워크에서만 접근 (`expose`만 사용, `ports` 미사용)
+- 포트(3306) 호스트 바인딩 금지 — Docker 내부 네트워크에서만 접근 (`expose` 기본, `ports` 미사용)
+  - **예외(D-19, 2026-07-05 확정)**: `127.0.0.1:3306:3306` 루프백 한정 바인딩만 허용. NAS 자기 자신에서만 도달 가능하며 LAN/외부 미노출 — MacBook은 SSH 로컬 포트포워딩 터널 경유로만 접근(6.2절 "MacBook → NAS MySQL 접속 보안" 참조)
 - 비밀번호는 `.env`로 관리 (3.8절 시크릿 보호 참조)
 
 **예정 테이블 분류**
@@ -1014,7 +1015,7 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 - 학습 스크립트 타임아웃: 초기값 주간 재학습 4시간, 월간 Optuna 튜닝 36시간 (운영하며 조정). 초과 시 SSH 세션 강제 종료 + 실패 처리
 - 실패 시 처리 (WoL 실패·SSH 접속 실패·학습 실패 공통): 로그 기록 + vmalert 경보 발송. 직전 모델 파일 유지 (다음 추론 시 자동 로드)
 - 모델 미갱신 경고: 모델 파일명의 학습일자(`{시장}_{시간대}_{알고리즘}_{학습일자}.txt`)를 파싱하여 마지막 성공 학습 날짜를 추적. 4주 이상 미갱신 시 vmalert 경보 발송
-- **MacBook → NAS MySQL 접속 보안** (analyzer 설계 [D-19], 2026-07-04 확정): MySQL은 10.3절 원칙("DB/Redis 호스트 바인딩 금지")에 따라 `aaa-network` 도커 브리지 내부에만 존재하므로, MacBook은 **SSH 로컬 포트포워딩 터널**(`ssh -L`, 기존 NAS 관리자 SSH 접근 재사용, 공개키 인증)로 접속한다 — 신규 네트워크 노출 없음. 접속 계정은 **`trainer`**(`SELECT ON aaa.* `만, `analyzer` 런타임 계정의 `trading_signals` INSERT 권한과 분리 — 최소 권한 원칙, 4절 계정 명명 컨벤션 준수). SSH 자체는 위 "SSH 보안 최소 조치" 그대로 적용
+- **MacBook → NAS MySQL 접속 보안** (analyzer 설계 [D-19], 2026-07-04 확정, 터널 목적지 2026-07-05 확정): MySQL은 10.3절 원칙("DB/Redis 호스트 바인딩 금지")의 루프백 한정 예외로 `127.0.0.1:3306:3306`에 바인딩되며(컨테이너 IP는 재생성 시 변동 가능해 목적지로 부적합), MacBook은 **SSH 로컬 포트포워딩 터널**(`ssh -L 13306:127.0.0.1:3306 nas-ugreen`, 기존 NAS 관리자 SSH 접근 재사용, 공개키 인증)로 접속한다 — 신규 네트워크 노출 없음(NAS 자기 자신만 도달 가능). 접속 계정은 **`trainer`**(`SELECT ON aaa.* `만, `analyzer` 런타임 계정의 `trading_signals` INSERT 권한과 분리 — 최소 권한 원칙, 4절 계정 명명 컨벤션 준수). host는 브리지 게이트웨이 추정치가 아닌 실측값으로 고정(터널 경유 접속의 `information_schema.processlist` 실측). SSH 자체는 위 "SSH 보안 최소 조치" 그대로 적용
 
 **SSH 보안 최소 조치** (NAS ↔ MacBook, 동일 LAN 전제):
 - 비밀번호 인증 비활성화 (`PasswordAuthentication no`), 공개키 인증만 허용

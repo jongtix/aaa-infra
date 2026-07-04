@@ -29,6 +29,11 @@ services:
           cpus: "1.0"
     env_file:
       - ${AAA_SSD_BASE}/secrets/.env.mysql
+    ports:
+      # 루프백 한정 바인딩(D-19, 2026-07-05 확정): NAS 자기 자신에서만 접근 가능.
+      # LAN/외부는 여전히 미노출 — MacBook은 SSH 로컬 포트포워딩 터널로만 도달.
+      # 10.3절 "DB/Redis 호스트 바인딩 금지" 원칙의 루프백 한정 예외.
+      - "127.0.0.1:3306:3306"
     expose:
       - "3306"
     volumes:
