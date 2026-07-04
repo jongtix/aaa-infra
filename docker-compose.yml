@@ -129,6 +129,33 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # --- Analyzer: Phase 2 ML 분석/추론 서비스 (SPEC-ANALYZER-FOUNDATION-001, 스캐폴딩 단계) ---
+  analyzer:
+    image: ${ANALYZER_IMAGE:-ghcr.io/jongtix/aaa-analyzer:latest}
+    container_name: aaa-analyzer
+    restart: unless-stopped
+    stop_grace_period: 40s
+    # 스캐폴딩 단계(헬스체크 엔드포인트뿐), collector보다 보수적으로 낮게 설정. 실측 후 조정
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+          cpus: "0.5"
+    # ADR-016: DB 미접속 단계라 env_file/depends_on 없음(DB 연결은 INFER-001에서 추가)
+    expose:
+      - "8000"
+    logging: *default-logging
+    networks:
+      - aaa-network
+    # HEALTHCHECK는 이미지에 내장(Dockerfile, urllib 기반 /health 프로브) — 재정의 불필요
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   # --- VictoriaMetrics: 수집 정상성 메트릭 스크랩/저장 (외부 판정 TSDB) ---
   victoriametrics:
     # [HARD] VM·vmalert 동일 버전 태그 고정. latest 금지(mysql 8.4·redis 8.8 선례).
