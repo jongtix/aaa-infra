@@ -104,3 +104,23 @@
 - TECHSPEC §9 [TBD] 항목 갱신 및 본 ADR 링크 추가
 - 기존 `daily_ohlcv` 원주가 재적재 절차 수립
 - `corporate_events` SPLIT 수집 확장 (Phase 2 분석 선행 조건)
+
+---
+
+## 개정 — 2026-07-04: 조정 범위 확정 (분할+배당, Total Return 방향) + as-of 원칙 명시
+
+결정 3("배당·분할 조정은 분석 시점에 계산한다")은 조정 **범위**를 명시하지 않았다. analyzer Phase 2 설계 논의([D-5], 2026-07-03~04)에서 이를 확정한다.
+
+### 조정 범위 — 분할 + 배당 (Total Return 방향)
+
+- **분할(SPLIT)**: `corporate_events.stock_rate` 배율로 조정한다(예: 5.0=5:1 분할, 0.4=병합). 병합(rate<1)도 양방향 처리한다. 일반 ML/퀀트 관행상 미조정 시 -50~-80% 인위 갭이 발생하므로(2026-07-03 실측: AAPL 2020-08-31 4:1 분할 갭 499→129, 삼성전자 2018-05-04 50:1 분할 갭 2,650,000→51,900) 분할 조정은 논쟁 없이 필수다.
+- **배당(DIVIDEND)**: `ex_dividend_date`/`cash_amount` 기반 디플레이터로 조정한다(Total Return 방향 — 배당 재투자를 가정한 수익률). 일반 관행은 Raw/Split-adjusted(배당 미조정)/Total Return 3모드로 갈리는데, 본 프로젝트는 Total Return을 채택한다.
+- **데이터 전제(Phase 2 학습 착수 블로커)**: 배당·분할 조정이 실제로 동작하려면 이벤트 데이터가 필요하다. 2026-07-03 실측 시점 기준 국내 배당 이력 부재(과거분 미백필, [aaa-infra#44](https://github.com/jongtix/aaa-infra/issues/44)), 국내 배당락일 전행 NULL([#71](https://github.com/jongtix/aaa-infra/issues/71)), 해외 분할 이벤트 미수집([#70](https://github.com/jongtix/aaa-infra/issues/70))이 확인되어 각각 이슈로 등록했다. 이 세 이슈(+#62 배포 후 해외 배당 유입 확인)의 해소가 analyzer 학습 착수의 전제조건이다.
+
+### as-of(point-in-time) 조정 원칙
+
+결정 3의 "store raw, adjust on read" 설계는 조정가를 저장하지 않고 읽기 시점에 계산하므로, **조정 시점까지 발생한 이벤트만 반영**하는 as-of(point-in-time) 방식이 된다. 이는 일반 퀀트 관행에서 알려진 "backward-adjusted 가격의 look-ahead 편향" 함정(예: Yahoo Finance의 adjusted close처럼 최근일을 anchor로 과거 전체를 역산하면, 과거 특정 시점의 조정가가 그 이후 발생한 미래 이벤트에 의존하게 되는 문제)을 구조적으로 회피한다. 결정 1(원주가 불변 저장)과 결정 3(분석 시점 계산)의 조합이 본질적으로 as-of 조정이었음을, 조정 범위 확정과 함께 여기서 명시적으로 기록한다.
+
+조사 출처: [Adjusted Prices Without Look-Ahead Bias — Portfolio Optimizer](https://portfoliooptimizer.io/blog/adjusted-prices-without-look-ahead-bias/), [Dividends, Splits and Custom Price Normalization — QuantConnect 포럼](https://www.quantconnect.com/forum/discussion/508/update-dividends-splits-and-custom-price-normalization/p1).
+
+상세 논의는 analyzer Phase 2 설계 문서(`docs/analyzer-phase2-design-draft.md` [D-5])를 참조한다.

@@ -862,9 +862,12 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | `stream:tick:domestic` | collector | notifier (타이밍 평가) | 국내 실시간 체결/호가 틱 (`symbol` 필드 포함) |
 | `stream:tick:overseas` | collector | notifier (타이밍 평가) | 해외 실시간 체결/호가 틱 (`symbol` 필드 포함) |
 | `stream:daily:complete` | collector | analyzer | 일봉 수집 완료 이벤트 (`market`: `domestic`/`overseas`, 완전성 메타 `attempted`/`succeeded`/`skipped` 종목 수 — SPEC-COLLECTOR-BATCH-001 REQ-BATCH-042) |
-| `stream:signal:domestic` | analyzer | notifier | 국내 매매 신호 (`symbol`, 등급, confidence 필드 포함) |
-| `stream:signal:overseas` | analyzer | notifier | 해외 매매 신호 (`symbol`, 등급, confidence 필드 포함) |
+| `stream:signal:domestic` | analyzer | notifier | 국내 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, confidence 필드 포함 — analyzer 설계 [G-1], 2026-07-03) |
+| `stream:signal:overseas` | analyzer | notifier | 해외 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, confidence 필드 포함 — analyzer 설계 [G-1], 2026-07-03) |
 | `stream:alert` | notifier | trader (Phase 4) | 발송 완료 알림 이벤트 (`tier` 필드 포함) |
+
+**`stream:signal:*` 메시지 필드 (analyzer 설계 2026-07-03 확정)**: 종목당 시간대(단기 D20/중기 D60, 6.1절) 신호가 각각 발행되므로 `horizon`(`D20`|`D60`)으로 구분한다. `trade_date`는 신호의 기준 일봉 날짜(조인 키), `trace_id`는 `stream:daily:complete` 수신부터 신호 발행까지 관통하는 추적 ID다. notifier의 horizon별 필터 처리 방침은 Phase 3 설계로 위임한다.
+
 **Consumer Group 전략**:
 - 각 서비스는 Consumer Group으로 구독 (ACK 기반 메시지 처리 보장)
 - 그룹 이름: 구독 서비스명 (예: `notifier`, `analyzer`, `trader`)
@@ -968,23 +971,25 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | SELL | -8% ~ -3% | -15% ~ -5% |
 | STRONG_SELL | ≤ -8% | ≤ -15% |
 
-위 경계값은 변동성 기반 통계적 추정 초안이며, Phase 2에서 실 데이터 수익률 분포 검증 후 조정한다.
+위 경계값은 변동성 기반 통계적 추정 초안이다. **경계 확정 절차 (analyzer 설계 [D-9], 2026-07-04 확정)**: 백필 완료 후 시장(2)×시간대(2)별 실현 수익률 분포에서 목표 클래스 비율로 경계를 **분위수 역산**하고, 위 초안 경계와 대조(크게 어긋나면 원인 확인 후 확정). 목표 클래스 비율 수치는 SPEC(ANALYZER-LABEL-001)에서 확정한다. **확정 후 경계는 고정**한다 — 재학습마다 경계가 흔들리면 레이블 의미가 모델 버전마다 달라지므로, 변경은 주기 재검토(반기 등)에서만 허용한다.
 
-- 수익률 계산: 레이블 부여일 종가 → 예측 기간 종료일 종가 기준 (배당 미포함, Close-to-Close)
+- 수익률 계산: 레이블 부여일 종가 → 예측 기간 종료일 종가 기준. **가격은 분할+배당 조정(Total Return 방향) 가격 사용 — 배당 미포함 Close-to-Close 아님** (analyzer 설계 [D-5], 2026-07-03 확정. 아래 "조정 종가" 항목 참조)
 - 수익률 범위는 시장(국내/해외)별, 시간대(단기/중기)별로 상이할 수 있다
-- 클래스 불균형 발생 시 SMOTE 또는 가중치 조정 적용 (시장별 독립 적용)
-- 수익률 범위 조정 시점: Phase 2에서 실 데이터 수익률 분포 기반으로 재조정
+- 클래스 불균형 대응: **class weight** 적용 (LightGBM/XGBoost 네이티브 지원, 시장별 독립 적용). SMOTE는 채택하지 않는다 — 시계열 데이터에 합성 샘플은 시간 구조를 무시한 인접 보간이라 Walk-Forward 검증(6.3절)의 학습/검증 경계를 넘는 정보 누출 경로가 될 위험이 있다 (analyzer 설계 [D-10], 2026-07-04 확정)
+- 수익률 범위 조정 시점: 위 경계 확정 절차([D-9]) 참조
 - 조정 기준 원칙: 시장별 클래스 간 균형, 단기/중기별 변동성 차이 반영, 경계값 근처 샘플의 레이블 민감도 검토 (Label Smoothing, 변동성 비례 HOLD 범위 등)
 - Strict Causality: 피처는 추론 시점에 실제로 사용 가능한 데이터만 사용한다 (No Look-Ahead Bias)
-- 조정 종가: `daily_ohlcv`는 원주가(unadjusted)를 저장하고, 배당락·주식분할 조정은 analyzer가 `corporate_events` 기반으로 분석 시점에 계산한다 (store raw, adjust on read) ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md))
+- **조정 종가**: `daily_ohlcv`는 원주가(unadjusted)를 저장하고, 가격 조정은 analyzer가 `corporate_events` 기반으로 분석 시점에 as-of(point-in-time) 계산한다 (store raw, adjust on read) ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md)). 조정 범위는 **분할(SPLIT `stock_rate` 배율) + 배당(`ex_dividend_date`/`cash_amount` 디플레이터, Total Return 방향)** — analyzer 설계 [D-5]에서 확정(2026-07-03). 배당 조정 데이터 확보([aaa-infra#44](https://github.com/jongtix/aaa-infra/issues/44)·[#70](https://github.com/jongtix/aaa-infra/issues/70)·[#71](https://github.com/jongtix/aaa-infra/issues/71))가 Phase 2 학습 착수 전제조건이다
 
-**앙상블 조합 규칙**
+**앙상블 조합 규칙 (analyzer 설계 [D-11], 2026-07-04 확정)**
 
 | 조건 | 최종 신호 |
 |------|-----------|
-| LightGBM과 XGBoost 방향 일치 | 합의 방향으로 확정, confidence = 평균 |
-| LightGBM과 XGBoost 방향 불일치 | HOLD로 강등 또는 낮은 confidence 부여 |
-| 불일치 처리 세부 규칙 | [TBD] (초기 기본값 범위: HOLD 강등 + confidence = min(두 모델)) |
+| LightGBM·XGBoost **방향** 일치 (3방향: 매수=STRONG_BUY/BUY, 중립=HOLD, 매도=SELL/STRONG_SELL — 8.2절) | 보수적으로 낮은 강도 채택 (예: STRONG_BUY+BUY → BUY), confidence = 두 모델 평균 |
+| 방향 불일치 (매수 vs 매도) | HOLD로 강등, confidence = min(두 모델) |
+| 한쪽 BUY/SELL + 한쪽 HOLD (강도만 일치하지 않는 경우) | HOLD로 강등, confidence = min(두 모델) — 완충지대 취지 유지, 초기 오탐 최소화 |
+
+- 개별 모델 신호(LightGBM/XGBoost)는 `trading_signals.lgbm_signal`/`xgb_signal`에 보존 — 앙상블 규칙 사후 튜닝·분석용 (6.2절 `trading_signals` 스키마 참조)
 
 NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 운영 가능하므로 확장은 선택 사항).
 
@@ -1001,15 +1006,15 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
    - WoL 실패 시 3회 재시도 → 최종 실패 시 로그 기록 + 오전 8시 알림
 2. WoL 후 30초 대기 → SSH 접속 시도 (실패 시 10초 간격 최대 6회 재시도)
 3. SSH → MacBook 학습 스크립트 실행
-4. MacBook → NAS MySQL 직접 접속 (로컬 네트워크) → 시장별 전 종목(A·B등급) 수년 일봉 + 종목 속성 피처 조회 (시장별 독립 학습 데이터셋 구성)
-5. 학습 완료 → 모델 파일 NFS/SMB 공유 스토리지에 저장
+4. MacBook → NAS MySQL 접속(SSH 로컬 포트포워딩 터널 경유, 아래 "MacBook → NAS MySQL 접속 보안" 참조) → 시장별 전 종목(A·B등급) 수년 일봉 + 종목 속성 피처 조회 (시장별 독립 학습 데이터셋 구성) → 피처 계산 결과는 맥북 로컬 parquet에 캐시(학습 1회분 소모품, 키=`features_{시장}_{데이터기준일}_{피처코드버전}.parquet` — analyzer 설계 [D-6], 2026-07-03 확정)
+5. 학습 완료 → 모델 파일 NFS/SMB 공유 스토리지에 저장 (버전 보관 정책은 아래 "모델 파일 관리" 참조)
 6. SSH 종료 → analyzer가 완료 인지 (exit code로 성공/실패 판별)
-7. 학습 완료/실패 Micrometer 메트릭 계측 → vmalert 경보 발송 (Phase 2 착수 SPEC에서 상세 정의)
+7. 학습 완료/실패 Prometheus 메트릭 계측(`prometheus_client`) → vmalert 경보 발송 (analyzer 설계 [D-16], 2026-07-04 확정 — Micrometer는 JVM 라이브러리이며 Python 서비스와 무관. Phase 2 착수 SPEC에서 상세 정의)
 
 - 학습 스크립트 타임아웃: 초기값 주간 재학습 4시간, 월간 Optuna 튜닝 36시간 (운영하며 조정). 초과 시 SSH 세션 강제 종료 + 실패 처리
 - 실패 시 처리 (WoL 실패·SSH 접속 실패·학습 실패 공통): 로그 기록 + vmalert 경보 발송. 직전 모델 파일 유지 (다음 추론 시 자동 로드)
 - 모델 미갱신 경고: 모델 파일명의 학습일자(`{시장}_{시간대}_{알고리즘}_{학습일자}.txt`)를 파싱하여 마지막 성공 학습 날짜를 추적. 4주 이상 미갱신 시 vmalert 경보 발송
-- [TBD - Phase 2 착수 전] MacBook → NAS MySQL 접속 보안: 학습 전용 사용자(SELECT만) 분리, TLS/SSH 터널 적용 여부 결정
+- **MacBook → NAS MySQL 접속 보안** (analyzer 설계 [D-19], 2026-07-04 확정): MySQL은 10.3절 원칙("DB/Redis 호스트 바인딩 금지")에 따라 `aaa-network` 도커 브리지 내부에만 존재하므로, MacBook은 **SSH 로컬 포트포워딩 터널**(`ssh -L`, 기존 NAS 관리자 SSH 접근 재사용, 공개키 인증)로 접속한다 — 신규 네트워크 노출 없음. 접속 계정은 **`trainer`**(`SELECT ON aaa.* `만, `analyzer` 런타임 계정의 `trading_signals` INSERT 권한과 분리 — 최소 권한 원칙, 4절 계정 명명 컨벤션 준수). SSH 자체는 위 "SSH 보안 최소 조치" 그대로 적용
 
 **SSH 보안 최소 조치** (NAS ↔ MacBook, 동일 LAN 전제):
 - 비밀번호 인증 비활성화 (`PasswordAuthentication no`), 공개키 인증만 허용
@@ -1023,7 +1028,9 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 - 저장 포맷: LightGBM/XGBoost 네이티브 포맷(`.txt`, `.json`, `.ubj`)만 사용. 역직렬화 보안 위험이 있는 포맷 사용 금지
 - 저장 경로: NFS/SMB 공유 스토리지 내 `models/{시장}/{시간대}/{알고리즘}/`
 - 파일명: `{시장}_{시간대}_{알고리즘}_{학습일자}.txt` (예: `domestic_20d_lgbm_20260301.txt`)
-- 버전 보관: 최근 [TBD] 버전 보관, 이전 버전 자동 삭제
+- **버전 보관** (analyzer 설계 [D-14], 2026-07-04 확정): 삭제 없는 이층 보관.
+  - **active**(위 경로, 비압축): 최근 **12버전**(주간 재학습 기준 약 3개월) — 추론 Lazy Load·롤백·성능 추이 비교 창
+  - **archive**(HDD 별도 경로, 무기한): active에서 밀려난 파일을 학습일자 **월 단위**로 `archive/{YYYY-MM}.tar.zst` 묶음 압축 보관(manifest 동봉, tar 무결성 검증 후 원본 삭제). `trading_signals.model_version`이 무기한 쌓이므로 과거 신호 재현·사후 분석을 위해 모델을 삭제하지 않는다(트리 부스팅 재학습은 완전 재현 비보장). 이동·압축은 학습 파이프라인이 저장 시점에 수행
 - 무결성 검증: 학습 완료 시 SHA-256 해시 파일(`.sha256`)을 모델과 함께 저장. 추론 시 모델 로드 전 해시 검증 → 불일치 시 로드 거부 + 직전 모델 유지 + 로그 기록
 
 **모델 로드 전략** (aaa-analyzer):
@@ -1048,6 +1055,10 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 
 **Walk-Forward 분할 비율**: 학습 70% / 검증 15% / 테스트 15% (초기 기본값, 파라미터 외부화). Phase 2 실 데이터 기반 수익률 분포 검증 시 최종 조정
 
+**Walk-Forward 상세** (analyzer 설계 [D-13], 2026-07-04 확정):
+- **fold 구성**: expanding window(학습 구간을 점진적으로 확장하며 검증 구간을 앞으로 이동). fold 수는 SPEC(ANALYZER-TRAIN-001) 구현 단계에서 학습 시간 실측 후 확정(타임아웃 4시간 내)
+- **purge gap 필수 적용**: 레이블이 예측 기간(단기 20영업일/중기 60영업일, 6.1절) 종료 시점의 미래 수익률을 참조하므로, 학습/검증 경계에서 **horizon 길이만큼**(D20=20영업일, D60=60영업일) 샘플을 제외한다. 미적용 시 학습 구간 마지막 샘플의 레이블이 검증 구간 가격을 포함하는 데이터 리크가 발생한다
+
 ### 6.4 성능 모니터링
 
 | 지표 | 정의 | 임계값 |
@@ -1059,9 +1070,10 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 
 > 목표 방향(단순 매수보유 대비 향상)은 [PRD 3절](PRD.md#3-성공-지표-success-metrics) 참조.
 
-**체제 감지 (Regime Detection)**:
-- VIX > [TBD] 또는 국채 금리 급변 시 → 신호 자동 억제 (HOLD 강제)
-- 억제 조건 해제 기준: [TBD]
+**체제 감지 (Regime Detection)** (analyzer 설계 [D-15], 2026-07-04 확정 — 구조 확정, 수치는 SPEC에서 발동 빈도 실측 후 확정):
+- **발동**: 지표 3종 **OR** 조건 — VIX 종가 > 30 **또는** VIX 5거래일 변화 > +50% **또는** DGS10(미 10년물 금리) 5거래일 변화 > ±50bp (원천 데이터는 `market_indicators`/`macro_indicators`, collector 기수집). 초안 수치는 SPEC(ANALYZER-REGIME-OBSV-001)에서 백테스트 기간 발동 빈도(연 몇 회·총 며칠) 실측으로 확정한다 — 과다 발동은 신호를 무의미화하고, 과소 발동은 장치를 무의미화하므로 양쪽을 검증한다
+- **해제**: 발동 조건 전부 미충족 상태가 5거래일 연속(히스테리시스 — 경계 근처에서 발동/해제가 매일 튀는 것 방지)
+- **억제 시 동작**: 신호는 계산하되 최종 HOLD로 강제하고 `trading_signals.regime_suppressed=true` 저장(모델 자체 판단 HOLD와 체제 억제 HOLD를 구분 — 원신호는 `lgbm_signal`/`xgb_signal`에 보존되어 사후 성능 분석 가능)
 - 체제 감지 발동/해제 시 텔레그램 알림
 
 **성능 저하 알림 조건**: [TBD]
@@ -1299,6 +1311,8 @@ WebSocket 실시간 체결/호가 데이터는 ML 학습 피처로 사용하지 
 - 구체 임계값: [TBD]
 
 ### 8.5 Tier 분류 기준
+
+**confidence 산출식** (analyzer 설계 [D-12], 2026-07-04 확정): **방향별 확률 합** — 매수 신호면 P(STRONG_BUY)+P(BUY), 매도 신호면 P(SELL)+P(STRONG_SELL). 등급(`signal`)이 크기(수익률 규모, 6.1절 레이블 경계 소관)를, confidence가 방향 확신(그 방향 판단이 맞을 확률)을 각각 전달하는 역할 분리 설계다 — 5클래스 중 예측 클래스 하나의 확률만 쓰면 인접 등급으로 분산된 확신을 과소평가하고 반대 방향 확률과의 구분력을 잃는다. 산출식은 모델 메타(`trading_signals.model_version` 귀속)에 기록한다.
 
 | Tier | 조건 | 라우팅 |
 |------|------|--------|
@@ -1670,11 +1684,11 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 | Phase | 참조 위치 | 내용 |
 |-------|-----------|------|
 | Phase 1 | 10.3절 | Actuator 엔드포인트 제한, FastAPI docs 비활성화 |
-| Phase 2 | 6.2절 | MacBook → NAS 접속 보안 (학습 전용 사용자, TLS/SSH 터널) |
+| Phase 2 | 6.2절 | MacBook → NAS 접속 보안: **확정** — SSH 로컬 포트포워딩 터널 + `trainer` SELECT-only 전용 계정 (analyzer 설계 [D-19], 2026-07-04) |
 | Phase 3 | 1.4절 | 봇 토큰 유출 시 대응 절차 |
 | Phase 4 | 9.3절 | 2차 인증 메커니즘, 명령 입력값 검증 |
 
 
 ---
 
-*최종 업데이트: 2026-03-02*
+*최종 업데이트: 2026-07-04 (analyzer Phase 2 설계 결정 반영 — 5.1/6.1/6.2/6.3/6.4/8.5/12절)*
