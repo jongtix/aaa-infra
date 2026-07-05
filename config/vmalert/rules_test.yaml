@@ -887,6 +887,227 @@ tests:
               summary: "무게이트 배치 신선도 갭 — dart-backfill > 28h 미적재"
               description: "매일 배치 dart-backfill 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
 
+  # ===========================================================================
+  # 룰 W1: collector-watermark-deadman — REQ-WM-016 / AC-6
+  # ===========================================================================
+  # 시리즈 길이: 10m30s = 630s → N = 630/30 = 21
+
+  # TI-WM-DM-001. [발화] daily-ohlcv-krx 시계열 소실(daily-ohlcv-us만 존재) → 10m 후 발화(단일 시리즈 소실).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '100000+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-watermark-deadman
+        alertname: CollectorWatermarkSeriesMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              series: daily-ohlcv-krx
+              tier: PAGE
+            exp_annotations:
+              summary: "PAGE 대상 워터마크 시계열 소실 — daily-ohlcv-krx/us"
+              description: "aaa_collector_data_watermark_seconds{series=\"daily-ohlcv-krx\" 또는 \"daily-ohlcv-us\"}가 10분 이상 부재. 단일 시리즈 소실 감시(REQ-WM-016)."
+
+  # TI-WM-DM-002. [무발화] daily-ohlcv-krx/us 둘 다 존재 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '100000+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-watermark-deadman
+        alertname: CollectorWatermarkSeriesMissing
+        exp_alerts: []
+
+  # TI-WM-DM-003. [발화] 시계열 5종만 노출(사전 17종 미달) → count<17 10m 지속 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="investor-trend",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="credit-balance",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="short-sale-domestic",market="domestic"}'
+        values: '100000+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-watermark-deadman
+        alertname: CollectorWatermarkSeriesCountLow
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "워터마크 시계열 개수 부족 — 5 < 17"
+              description: "aaa_collector_data_watermark_seconds 노출 시계열 수가 사전 크기(17) 미만으로 10분 이상 지속. 부분 소실 감시(REQ-WM-016)."
+
+  # TI-WM-DM-004. [무발화] 17종 전부 노출 → count==17, 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="investor-trend",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="credit-balance",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="short-sale-domestic",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="short-sale-overseas-daily",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="short-sale-overseas-interest",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="market-usdkrw",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="market-vix",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="macro-ecos",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="macro-fred",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="analyst-estimates",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="disclosures",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="news-domestic",market="domestic"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="news-overseas",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="extended-hours-pre",market="overseas"}'
+        values: '100000+0x21'
+      - series: 'aaa_collector_data_watermark_seconds{series="extended-hours-after",market="overseas"}'
+        values: '100000+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-watermark-deadman
+        alertname: CollectorWatermarkSeriesCountLow
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 W2: collector-watermark-freshness-immediate — REQ-WM-017 즉시형 / AC-2 / AC-3
+  # ===========================================================================
+  # 시리즈 길이: 4h5m = 14700s → N = 14700/30 = 490
+
+  # TI-WM-FR-001. [발화, PAGE] daily-ohlcv-krx: expected-watermark diff=10000(>0) 상시 → 4h 지속 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x491'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '90000+0x491'
+    alert_rule_test:
+      - eval_time: 4h5m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStalePage
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              series: daily-ohlcv-krx
+              market: domestic
+              tier: PAGE
+            exp_annotations:
+              summary: "일봉 워터마크 신선도 갭 — daily-ohlcv-krx 4h 초과"
+              description: "expected_watermark 대비 data_watermark(daily-ohlcv-krx)가 세션 마감 후 4h 이상 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+
+  # TI-WM-FR-002. [무발화, for 미충족] 동일 조건이나 eval_time=3h55m(< 4h) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x475'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '90000+0x475'
+    alert_rule_test:
+      - eval_time: 3h55m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStalePage
+        exp_alerts: []
+
+  # TI-WM-FR-003. [무발화, diff==0] expected==watermark(휴장일 등 정상 동기) → 4h5m 경과해도 미발화(AC-3).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x491'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '100000+0x491'
+    alert_rule_test:
+      - eval_time: 4h5m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStalePage
+        exp_alerts: []
+
+  # TI-WM-FR-004. [발화, TICKET 4h] investor-trend diff>0 상시 → 4h 지속 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x491'
+      - series: 'aaa_collector_data_watermark_seconds{series="investor-trend",market="domestic"}'
+        values: '90000+0x491'
+    alert_rule_test:
+      - eval_time: 4h5m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleTicket4h
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: investor-trend
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "워터마크 신선도 갭 — investor-trend 4h 초과"
+              description: "expected_watermark 대비 data_watermark(investor-trend)가 세션 마감 후 4h 이상 뒤처짐(REQ-WM-017 즉시형)."
+
+  # ===========================================================================
+  # 룰 W3: collector-watermark-freshness-lag — REQ-WM-017 lag 허용형
+  # ===========================================================================
+  # 시리즈 길이: 1h5m = 3900s → N = 3900/30 = 130
+
+  # TI-WM-LAG-001. [발화] credit-balance diff=600000s(>6d=518400s) 상시 → for:1h 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '700000+0x131'
+      - series: 'aaa_collector_data_watermark_seconds{series="credit-balance",market="domestic"}'
+        values: '100000+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagStale6d
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: credit-balance
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "워터마크 lag 허용 초과 — credit-balance 6일 초과"
+              description: "expected_watermark 대비 data_watermark(credit-balance)가 정당 지연 허용치(6일)를 초과(REQ-WM-017 lag 허용형)."
+
+  # TI-WM-LAG-002. [무발화] credit-balance diff=500000s(<6d=518400s, 정당 지연 범위) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '600000+0x131'
+      - series: 'aaa_collector_data_watermark_seconds{series="credit-balance",market="domestic"}'
+        values: '100000+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagStale6d
+        exp_alerts: []
+
   # ====================================================================
   # SPEC-OBSV-SYSALERT-001: collector-safemode 룰 유닛테스트
   # ===========================================================================

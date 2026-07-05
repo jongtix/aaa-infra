@@ -378,6 +378,177 @@ groups:
           description: "매일 배치 {{ $labels.batch }} 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
 
   # ---------------------------------------------------------------------------
+  # 그룹 W1: 워터마크 데드맨 스위치 — REQ-WM-016
+  # ---------------------------------------------------------------------------
+  # PAGE 대상 시리즈(daily-ohlcv-krx/us) 중 하나라도 소실되거나, 17시계열 사전 전체가 부족하면 발화.
+  # `for: 10m` — 스크랩 staleness(~5m)보다 길게 잡아 CollectorDown과의 중복 발화를 억제한다(MI-08,
+  #   Alertmanager inhibit 대안 채택 — 별도 inhibit_rule 미도입).
+  - name: collector-watermark-deadman
+    interval: 30s
+    rules:
+      - alert: CollectorWatermarkSeriesMissing
+        expr: |
+          absent(aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx"})
+          or absent(aaa_collector_data_watermark_seconds{series="daily-ohlcv-us"})
+        for: 10m
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "PAGE 대상 워터마크 시계열 소실 — daily-ohlcv-krx/us"
+          description: "aaa_collector_data_watermark_seconds{series=\"daily-ohlcv-krx\" 또는 \"daily-ohlcv-us\"}가 10분 이상 부재. 단일 시리즈 소실 감시(REQ-WM-016)."
+
+      # [유지보수 HARD] 임계 17은 §3 사전(시리즈 사전) 크기와 동기화되어야 한다.
+      #   시리즈 사전에 항목을 추가/제거하면 이 임계값을 함께 갱신할 것(MI-05).
+      - alert: CollectorWatermarkSeriesCountLow
+        expr: count(aaa_collector_data_watermark_seconds) < 17
+        for: 10m
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "워터마크 시계열 개수 부족 — {{ $value }} < 17"
+          description: "aaa_collector_data_watermark_seconds 노출 시계열 수가 사전 크기(17) 미만으로 10분 이상 지속. 부분 소실 감시(REQ-WM-016)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 W2: 워터마크 신선도 — 즉시형(REQ-WM-017 §4.1)
+  # ---------------------------------------------------------------------------
+  # (expected - on(market) group_right data_watermark{series=...}) > 0 이 deadline 동안 지속되면 발화.
+  # group_right — data_watermark(시장당 여러 series)가 "many"측, expected(시장당 1개)가 "one"측이므로
+  #   many측 라벨(series 포함)이 결과 벡터에 자동 보존된다.
+  - name: collector-watermark-freshness-immediate
+    interval: 30s
+    rules:
+      # daily-ohlcv-krx/us — PAGE, 4h(§4.1)
+      - alert: CollectorWatermarkFreshnessStalePage
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"daily-ohlcv-krx|daily-ohlcv-us"}
+          ) > 0
+        for: 4h
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "일봉 워터마크 신선도 갭 — {{ $labels.series }} 4h 초과"
+          description: "expected_watermark 대비 data_watermark({{ $labels.series }})가 세션 마감 후 4h 이상 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+
+      # market-usdkrw / investor-trend / short-sale-domestic — TICKET, 4h
+      - alert: CollectorWatermarkFreshnessStaleTicket4h
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"market-usdkrw|investor-trend|short-sale-domestic"}
+          ) > 0
+        for: 4h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 신선도 갭 — {{ $labels.series }} 4h 초과"
+          description: "expected_watermark 대비 data_watermark({{ $labels.series }})가 세션 마감 후 4h 이상 뒤처짐(REQ-WM-017 즉시형)."
+
+      # extended-hours-pre / extended-hours-after — TICKET, 6h(US 마감 기산)
+      - alert: CollectorWatermarkFreshnessStaleTicket6h
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"extended-hours-pre|extended-hours-after"}
+          ) > 0
+        for: 6h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 신선도 갭 — {{ $labels.series }} 6h 초과"
+          description: "expected_watermark(US) 대비 data_watermark({{ $labels.series }})가 US 세션 마감 후 6h 이상 뒤처짐(REQ-WM-017 즉시형)."
+
+      # disclosures — TICKET, 8h
+      - alert: CollectorWatermarkFreshnessStaleTicket8h
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="disclosures"}
+          ) > 0
+        for: 8h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 신선도 갭 — disclosures 8h 초과"
+          description: "expected_watermark 대비 data_watermark(disclosures)가 세션 마감 후 8h 이상 뒤처짐(REQ-WM-017 즉시형)."
+
+      # market-vix — TICKET, 24h
+      - alert: CollectorWatermarkFreshnessStaleTicket24h
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="market-vix"}
+          ) > 0
+        for: 24h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 신선도 갭 — market-vix 24h 초과"
+          description: "expected_watermark(US) 대비 data_watermark(market-vix)가 세션 마감 후 24h 이상 뒤처짐(REQ-WM-017 즉시형)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 W3: 워터마크 신선도 — lag 허용형(REQ-WM-017 §4.1)
+  # ---------------------------------------------------------------------------
+  # 정당한 T+N 지연을 허용하고 초과분만 감지: (expected - watermark) > N일, debounce for:1h.
+  - name: collector-watermark-freshness-lag
+    interval: 30s
+    rules:
+      # credit-balance(T+3영업일) / macro-fred(T+2영업일) — TICKET, >6d
+      - alert: CollectorWatermarkFreshnessLagStale6d
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"credit-balance|macro-fred"}
+          ) > 6 * 24 * 3600
+        for: 1h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 lag 허용 초과 — {{ $labels.series }} 6일 초과"
+          description: "expected_watermark 대비 data_watermark({{ $labels.series }})가 정당 지연 허용치(6일)를 초과(REQ-WM-017 lag 허용형)."
+
+      # analyst-estimates(T+1 희소) — TICKET, >5d
+      - alert: CollectorWatermarkFreshnessLagStale5d
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="analyst-estimates"}
+          ) > 5 * 24 * 3600
+        for: 1h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 lag 허용 초과 — analyst-estimates 5일 초과"
+          description: "expected_watermark 대비 data_watermark(analyst-estimates)가 정당 지연 허용치(5일)를 초과(REQ-WM-017 lag 허용형)."
+
+      # macro-ecos(잠정) — TICKET, >4d
+      - alert: CollectorWatermarkFreshnessLagStale4d
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="macro-ecos"}
+          ) > 4 * 24 * 3600
+        for: 1h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 lag 허용 초과 — macro-ecos 4일 초과"
+          description: "expected_watermark 대비 data_watermark(macro-ecos)가 정당 지연 허용치(4일, 잠정)를 초과(REQ-WM-017 lag 허용형)."
+
+  # ---------------------------------------------------------------------------
   # 그룹 10: 안전 모드 진입/해제 — SPEC-OBSV-SYSALERT-001
   # ---------------------------------------------------------------------------
   # collector가 KIS 토큰·WebSocket 안전 모드에 진입/해제할 때 즉시 경보.
