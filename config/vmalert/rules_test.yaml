@@ -937,15 +937,15 @@ tests:
         alertname: NodeDiskWarning1
         exp_alerts: []
 
-  # TI-NODE-006. [RAM] NodeMemoryWarning1 발화 — 75%(MemAvailable=25) > 70%, 6m (AC-4a / REQ-NE-008)
+  # TI-NODE-006. [RAM] NodeMemoryWarning1 발화 — 85%(MemAvailable=15) > 80%, 11m (AC-4a / REQ-NE-008, 2026-07-05 임계 상향)
   - interval: 60s
     input_series:
       - series: 'node_memory_MemAvailable_bytes'
-        values: '25+0x7'
+        values: '15+0x12'
       - series: 'node_memory_MemTotal_bytes'
-        values: '100+0x7'
+        values: '100+0x12'
     alert_rule_test:
-      - eval_time: 6m
+      - eval_time: 11m
         groupname: node-resource
         alertname: NodeMemoryWarning1
         exp_alerts:
@@ -953,31 +953,31 @@ tests:
               severity: warning
               component: node
             exp_annotations:
-              summary: "RAM 사용률 경고(1단계) — > 70%"
-              description: "호스트 메모리 사용률 75% > 70%. 5분 지속."
+              summary: "RAM 사용률 경고(1단계) — > 80%"
+              description: "호스트 메모리 사용률 85% > 80%. 10분 지속."
 
-  # TI-NODE-007. [RAM] NodeMemoryWarning1 미발화 — 60%(MemAvailable=40) < 70%, 6m (AC-4b / REQ-NE-008)
+  # TI-NODE-007. [RAM] NodeMemoryWarning1 미발화 — 75%(MemAvailable=25) < 80%, 11m (AC-4b / REQ-NE-008, 2026-07-05 임계 상향)
   - interval: 60s
     input_series:
       - series: 'node_memory_MemAvailable_bytes'
-        values: '40+0x7'
+        values: '25+0x12'
       - series: 'node_memory_MemTotal_bytes'
-        values: '100+0x7'
+        values: '100+0x12'
     alert_rule_test:
-      - eval_time: 6m
+      - eval_time: 11m
         groupname: node-resource
         alertname: NodeMemoryWarning1
         exp_alerts: []
 
-  # TI-NODE-008. [RAM] NodeMemoryWarning2 발화 — 85%(MemAvailable=15) > 80%, 6m (AC-4a / REQ-NE-009)
+  # TI-NODE-008. [RAM] NodeMemoryWarning2 발화 — 92%(MemAvailable=8) > 90%, 11m (AC-4a / REQ-NE-009, 2026-07-05 임계 상향)
   - interval: 60s
     input_series:
       - series: 'node_memory_MemAvailable_bytes'
-        values: '15+0x7'
+        values: '8+0x12'
       - series: 'node_memory_MemTotal_bytes'
-        values: '100+0x7'
+        values: '100+0x12'
     alert_rule_test:
-      - eval_time: 6m
+      - eval_time: 11m
         groupname: node-resource
         alertname: NodeMemoryWarning2
         exp_alerts:
@@ -985,18 +985,18 @@ tests:
               severity: warning
               component: node
             exp_annotations:
-              summary: "RAM 사용률 경고(2단계) — > 80%"
-              description: "호스트 메모리 사용률 85% > 80%. 5분 지속."
+              summary: "RAM 사용률 경고(2단계) — > 90%"
+              description: "호스트 메모리 사용률 92% > 90%. 10분 지속."
 
-  # TI-NODE-009. [RAM] NodeMemoryCritical 발화 — 95%(MemAvailable=5) > 90%, 3m (AC-4a / REQ-NE-010)
+  # TI-NODE-009. [RAM] NodeMemoryCritical 발화 — 97%(MemAvailable=3) > 95%, 4m (AC-4a / REQ-NE-010, 2026-07-05 임계 상향)
   - interval: 60s
     input_series:
       - series: 'node_memory_MemAvailable_bytes'
-        values: '5+0x4'
+        values: '3+0x5'
       - series: 'node_memory_MemTotal_bytes'
-        values: '100+0x4'
+        values: '100+0x5'
     alert_rule_test:
-      - eval_time: 3m
+      - eval_time: 4m
         groupname: node-resource
         alertname: NodeMemoryCritical
         exp_alerts:
@@ -1004,8 +1004,8 @@ tests:
               severity: critical
               component: node
             exp_annotations:
-              summary: "RAM 사용률 위험(3단계) — > 90%"
-              description: "호스트 메모리 사용률 95% > 90%. 2분 지속 — OOM Killer 위험."
+              summary: "RAM 사용률 위험(3단계) — > 95%"
+              description: "호스트 메모리 사용률 97% > 95%. 3분 지속 — OOM Killer 위험."
 
   # TI-NODE-010. [CPU] NodeCpuWarning1 발화 — load5=3.0(75%) > 70%, 6m (AC-5a / REQ-NE-011)
   - interval: 60s

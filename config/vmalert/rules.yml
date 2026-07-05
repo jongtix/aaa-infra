@@ -377,36 +377,36 @@ groups:
           summary: "디스크 사용률 위험(3단계) — {{ $labels.mountpoint }} > 90%"
           description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 90%. 2분 지속 — 쓰기 실패 임박."
 
-      # --- RAM: 사용률 70/80/90% ---
+      # --- RAM: 사용률 80/90/95% (8GB NAS 상시 60~70%대 운영 패턴 반영, 2026-07-05 상향) ---
       - alert: NodeMemoryWarning1
-        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.70
-        for: 5m
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.80
+        for: 10m
         labels:
           severity: warning
           component: node
         annotations:
-          summary: "RAM 사용률 경고(1단계) — > 70%"
-          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 70%. 5분 지속."
+          summary: "RAM 사용률 경고(1단계) — > 80%"
+          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 80%. 10분 지속."
 
       - alert: NodeMemoryWarning2
-        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.80
-        for: 5m
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
+        for: 10m
         labels:
           severity: warning
           component: node
         annotations:
-          summary: "RAM 사용률 경고(2단계) — > 80%"
-          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 80%. 5분 지속."
+          summary: "RAM 사용률 경고(2단계) — > 90%"
+          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 90%. 10분 지속."
 
       - alert: NodeMemoryCritical
-        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
-        for: 2m
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.95
+        for: 3m
         labels:
           severity: critical
           component: node
         annotations:
-          summary: "RAM 사용률 위험(3단계) — > 90%"
-          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 90%. 2분 지속 — OOM Killer 위험."
+          summary: "RAM 사용률 위험(3단계) — > 95%"
+          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 95%. 3분 지속 — OOM Killer 위험."
 
       # --- CPU: node_load5/4 70/85/90% ---
       # node_load5/4: 5분 부하평균 ÷ 코어수(4, N100 하드코딩). 순수 CPU 사용률이 아닌 프록시.
