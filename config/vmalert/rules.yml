@@ -549,6 +549,117 @@ groups:
           description: "expected_watermark 대비 data_watermark(macro-ecos)가 정당 지연 허용치(4일, 잠정)를 초과(REQ-WM-017 lag 허용형)."
 
   # ---------------------------------------------------------------------------
+  # 그룹 W4: 워터마크 커버리지 — REQ-WM-018
+  # ---------------------------------------------------------------------------
+  # ACTIVE 커버리지 시리즈(daily-ohlcv-krx/us만, 유니버스 정제 전제)의 coverage_ratio<0.95가 1h 지속.
+  - name: collector-watermark-coverage
+    interval: 30s
+    rules:
+      - alert: CollectorWatermarkCoverageLow
+        expr: aaa_collector_data_coverage_ratio{series=~"daily-ohlcv-krx|daily-ohlcv-us"} < 0.95
+        for: 1h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "워터마크 커버리지 미달 — {{ $labels.series }} < 0.95"
+          description: "{{ $labels.series }} coverage_ratio {{ $value }} < 0.95가 1h 이상 지속(REQ-WM-018). 일1회 계산이라 해소 후 최대 ~24h 잔류 가능(MI-06)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 W5: 백필 이상 — REQ-WM-019(clamp) / REQ-WM-020(정체)
+  # ---------------------------------------------------------------------------
+  - name: collector-backfill-anomaly
+    interval: 30s
+    rules:
+      - alert: CollectorBackfillClampSuspected
+        expr: increase(aaa_collector_backfill_clamp_suspected_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "백필 clamp 의심 — 1h 내 증가"
+          description: "aaa_collector_backfill_clamp_suspected_total이 1h 내 증가. KIS 응답 클램프로 인한 조기 COMPLETED 오판 의심(REQ-WM-019)."
+
+      # pending_slots(PENDING+IN_PROGRESS)>0 이면서 26h 동안 windows_total 무전진 → 정체.
+      # FAILED 종결·전량 COMPLETED 시 pending_slots=0이 되어 발화하지 않는다(MI-09).
+      - alert: CollectorBackfillStalled
+        expr: |
+          (aaa_collector_backfill_pending_slots > 0)
+          and (increase(aaa_collector_backfill_windows_total[26h]) == 0)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "백필 정체 — pending_slots > 0 그리고 26h 무전진"
+          description: "미완료 백필 슬롯이 잔존하나 26h 동안 windows_total 증가 없음(REQ-WM-020). progress_ratio 절대값으로는 판단하지 않음(lazy 시딩 분모 증가 시 정당 하락)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 W6: 틱 침묵 — REQ-WM-021(국내) / REQ-WM-028(해외)
+  # ---------------------------------------------------------------------------
+  - name: collector-tick-silence
+    interval: 30s
+    rules:
+      # 국내 장중 구독>0인데 국내 틱이 300초 이상 침묵(absent 포함) → PAGE.
+      - alert: CollectorTickSilentDomestic
+        expr: |
+          (aaa_collector_market_open == 1)
+          and on() (aaa_collector_tick_active_subscriptions > 0)
+          and on() (
+            absent(aaa_collector_tick_last_seen_seconds{market="domestic"})
+            or (time() - max(aaa_collector_tick_last_seen_seconds{market="domestic"}) > 300)
+          )
+        for: 0m
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "국내 틱 침묵 — 300초 이상 무수신"
+          description: "국내 장중(market_open==1) 구독>0 상태에서 tick_last_seen_seconds{market=\"domestic\"}가 300초 이상 갱신되지 않거나 부재(REQ-WM-021, absent-aware)."
+
+      # US 세션 중(holiday_count>=20 가드) 구독>0인데 해외 틱이 300초 이상 침묵(absent 포함) → PAGE.
+      # 반일 조기폐장 오탐은 REQ-WM-030(us_market_open 13:00 ET 이후 0 보정)이 해소.
+      - alert: CollectorTickSilentOverseas
+        expr: |
+          (aaa_collector_us_market_open == 1)
+          and on() (aaa_collector_us_market_gate_holiday_count >= 20)
+          and on() (aaa_collector_tick_active_subscriptions > 0)
+          and on() (
+            absent(aaa_collector_tick_last_seen_seconds{market="overseas"})
+            or (time() - max(aaa_collector_tick_last_seen_seconds{market="overseas"}) > 300)
+          )
+        for: 0m
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "해외 틱 침묵 — 300초 이상 무수신"
+          description: "US 세션 중(us_market_open==1, holiday_count>=20) 구독>0 상태에서 tick_last_seen_seconds{market=\"overseas\"}가 300초 이상 갱신되지 않거나 부재(REQ-WM-028, 결정 4)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 W7: silent_drops — REQ-WM-022
+  # ---------------------------------------------------------------------------
+  - name: collector-silent-drops
+    interval: 30s
+    rules:
+      - alert: CollectorSilentDropsDetected
+        expr: increase(aaa_collector_batch_silent_drops_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "silent_drops 증가 — 1h 내 발생"
+          description: "aaa_collector_batch_silent_drops_total(총합, 라벨 없음)이 1h 내 증가. INSERT IGNORE 중복 제외분 감시(REQ-WM-022)."
+
+  # ---------------------------------------------------------------------------
   # 그룹 10: 안전 모드 진입/해제 — SPEC-OBSV-SYSALERT-001
   # ---------------------------------------------------------------------------
   # collector가 KIS 토큰·WebSocket 안전 모드에 진입/해제할 때 즉시 경보.

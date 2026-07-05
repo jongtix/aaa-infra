@@ -1108,6 +1108,251 @@ tests:
         alertname: CollectorWatermarkFreshnessLagStale6d
         exp_alerts: []
 
+  # ===========================================================================
+  # 룰 W4: collector-watermark-coverage — REQ-WM-018 / AC-7
+  # ===========================================================================
+  # 시리즈 길이: 1h5m = 3900s → N = 130
+
+  # TI-WM-COV-001. [발화] daily-ohlcv-krx coverage=0.90(<0.95) 상시 → for:1h 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_data_coverage_ratio{series="daily-ohlcv-krx"}'
+        values: '0.90+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-watermark-coverage
+        alertname: CollectorWatermarkCoverageLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: daily-ohlcv-krx
+              tier: TICKET
+            exp_annotations:
+              summary: "워터마크 커버리지 미달 — daily-ohlcv-krx < 0.95"
+              description: "daily-ohlcv-krx coverage_ratio 0.9 < 0.95가 1h 이상 지속(REQ-WM-018). 일1회 계산이라 해소 후 최대 ~24h 잔류 가능(MI-06)."
+
+  # TI-WM-COV-002. [무발화] daily-ohlcv-krx coverage=0.96(>=0.95) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_data_coverage_ratio{series="daily-ohlcv-krx"}'
+        values: '0.96+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-watermark-coverage
+        alertname: CollectorWatermarkCoverageLow
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 W5: collector-backfill-anomaly — REQ-WM-019(clamp) / REQ-WM-020(정체) / AC-8
+  # ===========================================================================
+
+  # TI-WM-BF-001. [발화] clamp_suspected_total 5분 내 증가 → CollectorBackfillClampSuspected 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_clamp_suspected_total'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillClampSuspected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "백필 clamp 의심 — 1h 내 증가"
+              description: "aaa_collector_backfill_clamp_suspected_total이 1h 내 증가. KIS 응답 클램프로 인한 조기 COMPLETED 오판 의심(REQ-WM-019)."
+
+  # 시리즈 길이: 26h5m = 93900s → N = 93900/30 = 3130
+
+  # TI-WM-BF-002. [발화] pending_slots>0 상시 + windows_total 26h 무증가 → 정체 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_pending_slots'
+        values: '5+0x3131'
+      - series: 'aaa_collector_backfill_windows_total'
+        values: '10+0x3131'
+    alert_rule_test:
+      - eval_time: 26h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "백필 정체 — pending_slots > 0 그리고 26h 무전진"
+              description: "미완료 백필 슬롯이 잔존하나 26h 동안 windows_total 증가 없음(REQ-WM-020). progress_ratio 절대값으로는 판단하지 않음(lazy 시딩 분모 증가 시 정당 하락)."
+
+  # TI-WM-BF-003. [무발화] pending_slots==0(전량 종결) → 정체 판정 미실행(MI-09).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_pending_slots'
+        values: '0+0x3131'
+      - series: 'aaa_collector_backfill_windows_total'
+        values: '10+0x3131'
+    alert_rule_test:
+      - eval_time: 26h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillStalled
+        exp_alerts: []
+
+  # TI-WM-BF-004. [무발화] pending_slots>0 이지만 windows_total이 26h 이내에 전진(increase>0) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_pending_slots'
+        values: '5+0x3131'
+      - series: 'aaa_collector_backfill_windows_total'
+        values: '0+0x1000 1+0x2131'
+    alert_rule_test:
+      - eval_time: 26h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillStalled
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 W6: collector-tick-silence — REQ-WM-021(국내) / REQ-WM-028(해외) / AC-11 / AC-12
+  # ===========================================================================
+
+  # TI-WM-TICK-001. [발화, PAGE] 국내 장중 구독>0인데 tick_last_seen_seconds{market="domestic"} 시계열 자체가
+  #      부재(absent) → CollectorTickSilentDomestic 즉시 발화(absent-aware).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentDomestic
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "국내 틱 침묵 — 300초 이상 무수신"
+              description: "국내 장중(market_open==1) 구독>0 상태에서 tick_last_seen_seconds{market=\"domestic\"}가 300초 이상 갱신되지 않거나 부재(REQ-WM-021, absent-aware)."
+
+  # TI-WM-TICK-002. [무발화] 국내 휴장(market_open==0) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '0+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentDomestic
+        exp_alerts: []
+
+  # TI-WM-TICK-003. [무발화] 국내 틱이 지속 수신 중(last_seen이 time()과 함께 전진) → 미발화.
+  # last_seen 값이 30초 간격으로 함께 전진 → time()-max(last_seen) 항상 작게 유지(diff<300).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x21'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x21'
+      - series: 'aaa_collector_tick_last_seen_seconds{symbol="005930",market="domestic"}'
+        values: '0+30x21'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentDomestic
+        exp_alerts: []
+
+  # TI-WM-TICK-004. [발화, PAGE] US 세션 중(holiday_count>=20 가드 통과)인데 해외 틱 시계열 부재(absent)
+  #      → CollectorTickSilentOverseas 즉시 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_us_market_open'
+        values: '1+0x5'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '25+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentOverseas
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "해외 틱 침묵 — 300초 이상 무수신"
+              description: "US 세션 중(us_market_open==1, holiday_count>=20) 구독>0 상태에서 tick_last_seen_seconds{market=\"overseas\"}가 300초 이상 갱신되지 않거나 부재(REQ-WM-028, 결정 4)."
+
+  # TI-WM-TICK-005. [무발화] holiday_count<20(게이트 init 미완료, fail-open 가드) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_us_market_open'
+        values: '1+0x5'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '10+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentOverseas
+        exp_alerts: []
+
+  # TI-WM-TICK-006. [무발화] US 장외(us_market_open==0) → 미발화(반일 조기폐장 REQ-WM-030 보정 시나리오 포함).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_us_market_open'
+        values: '0+0x5'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '25+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentOverseas
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 W7: collector-silent-drops — REQ-WM-022
+  # ===========================================================================
+
+  # TI-WM-SD-001. [발화] silent_drops_total 5분 내 증가 → CollectorSilentDropsDetected 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_silent_drops_total'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-silent-drops
+        alertname: CollectorSilentDropsDetected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "silent_drops 증가 — 1h 내 발생"
+              description: "aaa_collector_batch_silent_drops_total(총합, 라벨 없음)이 1h 내 증가. INSERT IGNORE 중복 제외분 감시(REQ-WM-022)."
+
+  # TI-WM-SD-002. [무발화] silent_drops_total 변화 없음 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_silent_drops_total'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-silent-drops
+        alertname: CollectorSilentDropsDetected
+        exp_alerts: []
+
   # ====================================================================
   # SPEC-OBSV-SYSALERT-001: collector-safemode 룰 유닛테스트
   # ===========================================================================
