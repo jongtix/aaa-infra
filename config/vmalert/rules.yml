@@ -1,6 +1,6 @@
 # =============================================================================
 # vmalert 알림 룰 — collector 수집 정상성 판정 (Prometheus alerting-rule 포맷)
-# SPEC-COLLECTOR-OBSV-001 TI-003 + TI-004
+# SPEC-COLLECTOR-OBSV-001 TI-003 + TI-004 / SPEC-OBSV-WATERMARK-001 M2(REQ-WM-016~028)
 # =============================================================================
 # vmalert가 `-rule=/etc/vmalert/rules.yml`로 로드한다.
 # 런타임 마운트: ${AAA_SSD_BASE}/config/vmalert/rules.yml → /etc/vmalert/rules.yml:ro
@@ -12,11 +12,39 @@
 #   aaa_collector_batch_last_load_seconds            (gauge KST epoch, label batch)
 #   up{job="collector"}                              (VM 스크랩 합성 메트릭)
 #
+#   [SPEC-OBSV-WATERMARK-001 M1, 2026-07-05] 신규 게이지(collector 배포 후 노출, M2 룰이 소비):
+#   aaa_collector_data_watermark_seconds{series, market}      (gauge, KST 자정 epoch, forward-only, 17시계열)
+#   aaa_collector_expected_watermark_seconds{market}          (gauge, KST 자정 epoch, absent=캘린더 미로드/gate 미완료)
+#   aaa_collector_data_coverage_ratio{series}                 (gauge, 0~1, daily-ohlcv-krx/us만 ACTIVE)
+#   aaa_collector_backfill_pending_slots                      (gauge, 라벨 없음, PENDING+IN_PROGRESS만)
+#   aaa_collector_backfill_clamp_suspected_total              (counter, 라벨 없음)
+#   aaa_collector_backfill_windows_total                      (counter, 라벨 없음)
+#   aaa_collector_tick_last_seen_seconds{symbol, market}      (gauge, market="domestic"|"overseas")
+#   aaa_collector_tick_active_subscriptions                   (gauge, 국내+해외 합산, 라벨 없음)
+#   aaa_collector_us_market_open                              (gauge 1/0, 반일 13:00 ET 이후 0 보정)
+#   aaa_collector_us_market_gate_holiday_count                (gauge, fail-open 가드용, >=20 정상)
+#   aaa_collector_batch_silent_drops_total                    (counter, 라벨 없음, 총합만)
+#
 # 휴장 억제(REQ-043) 핵심 = `and on() aaa_collector_market_open == 1` 조인:
 #   market_open 은 batch 라벨이 없고 batch 메트릭은 batch 라벨이 있어 라벨셋이 다르다.
 #   `and on()`(공집합 매칭)으로 라벨 무시 교집합을 만들어 "장중일 때만" 게이팅한다.
 #   게이트가 0이거나 market_open 시계열이 부재(absent)하면 `and on() ...==1`이 빈 벡터가 되어
 #   (a)/(b) 룰은 발화하지 않는다 → 휴장/게이트부재 자동 억제(REQ-043 구조적 충족).
+#
+# [SPEC-OBSV-WATERMARK-001 REQ-WM-025] 모든 알림에 tier 라벨(PAGE|TICKET)을 부여한다.
+#   PAGE = 최소 핵심셋: CollectorDown, 데드맨(워터마크 시계열 소실), 일봉 워터마크 KRX/US 신선도,
+#   국내·해외 틱 침묵, 안전모드 진입, 시장지표 전소스 탈진. 나머지 전부 TICKET(§8 결정 1+4).
+#   Alertmanager가 tier 라벨로 [PAGE]/[TICKET] 텔레그램 접두어 라우팅을 수행한다(alertmanager.yml).
+#
+# [SPEC-OBSV-WATERMARK-001 REQ-WM-024 배치 라벨 매핑 참고, research.md §2 실측]
+#   series(워터마크 사전) ≠ batch(실행완료 라벨). 예: series=investor-trend → batch=domestic-supply-investor,
+#   series=credit-balance → batch=domestic-supply-credit-balance, series=short-sale-domestic →
+#   batch=domestic-supply-short-sale, series=analyst-estimates → batch=domestic-invest-opinion,
+#   series=macro-ecos/macro-fred → 단일 batch=macro-external(공유 스케줄러). series=market-vix/market-usdkrw는
+#   전용 batch 라벨이 없음(market-indicators 7종 묶음 + group11 source-chain으로만 감시, Exclusion 4) —
+#   REQ-WM-024 제거 대상에 market-vix가 명시되어 있으나 대응하는 batch 실행 룰 자체가 없어 조치 불필요.
+#   series=daily-ohlcv-krx/us(batch=domestic-daily/overseas-daily)는 REQ-WM-024 제거 목록에 없으므로
+#   기존 실행 신선도(그룹 2 28h·그룹 5 100h)를 워터마크 PAGE 룰과 이중 안전망으로 그대로 유지한다.
 
 groups:
   # ---------------------------------------------------------------------------
@@ -34,48 +62,44 @@ groups:
         labels:
           severity: critical
           component: collector
+          tier: PAGE
         annotations:
           summary: "collector 스크랩 실패(다운) — 90s 연속"
           description: "VictoriaMetrics가 collector /actuator/prometheus 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
 
   # ---------------------------------------------------------------------------
   # 그룹 2: 수집 미달/정지 — 장중 게이트 ANDing(휴장 억제)
+  # [SPEC-OBSV-WATERMARK-001] REQ-WM-023: CollectorBatchCompletenessLow 폐기(#66 구조적 오탐,
+  #   커버리지+워터마크 신선도가 대체, AC-1). REQ-WM-024: ACTIVE 전환된 시리즈의 batch 라벨을
+  #   추가 제외(이중 감시 정리) — domestic-supply-investor/credit-balance/short-sale, macro-external,
+  #   domestic-invest-opinion. 신규 Module E 라벨(extended-hours/corp-code/dart-backfill) 제외
+  #   — 전용 그룹(아래)에서 별도 임계로 처리하므로 기본 28h 룰과 이중 발화하지 않도록 필터.
+  #   overseas-news/overseas-rights는 기존 `overseas-.*` 패턴에 이미 포함되어 자동 제외.
   # ---------------------------------------------------------------------------
   - name: collector-collection-gap
     interval: 30s
     rules:
-      # TI-004a 충족률 미달: ratio < 0.70 AND 장중
-      # 초기값 0.70(spec AC-8, M5 라이브 튜닝 전제). batch 라벨별 개별 발화.
-      # [SPEC-OBSV-BATCH-COVERAGE-001] batch 필터: 100h·8d·1h·무게이트 임계 배치는 별도 그룹에서 처리.
-      #   completeness 비적용 대상: overseas-*(stale-only), domestic-financial-ratio/etf-representative(주배치, 운영 관찰 전 stale-only),
-      #   domestic-news(발행량 변동 큰 10분 배치, §3.3), watchlist-sync-us(무게이트 stale-only).
-      # [유지보수] aaa-collector에 신규 스케줄러 추가 시:
-      #   기본 28h+gate 임계 → 이 필터 변경 불필요.
-      #   커스텀 임계(100h/18d/8d/1h 등) → 이 정규식에 추가 AND 별도 그룹 생성. 누락 시 오발.
-      - alert: CollectorBatchCompletenessLow
-        expr: |
-          (aaa_collector_batch_completeness_ratio{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us"} < 0.70)
-          and on() (aaa_collector_market_open == 1)
-        for: 5m
-        labels:
-          severity: warning
-          component: collector
-        annotations:
-          summary: "배치 충족률 미달 — {{ $labels.batch }} < 70%"
-          description: "장중(market_open==1) 배치 {{ $labels.batch }} 충족률 {{ $value }} < 0.70. 휴장 시 억제됨."
-
       # TI-004b 신선도 갭: 마지막 적재 후 경과 > 28h AND 장중
       # 28h = 일1회 배치 cron(~24h) + 마진(spec AC-8, M5 튜닝 전제).
       # [SPEC-OBSV-BATCH-COVERAGE-001] batch 필터: 100h·8d·1h·무게이트 임계 배치는 별도 그룹에서 처리.
-      #   overseas-*(100h 무게이트), domestic-financial-ratio/etf-representative(8d), domestic-news(1h), watchlist-sync-us(28h 무게이트) 제외.
+      #   overseas-*(100h 무게이트), domestic-financial-ratio/etf-representative(8d), domestic-news(1h),
+      #   watchlist-sync-us(28h 무게이트) 제외.
+      # [SPEC-OBSV-WATERMARK-001 REQ-WM-024] 추가 제외: 워터마크 신선도 ACTIVE 전환으로 실행 신선도가
+      #   중복이 된 라벨(domestic-supply-investor/credit-balance/short-sale, macro-external,
+      #   domestic-invest-opinion) + 신규 Module E 라벨(extended-hours/corp-code/dart-backfill, 전용
+      #   그룹에서 별도 처리).
+      # [유지보수] aaa-collector에 신규 스케줄러 추가 시:
+      #   기본 28h+gate 임계 → 이 필터 변경 불필요.
+      #   커스텀 임계(100h/18d/8d/1h 등) → 이 정규식에 추가 AND 별도 그룹 생성. 누락 시 오발.
       - alert: CollectorBatchStale
         expr: |
-          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us"}) > 28 * 3600)
+          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours|corp-code|dart-backfill"}) > 28 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "배치 신선도 갭 — {{ $labels.batch }} > 28h 미적재"
           description: "장중(market_open==1) 배치 {{ $labels.batch }} 마지막 적재 후 28h 초과 경과. 휴장 시 억제됨."
@@ -98,6 +122,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "시장 세션 게이트 stale — 30h 초과 미갱신"
           description: "collector UP이나 게이트 last-update가 30h 초과 미갱신(cron 침묵 실패 포함). 억제·다운과 독립 발화."
@@ -112,6 +137,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "시장 세션 게이트 미설정 고착 — 부팅 후 26h 미갱신"
           description: "게이트 last-update가 부팅 후 26h(>1 cron 사이클) 동안 0 유지. 부팅 직후 오발 방지용 26h for 적용."
@@ -134,6 +160,7 @@ groups:
         labels:
           severity: critical
           component: collector
+          tier: TICKET
         annotations:
           summary: "국내 WebSocket 구독 종목 0 — 틱 수집 완전 중단"
           description: "장중(market_open==1)에 tick_active_subscriptions가 3분 이상 0. WebSocket 장 개시 실패 또는 전체 구독 해제 의심."
@@ -150,6 +177,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "WebSocket 세션 연결 끊김 — {{ $labels.alias }}"
           description: "장중(market_open==1) alias={{ $labels.alias }} 세션이 5분 이상 disconnected 상태. partial failure 의심."
@@ -157,6 +185,9 @@ groups:
   # ---------------------------------------------------------------------------
   # 그룹 5: 해외(미국) 일봉·공매도 Daily stale — 100h 무억제
   # SPEC-OBSV-BATCH-COVERAGE-001 REQ-007/008
+  # [SPEC-OBSV-WATERMARK-001] daily-ohlcv-us(overseas-daily)는 워터마크 PAGE 룰과 이중 안전망으로 유지.
+  #   short-sale-overseas-daily(overseas-shortsale-daily)는 워터마크 신선도 O-1 잔여(aaa-infra#77 미해소)라
+  #   본 그룹이 유일한 감시망 — 활성 유지 필수(REQ-WM-017 §4.2).
   # ---------------------------------------------------------------------------
   # overseas-daily(OverseasDailyOhlcvScheduler, MON-FRI 16:30 ET) +
   # overseas-shortsale-daily(ShortSaleOverseasScheduler, MON-FRI 10:00 ET)
@@ -173,6 +204,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "해외 배치 신선도 갭 — {{ $labels.batch }} > 100h 미적재"
           description: "해외(미국) MON-FRI 배치 {{ $labels.batch }} 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-007/008)."
@@ -180,6 +212,8 @@ groups:
   # ---------------------------------------------------------------------------
   # 그룹 6: 해외 공매도 잔고(반월) stale — 18d 무억제
   # SPEC-OBSV-BATCH-COVERAGE-001 REQ-009
+  # [SPEC-OBSV-WATERMARK-001 MI-01] short-sale-overseas-interest는 반월 주기라 워터마크 신선도 룰을
+  #   두지 않는다(§3) — 본 그룹이 유일한 감시망, 반드시 유지.
   # ---------------------------------------------------------------------------
   # overseas-shortsale-interest(ShortSaleOverseasScheduler Interest, 반월 미국장).
   # FINRA Equity Short Interest 공시 주기 ~15~16일 + 공시 지연 마진 → 18d.
@@ -194,6 +228,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "해외 공매도 잔고 신선도 갭 — overseas-shortsale-interest > 18d 미적재"
           description: "FINRA 반월 공매도 잔고 마지막 적재 후 18일 초과 경과(반월 주기 15~16일 + 공시 지연 마진). 게이트 억제 없음(REQ-009)."
@@ -201,6 +236,8 @@ groups:
   # ---------------------------------------------------------------------------
   # 그룹 7: 국내 주간 배치 stale — 8d + 장중 게이트
   # SPEC-OBSV-BATCH-COVERAGE-001 REQ-005
+  # [SPEC-OBSV-WATERMARK-001] 이벤트성 테이블(financials/etf_representative_history)은 워터마크·
+  #   커버리지 제외 대상(Exclusion 1) — 본 그룹이 유일한 감시망, 유지.
   # ---------------------------------------------------------------------------
   # domestic-financial-ratio(FinancialRatioScheduler, 토요일 08:00 KST) +
   # domestic-etf-representative(EtfRepresentativeScheduler, 월요일 07:50 KST)
@@ -217,6 +254,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "주간 배치 신선도 갭 — {{ $labels.batch }} > 8d 미적재"
           description: "장중(market_open==1) 주간 배치 {{ $labels.batch }} 마지막 적재 후 8일(7일 주기 + 마진 1일) 초과 경과. 휴장 시 억제됨(REQ-005)."
@@ -224,6 +262,8 @@ groups:
   # ---------------------------------------------------------------------------
   # 그룹 8: 국내 뉴스 배치 stale — 1h + 장중 게이트
   # SPEC-OBSV-BATCH-COVERAGE-001 REQ-006
+  # [SPEC-OBSV-WATERMARK-001 Exclusion 7] news-domestic은 일-grain 워터마크 신선도 대상이 아니므로
+  #   본 실행 신선도(1h)가 유일한 감시망 — 유지.
   # ---------------------------------------------------------------------------
   # domestic-news(NewsScheduler, 장중 10분 간격 09~15시 KST MON-FRI).
   # 발행량 변동이 커 completeness 비적용, stale-only(§3.3 REQ-006).
@@ -240,6 +280,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "뉴스 배치 신선도 갭 — domestic-news > 1h 미적재"
           description: "장중(market_open==1) 뉴스 배치 10분 주기 수집이 1h 이상 중단됨. 휴장 시 억제됨(REQ-006)."
@@ -262,6 +303,7 @@ groups:
         labels:
           severity: warning
           component: collector
+          tier: TICKET
         annotations:
           summary: "미국 관심종목 동기화 신선도 갭 — watchlist-sync-us > 28h 미적재"
           description: "미국 관심종목 동기화(매일 ET 08:50) 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-013)."
@@ -281,6 +323,7 @@ groups:
         labels:
           severity: critical
           component: collector
+          tier: PAGE
         annotations:
           summary: "수집기 안전 모드 진입 — {{ $labels.module }}/{{ $labels.alias }}"
           description: "5분 내 안전 모드 진입 감지. 원인 확인 → 수동 해제 필요 (TECHSPEC §1.3 수동 개입 절차 참조)."
@@ -291,6 +334,7 @@ groups:
         labels:
           severity: info
           component: collector
+          tier: TICKET
         annotations:
           summary: "수집기 안전 모드 해제 — {{ $labels.module }}/{{ $labels.alias }}"
           description: "안전 모드 해제 감지. 정상 수집 재개 여부를 확인하세요."
@@ -316,6 +360,7 @@ groups:
         for: 0m
         labels:
           severity: warning
+          tier: TICKET
         annotations:
           summary: "시장지표 Primary 소스({{ $labels.source }}) 28시간 이상 미수집"
           description: "indicator={{ $labels.indicator }}, source={{ $labels.source }}"
@@ -326,6 +371,7 @@ groups:
         for: 0m
         labels:
           severity: critical
+          tier: PAGE
         annotations:
           summary: "시장지표 소스 체인 전원 탈진 — {{ $labels.indicator }} {{ $labels.method }}"
           description: "indicator={{ $labels.indicator }}, method={{ $labels.method }}"
@@ -337,6 +383,7 @@ groups:
   # CPU = node_load5/4 (N100 4코어 하드코딩, §5 V-1). absent 시 비교식 빈 벡터로 구조적 억제(REQ-NE-014).
   # 다단계 동시 발화: 임계 초과 시 해당하는 모든 단계가 동시에 발화한다(예: 95% → W1+W2+Critical).
   # 의도적 설계 — AM inhibit 룰 제외(§6). 상위 알림이 유실되더라도 하위 알림이 보장된다.
+  # [SPEC-OBSV-WATERMARK-001 REQ-WM-026] PAGE 최소 핵심셋에 미포함 — 전부 TICKET.
   - name: node-resource
     interval: 60s
     rules:
@@ -349,6 +396,7 @@ groups:
         labels:
           severity: warning
           component: node
+          tier: TICKET
         annotations:
           summary: "디스크 사용률 경고(1단계) — {{ $labels.mountpoint }} > 70%"
           description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 70%. 5분 지속."
@@ -361,6 +409,7 @@ groups:
         labels:
           severity: warning
           component: node
+          tier: TICKET
         annotations:
           summary: "디스크 사용률 경고(2단계) — {{ $labels.mountpoint }} > 80%"
           description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 80%. 5분 지속."
@@ -373,6 +422,7 @@ groups:
         labels:
           severity: critical
           component: node
+          tier: TICKET
         annotations:
           summary: "디스크 사용률 위험(3단계) — {{ $labels.mountpoint }} > 90%"
           description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 90%. 2분 지속 — 쓰기 실패 임박."
@@ -384,6 +434,7 @@ groups:
         labels:
           severity: warning
           component: node
+          tier: TICKET
         annotations:
           summary: "RAM 사용률 경고(1단계) — > 80%"
           description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 80%. 10분 지속."
@@ -394,6 +445,7 @@ groups:
         labels:
           severity: warning
           component: node
+          tier: TICKET
         annotations:
           summary: "RAM 사용률 경고(2단계) — > 90%"
           description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 90%. 10분 지속."
@@ -404,6 +456,7 @@ groups:
         labels:
           severity: critical
           component: node
+          tier: TICKET
         annotations:
           summary: "RAM 사용률 위험(3단계) — > 95%"
           description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 95%. 3분 지속 — OOM Killer 위험."
@@ -417,6 +470,7 @@ groups:
         labels:
           severity: warning
           component: node
+          tier: TICKET
         annotations:
           summary: "CPU 부하 경고(1단계) — load5/4 > 70%"
           description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 70%. 5분 지속."
@@ -427,6 +481,7 @@ groups:
         labels:
           severity: warning
           component: node
+          tier: TICKET
         annotations:
           summary: "CPU 부하 경고(2단계) — load5/4 > 85%"
           description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 85%. 5분 지속."
@@ -437,6 +492,7 @@ groups:
         labels:
           severity: critical
           component: node
+          tier: TICKET
         annotations:
           summary: "CPU 부하 위험(3단계) — load5/4 > 90%"
           description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 90%. 2분 지속."
