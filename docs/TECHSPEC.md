@@ -593,7 +593,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
   - `collector`: SELECT, INSERT + UPDATE(stocks, stock_grades, short_sale_overseas, etf_metadata만). DELETE/DDL 없음 ([ADR-026](ADR/ADR-026-collector-grant-two-tier-model.md))
   - `notifier`: SELECT, INSERT + 필요 테이블 UPDATE. `notification_log`는 SELECT/INSERT만 (INSERT-ONLY)
   - `trader`: SELECT, INSERT + 필요 테이블 UPDATE. `order_log`는 SELECT/INSERT만 (INSERT-ONLY)
-  - `analyzer`: SELECT, INSERT (trading_signals에 INSERT, 나머지는 SELECT)
+  - `analyzer`: SELECT, INSERT (trading_signals·signal_price_bands에 INSERT, 나머지는 SELECT)
 - 서비스 런타임 계정에 DELETE/DDL 권한을 부여하지 않는다. DELETE가 필요한 경우 별도 ADR로 결정
 - `order_log`, `notification_log` 테이블: 해당 서비스(trader, notifier)의 DB 사용자 권한에서 INSERT-ONLY를 DB 수준으로 강제
 - 시계열 데이터 테이블은 `INSERT IGNORE`로 중복 방지하며 UPDATE를 사용하지 않는다 ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md))
@@ -621,6 +621,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 | 투자의견 | `analyst_estimates` | collector |
 | 수집 인프라 | `backfill_status` | collector |
 | ML 신호 | `trading_signals` | analyzer |
+| 신호 가격 밴드 | `signal_price_bands` ([6.6절](#66-가격-밴드-스윕-price-sweep--signal_price_bands)) | analyzer |
 | 알림 이력 | `notification_log` | notifier |
 | 주문 이력 | `order_log` | trader |
 
@@ -639,7 +640,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 **스키마 상세 수준**:
 - Phase 1 대상 테이블: 설계 의도, 주요 컬럼, 인덱스 전략을 기술. DDL 전문은 Flyway 마이그레이션(V1~)이 단일 소스
-- Phase 2~4 대상 테이블(`trading_signals`, `notification_log`, `order_log`): 테이블명 + 주요 컬럼 윤곽만 정의
+- Phase 2~4 대상 테이블(`trading_signals`, `signal_price_bands`, `notification_log`, `order_log`): 테이블명 + 주요 컬럼 윤곽만 정의. `trading_signals` 윤곽은 6.2절(추론 결과), `signal_price_bands` 윤곽은 6.6절 참조
 
 ### 4.1 Phase 1 — Priority 1 테이블
 
@@ -863,11 +864,11 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | `stream:tick:domestic` | collector | notifier (타이밍 평가) | 국내 실시간 체결/호가 틱 (`symbol` 필드 포함) |
 | `stream:tick:overseas` | collector | notifier (타이밍 평가) | 해외 실시간 체결/호가 틱 (`symbol` 필드 포함) |
 | `stream:daily:complete` | collector | analyzer | 일봉 수집 완료 이벤트 (`market`: `domestic`/`overseas`, 완전성 메타 `attempted`/`succeeded`/`skipped` 종목 수 — SPEC-COLLECTOR-BATCH-001 REQ-BATCH-042) |
-| `stream:signal:domestic` | analyzer | notifier | 국내 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, confidence 필드 포함 — analyzer 설계 [G-1], 2026-07-03) |
-| `stream:signal:overseas` | analyzer | notifier | 해외 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, confidence 필드 포함 — analyzer 설계 [G-1], 2026-07-03) |
+| `stream:signal:domestic` | analyzer | notifier | 국내 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, `score`, confidence 필드 포함 — analyzer 설계 [G-1] 2026-07-03, `score` 추가 2026-07-05 [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)) |
+| `stream:signal:overseas` | analyzer | notifier | 해외 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, `score`, confidence 필드 포함 — analyzer 설계 [G-1] 2026-07-03, `score` 추가 2026-07-05 [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)) |
 | `stream:alert` | notifier | trader (Phase 4) | 발송 완료 알림 이벤트 (`tier` 필드 포함) |
 
-**`stream:signal:*` 메시지 필드 (analyzer 설계 2026-07-03 확정)**: 종목당 시간대(단기 D20/중기 D60, 6.1절) 신호가 각각 발행되므로 `horizon`(`D20`|`D60`)으로 구분한다. `trade_date`는 신호의 기준 일봉 날짜(조인 키), `trace_id`는 `stream:daily:complete` 수신부터 신호 발행까지 관통하는 추적 ID다. notifier의 horizon별 필터 처리 방침은 Phase 3 설계로 위임한다.
+**`stream:signal:*` 메시지 필드 (analyzer 설계 2026-07-03 확정, 2026-07-05 `score` 추가)**: 종목당 시간대(단기 D20/중기 D60, 6.1절) 신호가 각각 발행되므로 `horizon`(`D20`|`D60`)으로 구분한다. `trade_date`는 신호의 기준 일봉 날짜(조인 키), `trace_id`는 `stream:daily:complete` 수신부터 신호 발행까지 관통하는 추적 ID다. `score`는 앙상블 기대수익률(소수 표기, 예: `0.043` = +4.3%)이며 등급은 score에 6.1절 경계를 적용한 파생값이다([ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)) — notifier는 알림 본문에 등급과 함께 score(y%)·confidence를 표기한다(8.5절). notifier의 horizon별 필터 처리 방침은 horizon 완전 독립으로 확정(notifier 설계 [D-7], 2026-07-05 — 8.1절 필터 키 참조).
 
 **Consumer Group 전략**:
 - 각 서비스는 Consumer Group으로 구독 (ACK 기반 메시지 처리 보장)
@@ -903,8 +904,9 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 |----------|------|-----|
 | `cache:kis:token:{계좌별칭}` | KIS API Access Token (계좌별) | 만료 시간 기반 |
 | `cache:stock:list` | 관심 종목 목록 | 장 시작 후 갱신 시까지 |
-| `cache:grade:{종목코드}` | ML 등급 | [TBD] |
 | `cache:macro:{지표}` | 거시경제 최신값 | 1일 |
+
+- ~~`cache:grade:{종목코드}` (ML 등급, TTL [TBD])~~ — **폐기 (2026-07-05, [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md))**: 발행 주체·용도가 미정의 상태였고(notifier 설계 [D-6] 지적), 신호 상태는 notifier가 `filter:signal:*` 키(8.1절)로 관리하며 장중 등급 판정은 `signal_price_bands`(6.6절) 장전 적재로 수행하므로 용도가 없다
 
 ### 5.3 Redis 카운터 (Phase 1~2 성능 지표)
 
@@ -932,14 +934,24 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 
 ### 6.1 모델 구조
 
-**모델 수 계산**
+**모델 수 계산** (2026-07-05 개정, [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md) — 회귀 전환 + 분위수 보조 모델 추가)
 
 ```
-시장 2개 (국내, 해외)
-× 시간대 2개 (단기 20영업일, 중기 60영업일)
-× 알고리즘 2개 (LightGBM + XGBoost)
-= 총 8개 풀링 모델
+포인트(기대수익률) 모델:
+  시장 2개 (국내, 해외)
+  × 시간대 2개 (단기 20영업일, 중기 60영업일)
+  × 알고리즘 2개 (LightGBM + XGBoost)
+  = 8개
+
+분위수 보조 모델 (confidence 산출 전용):
+  시장 2개 × 시간대 2개 × 분위수 2개 (P10, P90 — LightGBM 전용)
+  = 8개
+
+총 16개 풀링 모델
 ```
+
+- **objective — 회귀(기대수익률), 분류 아님**: 포인트 모델은 예측 기간 종료 시점 수익률을 연속값으로 예측한다(L2 기본. 수익률 분포의 두꺼운 꼬리 대응 — Huber loss 또는 타깃 윈저라이징 — 은 ANALYZER-TRAIN-001에서 백테스트 대조 후 확정). 5클래스 분류를 채택하지 않는 근거는 [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md): 경계 인접 샘플의 라벨 강제 분리, 같은 구간 내 크기 차이 소실, 순서형 정보 손실, 클래스 불균형
+- **분위수 보조 모델**: LightGBM `objective=quantile`(alpha 0.10/0.90). 피처는 포인트 모델과 동일, 하이퍼파라미터는 해당 시장·시간대의 포인트 LGBM 값을 재사용한다(**Optuna 튜닝 비대상** — 월간 튜닝 부담 불변). 용도는 confidence 산출(8.5절) 단 하나이며, 등급·밴드 산출에는 관여하지 않는다
 
 - 풀링 모델: 시장별(국내/해외) A·B등급 전 종목 데이터를 각각 하나의 학습 데이터셋으로 통합. 종목 속성 피처(시가총액, 업종, 베타 등)로 종목을 구분
 - 시장 분리 근거: 한국 시장(가격제한폭 ±30%)과 미국 시장(가격제한 없음)의 수익률 분포가 상이하여 동일 레이블 경계 적용 부적합
@@ -948,9 +960,11 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 - 해외 종목 업종 편중 인지: 현재 해외 관심 종목은 IT 업종 비중이 높다 (약 44%). 대응 전략은 "현재 목록으로 시작 → 업종별 성능 모니터링 → 편향 감지 시 종목 추가"로 한다
 - 업종별 성능 모니터링: 업종별 precision/recall을 분리 추적하고, IT 업종 대비 비IT 업종 precision 차이가 15%p 이상이면 편향으로 판단한다. Phase 2 배포 후 30거래일 시점에 첫 리뷰를 수행한다
 
-**5클래스 레이블 정의**
+**학습 타깃과 신호 등급 경계 — 연속 점수 + 이산화 계층** (2026-07-05 개정, [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md). 종전 표제 "5클래스 레이블 정의")
 
-예측 기간(단기 20영업일 / 중기 60영업일) 종료 시점의 실제 수익률로 레이블을 부여한다. 레이블 경계값은 시장별(국내/해외)로 독립 설정한다.
+**학습 타깃(레이블) = 예측 기간(단기 20영업일 / 중기 60영업일) 종료 시점의 실제 수익률 그 자체(연속값)** 다. 종전 5클래스 분류 라벨은 폐기한다 — 수익률을 구간으로 뭉개 학습하면 경계 인접 샘플(+1.9% vs +2.1%)이 노이즈 수준 차이로 정반대 학습 신호가 되고, 같은 구간 내의 큰 차이(+2.1% vs +6.9%)는 구분 불가능해지며, 등급의 순서형 정보를 손실 함수가 반영하지 못한다.
+
+**신호 등급(5클래스)은 모델 출력이 아니라 이산화 계층의 파생값**이다: 앙상블 `score`(기대수익률)에 아래 경계표를 적용해 산출한다. 등급 체계(STRONG_BUY~STRONG_SELL)와 "STRONG = 크게 움직일 것(수익률 크기)" 의미론(ADR-031에서 확정)은 그대로 계승된다 — 바뀌는 것은 크기를 5단계로 뭉개 학습·전달하던 것을 연속값 그대로 학습·저장·전달하고 **표현 단계에서만 자르는** 것이다. 경계값은 시장별(국내/해외)로 독립 설정한다.
 
 **국내 (가격제한폭 ±30%)**
 
@@ -972,25 +986,31 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | SELL | -8% ~ -3% | -15% ~ -5% |
 | STRONG_SELL | ≤ -8% | ≤ -15% |
 
-위 경계값은 변동성 기반 통계적 추정 초안이다. **경계 확정 절차 (analyzer 설계 [D-9], 2026-07-04 확정)**: 백필 완료 후 시장(2)×시간대(2)별 실현 수익률 분포에서 목표 클래스 비율로 경계를 **분위수 역산**하고, 위 초안 경계와 대조(크게 어긋나면 원인 확인 후 확정). 목표 클래스 비율 수치는 SPEC(ANALYZER-LABEL-001)에서 확정한다. **확정 후 경계는 고정**한다 — 재학습마다 경계가 흔들리면 레이블 의미가 모델 버전마다 달라지므로, 변경은 주기 재검토(반기 등)에서만 허용한다.
+위 경계값은 변동성 기반 통계적 추정 초안이다. **경계 확정 절차 (analyzer 설계 [D-9] 2026-07-04 확정, 절차 재사용)**: 백필 완료 후 시장(2)×시간대(2)별 실현 수익률 분포에서 목표 등급 비율로 경계를 **분위수 역산**하고, 위 초안 경계와 대조(크게 어긋나면 원인 확인 후 확정). 목표 등급 비율 수치는 SPEC(ANALYZER-LABEL-001)에서 확정한다.
+
+**경계의 지위 (2026-07-05 개정, [ADR-033])**: 경계는 학습 라벨 생성 규칙이 아니라 score에 적용하는 **이산화(후처리) 파라미터**다. 따라서 경계 변경에 모델 재학습이 필요 없다(종전 설계에서는 라벨 재생성 + 전체 재학습이 필요했다). 단, 경계 변경은 등급·알림·가격 밴드(6.6절)의 의미를 바꾸므로 남발을 금지한다 — 변경은 사유를 명기한 TECHSPEC 개정과 함께 주기 재검토(반기) 또는 명시적 결정으로만 허용한다(종전 [D-9] "확정 후 고정" 취지 계승, 재학습 강제만 해소).
 
 - 수익률 계산: 레이블 부여일 종가 → 예측 기간 종료일 종가 기준. **가격은 분할+배당 조정(Total Return 방향) 가격 사용 — 배당 미포함 Close-to-Close 아님** (analyzer 설계 [D-5], 2026-07-03 확정. 아래 "조정 종가" 항목 참조)
 - 수익률 범위는 시장(국내/해외)별, 시간대(단기/중기)별로 상이할 수 있다
-- 클래스 불균형 대응: **class weight** 적용 (LightGBM/XGBoost 네이티브 지원, 시장별 독립 적용). SMOTE는 채택하지 않는다 — 시계열 데이터에 합성 샘플은 시간 구조를 무시한 인접 보간이라 Walk-Forward 검증(6.3절)의 학습/검증 경계를 넘는 정보 누출 경로가 될 위험이 있다 (analyzer 설계 [D-10], 2026-07-04 확정)
+- ~~클래스 불균형 대응: class weight (analyzer 설계 [D-10], 2026-07-04)~~ → **폐지 (2026-07-05, [ADR-033])**: 회귀 전환으로 클래스 개념이 소멸해 불균형 문제 자체가 존재하지 않는다. 대체 쟁점은 수익률 분포의 **두꺼운 꼬리**(극단 샘플의 L2 손실 지배) — Huber loss 또는 타깃 윈저라이징(상하위 1% 클리핑 등)을 ANALYZER-TRAIN-001에서 백테스트 대조 후 확정한다. SMOTE 기각 사유(시계열 합성 샘플의 Walk-Forward 정보 누출 위험)는 기록으로 유지하며, 회귀에서도 합성 샘플류 기법은 동일 사유로 금지
 - 수익률 범위 조정 시점: 위 경계 확정 절차([D-9]) 참조
 - 조정 기준 원칙: 시장별 클래스 간 균형, 단기/중기별 변동성 차이 반영, 경계값 근처 샘플의 레이블 민감도 검토 (Label Smoothing, 변동성 비례 HOLD 범위 등)
 - Strict Causality: 피처는 추론 시점에 실제로 사용 가능한 데이터만 사용한다 (No Look-Ahead Bias)
 - **조정 종가**: `daily_ohlcv`는 원주가(unadjusted)를 저장하고, 가격 조정은 analyzer가 `corporate_events` 기반으로 분석 시점에 as-of(point-in-time) 계산한다 (store raw, adjust on read) ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md)). 조정 범위는 **분할(SPLIT `stock_rate` 배율) + 배당(`ex_dividend_date`/`cash_amount` 디플레이터, Total Return 방향)** — analyzer 설계 [D-5]에서 확정(2026-07-03). 배당 조정 데이터 확보([aaa-infra#44](https://github.com/jongtix/aaa-infra/issues/44)·[#70](https://github.com/jongtix/aaa-infra/issues/70)·[#71](https://github.com/jongtix/aaa-infra/issues/71))가 Phase 2 학습 착수 전제조건이다
 
-**앙상블 조합 규칙 (analyzer 설계 [D-11], 2026-07-04 확정)**
+**앙상블 조합 규칙 (analyzer 설계 [D-11] 2026-07-04 확정 → 2026-07-05 score 축으로 개정, [ADR-033])**
 
-| 조건 | 최종 신호 |
-|------|-----------|
-| LightGBM·XGBoost **방향** 일치 (3방향: 매수=STRONG_BUY/BUY, 중립=HOLD, 매도=SELL/STRONG_SELL — 8.2절) | 보수적으로 낮은 강도 채택 (예: STRONG_BUY+BUY → BUY), confidence = 두 모델 평균 |
-| 방향 불일치 (매수 vs 매도) | HOLD로 강등, confidence = min(두 모델) |
-| 한쪽 BUY/SELL + 한쪽 HOLD (강도만 일치하지 않는 경우) | HOLD로 강등, confidence = min(두 모델) — 완충지대 취지 유지, 초기 오탐 최소화 |
+앙상블은 등급이 아니라 **score 축**에서 결합한다. 종전 규칙(방향 일치 시 낮은 강도 채택, 불일치 시 HOLD)의 보수성 취지를 산술로 계승한다:
 
-- 개별 모델 신호(LightGBM/XGBoost)는 `trading_signals.lgbm_signal`/`xgb_signal`에 보존 — 앙상블 규칙 사후 튜닝·분석용 (6.2절 `trading_signals` 스키마 참조)
+| 조건 | 앙상블 score |
+|------|--------------|
+| LightGBM·XGBoost 포인트 score **부호 일치** | `sign × min(\|score_lgbm\|, \|score_xgb\|)` — 크기가 작은 쪽 채택 (종전 "낮은 강도 채택" 계승) |
+| 부호 불일치 (한쪽 양수, 한쪽 음수) | `0` (중립 — 등급 파생 시 자동으로 HOLD) |
+
+- 종전 규칙의 3행("한쪽 BUY/SELL + 한쪽 HOLD → HOLD")은 별도 규칙이 불필요해진다 — `min(|·|)`이 HOLD 구간 크기의 score를 채택하므로 등급 파생에서 자동으로 HOLD가 된다 (완충지대 취지 자동 계승)
+- **등급 파생은 항상 단일 규칙**: 앙상블 score에 위 경계표 적용. 가격 밴드 스윕(6.6절)도 각 그리드 가격에서 동일한 앙상블·파생 규칙을 적용한다 — 신호와 밴드의 등급 산출 로직을 단일화해 불일치 가능성을 구조적으로 차단
+- 개별 모델 점수는 `trading_signals.lgbm_score`/`xgb_score`(DECIMAL)에 보존 — 앙상블 규칙 사후 튜닝·분석용. 종전 `lgbm_signal`/`xgb_signal`(ENUM)을 대체하며 정보량 상위 호환(점수에서 등급은 언제든 재파생 가능)
+- confidence 산출은 앙상블 규칙과 분리 — 8.5절(분위수 예측구간 기반) 참조
 
 NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 운영 가능하므로 확장은 선택 사항).
 
@@ -1039,14 +1059,15 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 - 무결성 검증: 학습 완료 시 SHA-256 해시 파일(`.sha256`)을 모델과 함께 저장. 추론 시 모델 로드 전 해시 검증 → 불일치 시 로드 거부 + 직전 모델 유지 + 로그 기록
 
 **모델 로드 전략** (aaa-analyzer):
-- Lazy Load: `stream:daily:complete`의 `market` 필드에 따라 해당 시장 4개 모델만 로드 → 추론 → 언로드. 국내/해외 마감 시간이 다르므로 8개 상시 로드 불필요
+- Lazy Load: `stream:daily:complete`의 `market` 필드에 따라 해당 시장 8개 모델(포인트 4 + 분위수 보조 4)만 로드 → 추론 → 언로드. 국내/해외 마감 시간이 다르므로 16개 상시 로드 불필요
 - 모델 갱신: 재학습 SSH 종료 후 공유 스토리지에 신규 모델 파일 저장. 다음 추론 시점에 최신 모델 자동 로드
 
-**추론 트리거**:
-- 장 마감 후 배치: 일봉 수집 완료 이벤트(`stream:daily:complete`) 수신 시, `market` 필드에 해당하는 시장의 모델만 추론 실행 (국내 마감 → 국내 4개 모델, 해외 마감 → 해외 4개 모델)
-- 시장별 4개 풀링 모델 × 해당 시장 A·B등급 전 종목 = 단일 predict 호출로 배치 처리. N100에서 수 분 이내 완료 예상
-- 장중 실시간 추론 없음 (Throttling 불필요)
-- 추론 결과: 종목별 등급(5클래스) + confidence → MySQL `trading_signals` 저장 + `stream:signal:domestic/overseas` 발행 (`symbol` 필드 포함)
+**추론 트리거** (2026-07-05 개정, [ADR-033]):
+- 장 마감 후 배치: 일봉 수집 완료 이벤트(`stream:daily:complete`) 수신 시, `market` 필드에 해당하는 시장의 모델만 추론 실행 (국내 마감 → 국내 8개 모델, 해외 마감 → 해외 8개 모델)
+- 시장별 8개 풀링 모델 × 해당 시장 A·B등급 전 종목 = 모델별 단일 predict 호출로 배치 처리. 이어서 **가격 밴드 스윕(6.6절)** — 종목×그리드 행렬 일괄 predict — 을 같은 배치에서 수행. N100에서 수 분 이내 완료 예상
+- 장중 실시간 추론 없음 (Throttling 불필요) — 장중 등급 판정은 사전 계산된 `signal_price_bands`(6.6절)를 notifier가 O(1) 비교로 소비
+- 추론 결과: 종목·horizon별 `score`(앙상블 기대수익률) + `p10`/`p90`(LGBM 분위수) + `lgbm_score`/`xgb_score`(개별 포인트) + 파생 등급(5클래스, 6.1절 경계 적용) + confidence(8.5절 산출식) → MySQL `trading_signals` 저장 + `stream:signal:domestic/overseas` 발행 (`symbol`, `score` 필드 포함) + `signal_price_bands` 저장(6.6절)
+- **`trading_signals` 컬럼 윤곽** (타입 정밀화·인덱스는 ANALYZER-SCHEMA-001): `stock_id`(FK), `trade_date`, `horizon`(D20/D60), `score`, `p10`, `p90`, `lgbm_score`, `xgb_score`, `signal`(파생 ENUM 5클래스 — 조회 편의용이며 원본은 score), `confidence`, `regime_suppressed`, `model_version`, `created_at`, UNIQUE(stock_id, trade_date, horizon). 종전 윤곽 대비: `lgbm_signal`/`xgb_signal`(ENUM) → `lgbm_score`/`xgb_score`(DECIMAL) 대체, `score`/`p10`/`p90` 신설 (2026-07-05, [ADR-033])
 
 ### 6.3 재학습 정책
 
@@ -1069,7 +1090,9 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 | 지표 | 정의 | 임계값 |
 |------|------|--------|
 | 방향 적중률 (Hit Rate) | 예측 방향 == 실제 방향 비율 | [TBD - Phase 2 초기 백테스트 후 확정] |
-| Precision | TP / (TP + FP) | [TBD] |
+| IC / Rank IC | score와 실현 수익률의 (순위)상관 — 회귀 신호의 서열력. 절대 예측력(R²)이 아니라 서열력이 실질 가치라는 회귀 신호 평가의 표준 (2026-07-05 추가, [ADR-033]) | [TBD] |
+| Precision | TP / (TP + FP) — 파생 등급 기준, 매수/매도 방향별 | [TBD] |
+| confidence 캘리브레이션 | 예측 confidence 구간별 실측 방향 적중률 대조 (신뢰도 곡선) — 8.5절 산출식의 사후 검증 (2026-07-05 추가) | [TBD] |
 | 샤프 비율 | 단순 매수보유 대비 향상 | [TBD] |
 | 최대 낙폭 (MDD) | 모델 기반 전략의 최대 손실 | [TBD] |
 
@@ -1078,7 +1101,7 @@ NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 
 **체제 감지 (Regime Detection)** (analyzer 설계 [D-15], 2026-07-04 확정 — 구조 확정, 수치는 SPEC에서 발동 빈도 실측 후 확정):
 - **발동**: 지표 3종 **OR** 조건 — VIX 종가 > 30 **또는** VIX 5거래일 변화 > +50% **또는** DGS10(미 10년물 금리) 5거래일 변화 > ±50bp (원천 데이터는 `market_indicators`/`macro_indicators`, collector 기수집). 초안 수치는 SPEC(ANALYZER-REGIME-OBSV-001)에서 백테스트 기간 발동 빈도(연 몇 회·총 며칠) 실측으로 확정한다 — 과다 발동은 신호를 무의미화하고, 과소 발동은 장치를 무의미화하므로 양쪽을 검증한다
 - **해제**: 발동 조건 전부 미충족 상태가 5거래일 연속(히스테리시스 — 경계 근처에서 발동/해제가 매일 튀는 것 방지)
-- **억제 시 동작**: 신호는 계산하되 최종 HOLD로 강제하고 `trading_signals.regime_suppressed=true` 저장(모델 자체 판단 HOLD와 체제 억제 HOLD를 구분 — 원신호는 `lgbm_signal`/`xgb_signal`에 보존되어 사후 성능 분석 가능)
+- **억제 시 동작**: 신호는 계산하되 파생 등급(`signal`)을 HOLD로 강제하고 `trading_signals.regime_suppressed=true` 저장(모델 자체 판단 HOLD와 체제 억제 HOLD를 구분 — 원 `score`·`lgbm_score`/`xgb_score`는 그대로 보존되어 사후 성능 분석 가능). 가격 밴드도 전 구간 HOLD로 강제 저장(6.6절)
 - 체제 감지 발동/해제 시 텔레그램 알림
 
 **성능 저하 알림 조건**: [TBD]
@@ -1136,6 +1159,41 @@ PRD 6.2절에 정의된 A/B/C/F 등급을 자동 분류하는 기준.
 - TDF 계열: 펀드명 또는 상품분류 코드로 감지
 - 액티브 ETF: KRX 상품분류 코드 `액티브`로 감지
 - F등급도 사용자가 텔레그램으로 수동 변경 가능 (Phase 4에서 구현, Phase 4 이전에는 DB 직접 수정)
+
+### 6.6 가격 밴드 스윕 (Price Sweep → signal_price_bands)
+
+(2026-07-05 신설, [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md))
+
+**목적**: 장중 등급 판정을 위해 "내일 가격이 p가 되면 등급이 무엇인가"를 마감 후 배치에서 전 가격 구간에 대해 사전 계산한다. 근거 — 장중에 변하는 모델 입력은 가격뿐이다(수급·재무·거시 피처는 전일 마감 값으로 동결). 즉 장중의 모델은 사실상 가격의 1변수 함수이므로, notifier가 장중에 모델을 호출하는 대신 그 함수를 통째로 표(밴드)로 저장해 두고 O(1) 범위 비교로 소비한다. "장중 실시간 추론 없음"(6.2절) 원칙과 정합하며, 실시간 경로(notifier)가 ML 런타임을 전혀 알 필요가 없어 MSA 경계도 유지된다.
+
+**산출 절차** (추론 배치의 마지막 단계 — 신호 생성 직후, 동일 자식 프로세스 내):
+
+1. **그리드 생성**: 종목별 가상 가격 p의 목록.
+   - 국내 = 전일 종가 ±30% — **가격제한폭**(상한가/하한가 제도)이 내일 도달 가능한 전 가격을 보장하는 정의역. 학습 결과나 서킷브레이커 수치가 아님
+   - 해외 = 가격제한폭이 없으므로 통계적 범위 [TBD: ANALYZER-INFER-001에서 과거 일중 등락 분포 실측(99.9% 커버 수준)으로 확정. 초안 ±15%]
+   - 간격 0.5% (프로퍼티 외부화)
+2. **피처 재계산**: 실제 일봉 시계열 마지막에 "종가 = p"인 가상 일봉을 붙여 **가격 파생 피처만** 재계산한다(동결 피처는 마감 값 그대로). 피처 함수는 학습·추론과 동일 모듈(`features/`, 순수 함수)을 호출 — 학습·추론·스윕 3자 간 피처 스큐를 구조적으로 방지. 가상 일봉의 당일 미확정 값(거래량·고가·저가 등) 처리 규칙은 ANALYZER-INFER-001에서 확정 [초안: 전일값 동결]
+3. **score 곡선**: 종목×그리드 전 행을 행렬로 묶어 포인트 모델에 일괄 predict → 앙상블 규칙(6.1절 — **신호와 동일 규칙**) → 종목·horizon별 score(p) 곡선. 분위수 보조 모델은 스윕에 사용하지 않는다(아래 "한계" 참조)
+4. **이원 경계 산출(히스테리시스 내장)**: score 축에서 등급 경계에 마진 δ(프로퍼티, 초기값은 NOTIFIER-FILTER-001과 합동 확정)를 적용해 **승급(PROMOTE) 경계 = 경계 + δ·방향**, **강등(DEMOTE) 경계 = 경계 − δ·방향** 두 세트를 만들고, 각각 score(p) 곡선과의 교차 가격을 **보간**으로 산출 → 가격 파티션 2세트. 회귀 score가 연속이라 교차점이 그리드 해상도에 묶이지 않는다
+5. **조각 병합 후처리(비단조 대응)**: 트리 모델의 비단조성(모멘텀 피처는 가격↑→score↑, 과열 피처는 반대 + 계단형 출력)으로 폭이 좁은 등급 조각이 생길 수 있다 — 폭 < 임계(프로퍼티, 초안 1%)인 조각은 인접 밴드에 병합한다. 대안인 monotone constraints(가격 파생 피처 단조 제약 학습)는 ANALYZER-TRAIN-001에서 성능 대조 실험 후 채택 여부 결정 [초기 미적용 — 어느 피처에 어느 방향 제약이 옳은지 자체가 모델링 결정이며 성능 훼손 위험]
+6. **저장**: `signal_price_bands` INSERT
+
+**`signal_price_bands` 컬럼 윤곽** (타입 정밀화·인덱스는 ANALYZER-SCHEMA-001): `stock_id`(FK), `trade_date`(기준 일봉 날짜 — 밴드의 적용 대상은 익거래일 장중), `horizon`(D20/D60), `boundary_set`(PROMOTE/DEMOTE), `band_seq`, `price_low`, `price_high`, `grade`(5클래스), `regime_suppressed`, `model_version`, `created_at`
+
+**소비 규칙 (notifier — 8.1절 1단계와 연동)**:
+- 장 시작 전 cron에서 당일 밴드를 프로세스 메모리에 적재(notifier 참조 데이터 장전 스냅샷에 통합). 틱 경로 DB 동기 조회 금지 원칙 유지
+- 유효 등급 초기값 = 전일 종가가 속한 DEMOTE 파티션의 등급
+- **전환 판정 규칙**: 틱 가격에 대해 PROMOTE·DEMOTE 두 파티션의 등급이 **일치**할 때만 그 등급으로 전환한다. 두 파티션이 불일치하는 구간(= 이원 경계 사이 데드존)에서는 현재 유효 등급을 유지한다. **이 규칙이 히스테리시스의 구현 전부다** — 별도 히스테리시스 필터 로직 불요(8.2절)
+- 그리드 밖 가격(해외 급변동일 때만 가능): 최외곽 밴드로 클램프 + 관측 메트릭 기록
+
+**한계 — 명시적으로 수용하는 근사** ([ADR-033]에 기각 대안과 함께 기록):
+- 밴드는 "장중 가격 p를 가상 종가로 간주하고 나머지 조건은 전일과 동일"이라는 근사다. 장중 악재·수급 급변으로 인한 하락과 노이즈 조정을 구분하지 못한다. 그 방어는 notifier에 그대로 유지되는 거래량·ATR·시간대 필터와 확증 카운터가 담당한다 — **밴드 = 모델 의견, 나머지 필터 = 그 의견을 지금 믿어도 되는가**의 역할 분담
+- confidence는 실제 종가 기준으로 신호당 1회만 산출하며 가격별로 재계산하지 않는다(예측구간의 가격 민감도는 2차 효과로 판단 — 필요성이 운영 데이터로 입증되면 후속 개선 후보)
+- 밴드 유효기간은 익거래일 하루다 — 동결 피처가 매 마감 갱신되므로 같은 모델이라도 밴드는 매일 달라지며, 스윕은 매 영업일 재수행한다
+
+**체제 억제 연동**: 체제 감지(6.4절) 발동 시 밴드의 `grade`를 전 구간 HOLD로 강제하고 `regime_suppressed=true`로 저장한다 — notifier가 체제 상태를 별도로 알 필요 없이 밴드만으로 일관 동작. 원 score 기준 밴드는 저장하지 않는다(원 score는 `trading_signals`에 보존되므로 사후 재현 가능).
+
+**비용**: 시장당 A·B등급 ~60종목 × 그리드 ~120 × horizon 2 ≈ 1.4만 행 predict — 트리 부스팅 배치 추론으로 N100에서 초 단위 예상. 메모리 영향은 500MB 예산 내 실측(ANALYZER-INFER-001).
 
 ---
 
@@ -1226,7 +1284,7 @@ WebSocket 실시간 체결/호가 데이터는 ML 학습 피처로 사용하지 
 
 | 데이터 | 출처 | 용도 |
 |--------|------|------|
-| 실시간 체결가/체결량 | WebSocket (`H0STCNT0`) | 가격 수준, 거래량 조건 평가 |
+| 실시간 체결가/체결량 | WebSocket (`H0STCNT0`) | 가격 밴드 판정(6.6절 — 유효 등급 산출·전환 감지), 거래량 조건 평가 |
 | 실시간 호가 (매수/매도 잔량) | WebSocket (`H0STASP0`) | 호가 스프레드, 수급 강도 참고 |
 
 - 타이밍 평가 규칙 상세는 [8절](#8-알림-필터-파이프라인)에서 정의
@@ -1243,16 +1301,16 @@ WebSocket 실시간 체결/호가 데이터는 ML 학습 피처로 사용하지 
 [실시간 틱 입력 — stream:tick:domestic / stream:tick:overseas]
     │
     ▼
-1. 타이밍 평가 (장중 실시간)
+1. 타이밍 평가 (장중 실시간 — 2026-07-05 개정, [ADR-033])
     │  symbol 필드로 종목 식별
-    │  ML 등급 확인 (BUY/SELL 방향인 종목만 통과)
-    │  가격 수준 규칙 (전일 종가 대비 하락/상승률)
+    │  가격 밴드 판정 (6.6절 — 틱 가격 → horizon별 유효 등급 산출)
+    │  등급 전환 감지 (유효 등급이 변한 틱만 하류 진행)
     │  거래량 확인 (거래량 임계값)
     │  시간대 필터 (장 초반/마감 전 제외 등)
     │  변동성 필터 (ATR 기준 과열 구간 제외)
     ▼
-2. 히스테리시스 필터
-    │  경계 신호 진동 제거
+2. 히스테리시스 (밴드 이원 경계에 내장 — 6.6절 데드존 규칙)
+    │  경계 진동은 1단계 밴드 판정에서 이미 제거됨 (별도 로직 없음, 8.2절)
     ▼
 3. 확증 카운터
     │  연속 N회 동일 신호 확인
@@ -1276,22 +1334,29 @@ WebSocket 실시간 체결/호가 데이터는 ML 학습 피처로 사용하지 
 
 | 상태 | Redis Key 패턴 | TTL |
 |------|---------------|-----|
-| 타이밍 평가 상태 | `filter:timing:{종목코드}` | `EXPIREAT` 장 종료 시각 |
-| 히스테리시스 직전 등급 | `filter:hysteresis:{종목코드}` | `EXPIREAT` 장 종료 시각 |
-| 확증 카운터 | `filter:confirm:{종목코드}` | `EXPIREAT` 장 종료 시각 |
-| 쿨다운 만료 시각 | `filter:cooldown:{종목코드}:{tier}` | 쿨다운 시간 TTL 자동 만료 |
-| Confidence 추이 버퍼 | `filter:confidence:{종목코드}` | `EXPIREAT` 장 종료 시각 |
+| 타이밍 평가 상태 | `filter:timing:{종목코드}:{horizon}` | `EXPIREAT` 장 종료 시각 |
+| 현재 유효 등급 (밴드 판정 결과) | `filter:grade:{종목코드}:{horizon}` | `EXPIREAT` 장 종료 시각 (2026-07-05 신설, [ADR-033]) |
+| 확증 카운터 | `filter:confirm:{종목코드}:{horizon}` | `EXPIREAT` 장 종료 시각 |
+| 쿨다운 만료 시각 | `filter:cooldown:{종목코드}:{horizon}:{tier}` | 쿨다운 시간 TTL 자동 만료 |
+| Confidence 추이 버퍼 | `filter:confidence:{종목코드}:{horizon}` | `EXPIREAT` 장 종료 시각 |
+| 신호 상태 (당일 신호의 등급·score·confidence — 게이트/전환 유형 판정용) | `filter:signal:{종목코드}:{horizon}` | 다음 신호 도착까지 (다일 수명 — `EXPIREAT` 장 종료 정책의 명시적 예외, notifier 설계 [D-6] 2026-07-05) |
 
-- 장 종료 시 초기화: 모든 필터 키에 `EXPIREAT`로 해당 시장 장 종료 시각을 설정하여 TTL 자연 만료로 처리. 별도 삭제 cron 불필요 (`KEYS` 비활성화 정책과 충돌 없음)
+- 장 종료 시 초기화: 필터 키에 `EXPIREAT`로 해당 시장 장 종료 시각을 설정하여 TTL 자연 만료로 처리. 별도 삭제 cron 불필요 (`KEYS` 비활성화 정책과 충돌 없음). 예외는 `filter:signal:*`(다일 수명, 위 표)
 - 모든 Key는 `filter:` 네임스페이스로 관리
+- **horizon 차원 분리** (notifier 설계 [D-7], 2026-07-05 확정): 단기(D20)/중기(D60)는 독립 신호이므로 게이트·필터 상태·쿨다운·알림을 horizon별로 완전 분리한다. 알림 메시지에 [단기]/[중기] 표기 필수
+- ~~`filter:hysteresis:{종목코드}`~~ **폐기 (2026-07-05, [ADR-033])**: 히스테리시스는 밴드 이원 경계로 구현(6.6절·8.2절) — 별도 상태 키 불요
 
 ### 8.2 히스테리시스
 
-경계 구간에서 신호가 HOLD ↔ BUY/SELL을 반복하는 진동 방지.
+경계 구간에서 유효 등급이 반복 진동(플래핑)하는 것의 방지.
 
-- 구체 기준: [TBD] (confidence 상·하한 밴드 방식 또는 연속 유지 횟수 방식 중 결정 필요)
+**✅ 방식 확정 (2026-07-05, [ADR-033])**: 별도 필터가 아니라 **가격 밴드의 이원 경계로 구현**한다 — analyzer가 스윕 시 score 축 마진 δ로 승급(PROMOTE)/강등(DEMOTE) 경계 가격 2세트를 산출하고(6.6절 4단계), notifier는 두 파티션의 등급이 일치할 때만 전환·불일치(데드존)면 유지한다. 유일한 파라미터는 δ(프로퍼티 외부화, 초기값 NOTIFIER-FILTER-001에서 확정).
+
+- 종전 후보 기각 사유: **confidence 밴드 방식** — confidence는 방향 확신 축의 값이라 크기(등급 경계) 진동을 막지 못함(축이 다름). **연속 유지 횟수 방식** — 3단계 확증 카운터와 기능 중복(notifier 설계 [D-9] 지적)
 
 ### 8.3 방향 전환 유형별 확증/쿨다운
+
+전환 유형은 **장중 유효 등급 전환(밴드 판정, `filter:grade` 변화)** 에 적용된다 (2026-07-05, [ADR-033] — 종전에는 일 단위 신호 전환만 존재했으나, 밴드 도입으로 등급 전환이 장중에 발생한다). "직전 등급"의 기준은 유효 등급이며, 당일 신호 대비 전환 유형 판정에는 `filter:signal:*`의 신호 등급을 참조한다.
 
 | 전환 유형 | 예시 | 확증 횟수 | 쿨다운 | 긴급도 |
 |-----------|------|-----------|--------|--------|
@@ -1317,7 +1382,20 @@ WebSocket 실시간 체결/호가 데이터는 ML 학습 피처로 사용하지 
 
 ### 8.5 Tier 분류 기준
 
-**confidence 산출식** (analyzer 설계 [D-12], 2026-07-04 확정): **방향별 확률 합** — 매수 신호면 P(STRONG_BUY)+P(BUY), 매도 신호면 P(SELL)+P(STRONG_SELL). 등급(`signal`)이 크기(수익률 규모, 6.1절 레이블 경계 소관)를, confidence가 방향 확신(그 방향 판단이 맞을 확률)을 각각 전달하는 역할 분리 설계다 — 5클래스 중 예측 클래스 하나의 확률만 쓰면 인접 등급으로 분산된 확신을 과소평가하고 반대 방향 확률과의 구분력을 잃는다. 산출식은 모델 메타(`trading_signals.model_version` 귀속)에 기록한다.
+**confidence 산출식 (2026-07-05 개정, [ADR-033])**: **분위수 회귀 예측구간 기반 방향 적중 확률 근사.** 종전 "방향별 확률 합"(analyzer 설계 [D-12], 2026-07-04)은 회귀 전환으로 클래스 확률이 소멸하여 대체한다.
+
+```
+σ = (p90 − p10) / 2.563            # 정규 근사: 80% 예측구간 폭 → 표준편차
+confidence = Φ(|score_ens| / σ)    # P(실현 수익률의 부호 == score의 부호)의 근사, Φ = 표준정규 CDF
+```
+
+- `p10`/`p90`은 LightGBM 분위수 보조 모델(6.1절) 출력. 분위수 교차(p10 > p90) 발생 시 정렬 후처리
+- `score_ens` = 0(앙상블 부호 불일치)이면 confidence = 0.5 (방향 무정보). 값 범위: 0.5(무정보) ~ 1.0(확실)
+- **역할 분리는 종전과 동일하게 계승**(ADR-031 → ADR-033): 등급·`score`가 **크기**(얼마나 움직일까)를, confidence가 **방향 확신**(그 방향 판단이 맞을 확률)을 각각 전달한다. 예: 과거 유사 패턴이 일관되게 +8% 부근이면 [p10,p90]이 좁아 confidence 높음, +20%/−4%로 들쭉날쭉한 도박성 패턴이면 구간이 넓어 confidence 낮음 — score만으로는 이 둘을 구분할 수 없다
+- 캘리브레이션 검증(예측 confidence vs 실측 적중률, 6.4절 지표)은 백테스트에서 수행. Isotonic 등 보정은 개선 후보
+- 산출식은 모델 메타(`trading_signals.model_version` 귀속)에 기록한다.
+
+**알림 메시지 표기 (2026-07-05 확정)**: Tier 1/2 알림 본문에는 등급 + **score(예상 수익률 y%, 예: "+4.3% 예상")** + confidence + [단기]/[중기](horizon)를 함께 표기한다. score 표기는 경계를 간신히 넘은 신호와 확실히 넘은 신호를 수신자가 구분할 수 있게 한다.
 
 | Tier | 조건 | 라우팅 |
 |------|------|--------|
@@ -1635,16 +1713,17 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 
 | 지표 | 측정 방법 |
 |------|-----------|
-| 등급 확정 지연 | 일봉 수집 완료 이벤트 → 전 종목 등급 확정 시간 차이 |
+| 등급 확정 지연 | 일봉 수집 완료 이벤트 → 전 종목 신호+밴드 확정 시간 차이 (밴드 스윕 포함, 2026-07-05 개정) |
 | 방향 적중률 | 예측 방향 vs 실제 N일 후 방향 비교 |
-| Precision | TP / (TP + FP), 매수/매도 방향별 각각 산출 |
+| IC / Rank IC | score vs 실현 수익률의 (순위)상관 (2026-07-05 추가, [ADR-033]) |
+| Precision | TP / (TP + FP), 매수/매도 방향별 각각 산출 (파생 등급 기준) |
 | 샤프 비율 | 모델 기반 전략 샤프 비율 vs 단순 매수보유 샤프 비율 비교 (백테스트) |
 
 **Phase 3 (Notifier)**
 
 | 지표 | 측정 방법 |
 |------|-----------|
-| STRONG 알림 지연 | 신호 수신 → 텔레그램 발송 시간 차이 |
+| STRONG 알림 지연 | 타이밍 조건 충족(장중 유효 등급 전환 확정 틱) → 텔레그램 발송 시간 차이 (2026-07-05 개정 — 틱 구동·밴드 설계와 정합. 종전 "신호 수신 →"은 장외 배치 신호와 장중 발송 사이 간격이 측정에 섞이는 오류) |
 | 필터 오작동 | 차단했어야 할 알림 통과 건수 수동 검증 |
 | 일일 리포트 발송 | 발송 성공 로그 |
 

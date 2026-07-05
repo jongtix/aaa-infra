@@ -214,7 +214,11 @@ ML 학습(Phase 2)에 필요한 과거 데이터를 Phase 1에서 사전 수집�
 | SELL | 매도 신호 |
 | STRONG_SELL | 강한 매도 신호 |
 
-각 신호에는 confidence (0.0 ~ 1.0) 값이 함께 생성된다. 모델은 5개 등급을 직접 출력하며, STRONG 등급은 더 높은 수익/손실이 예상될 때 부여된다. 등급 분류에 사용하는 수익률 범위 기준은 [TECHSPEC 6.1절](TECHSPEC.md#61-모델-구조)에 정의한다.
+모델은 예측 기간 종료 시점의 **기대수익률(연속 점수, score)** 을 직접 출력하고, 등급은 그 score에 수익률 경계를 적용해 파생한다(연속 점수 + 이산화 계층 — [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)). STRONG 등급은 더 높은 수익/손실이 예상될 때(|score|가 클 때) 부여된다 — "STRONG = 크게 움직일 것"이라는 의미는 종전과 동일하다. 각 신호에는 confidence (0.0 ~ 1.0) 값이 함께 생성된다 — 방향 확신(그 방향 판단이 맞을 확률)을 뜻하며, 분위수 회귀 예측구간으로 산출한다([TECHSPEC 8.5절](TECHSPEC.md#85-tier-분류-기준)). 등급 파생에 사용하는 수익률 경계는 [TECHSPEC 6.1절](TECHSPEC.md#61-모델-구조)에 정의한다.
+
+알림에는 등급과 함께 score(예상 수익률 y%)·confidence를 표기한다.
+
+> **개정 이력 (2026-07-05)**: 종전 "모델은 5개 등급을 직접 출력" 설계를 "연속 점수 출력 + 이산화 계층"으로 개정 ([ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md), ADR-031 대체). 등급 체계·STRONG 의미론은 불변이며, 모델 출력 표현만 연속화한 것이다.
 
 ### 8.2 신호 방향 정의
 
