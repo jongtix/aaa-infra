@@ -309,6 +309,75 @@ groups:
           description: "미국 관심종목 동기화(매일 ET 08:50) 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-013)."
 
   # ---------------------------------------------------------------------------
+  # 그룹 9a: 해외 뉴스 실행 신선도 — 1h + US 세션 게이트(신규, REQ-WM-024)
+  # ---------------------------------------------------------------------------
+  # overseas-news(OverseasNewsScheduler, ET 10분 폴링 09~16시 MON-FRI).
+  # us_market_open 게이팅 + holiday_count>=20 가드(fail-open 방지, 국내 domestic-news 그룹8 대칭 클래스).
+  # 워터마크 신선도 대상 아님(일-grain 한계, Exclusion 7) — 본 룰이 유일한 감시망.
+  - name: collector-collection-gap-overseas-news
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          ((time() - aaa_collector_batch_last_load_seconds{batch="overseas-news"}) > 1 * 3600)
+          and on() (aaa_collector_us_market_open == 1)
+          and on() (aaa_collector_us_market_gate_holiday_count >= 20)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "해외 뉴스 배치 신선도 갭 — overseas-news > 1h 미적재"
+          description: "US 세션 중(us_market_open==1, holiday_count>=20) 해외 뉴스 배치 10분 주기 수집이 1h 이상 중단됨(REQ-WM-024)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 9b: MON-FRI 무게이트 100h 배치 — overseas-rights + extended-hours(신규, REQ-WM-024)
+  # ---------------------------------------------------------------------------
+  # overseas-rights(OverseasRightsScheduler, ET 일1회 17:00 MON-FRI) — corporate_events 기록,
+  #   워터마크 대상 아님(이벤트성, Exclusion 1) — 본 룰이 유일한 감시망.
+  # extended-hours(ExtendedHoursScheduler pre+after 공유 라벨, ET 10:00/20:30 MON-FRI) — 실행 신선도
+  #   백스톱(REQ-WM-013). 데이터 신선도는 워터마크 시리즈 extended-hours-pre/after(즉시형 6h)가 별도 추적하며,
+  #   본 룰은 "스케줄러 자체가 실행됐는가"를 감시하는 독립 안전망(제거 불변식과 무관하게 유지, REQ-WM-013).
+  # MON-FRI 잡이라 국내 market_open 억제가 주말 커버 불가 → 무억제(그룹5 100h와 동일 클래스).
+  - name: collector-collection-gap-nogate-100h
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          (time() - aaa_collector_batch_last_load_seconds{batch=~"overseas-rights|extended-hours"}) > 100 * 3600
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "무게이트 배치 신선도 갭 — {{ $labels.batch }} > 100h 미적재"
+          description: "MON-FRI 배치 {{ $labels.batch }} 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-WM-024)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 9c: 매일 무게이트 28h 배치 — corp-code + dart-backfill(신규, REQ-WM-024)
+  # ---------------------------------------------------------------------------
+  # corp-code(CorpCodeUpdateScheduler, KST 매일 07:30) — DART corp_code 매핑, 시계열 아님(MI-07).
+  # dart-backfill(DartDisclosureBackfillScheduler, KST 매일 04:30) — disclosures 테이블에 과거 날짜만
+  #   기록(forward-only watermark라 dart-disclosure와 이중 writer 안전, REQ-WM-013 MA-03).
+  # 매일 잡이라 주말 갭 없음(watchlist-sync-us 그룹9 클래스와 동일) → 28h 무게이트.
+  - name: collector-collection-gap-nogate-28h
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStale
+        expr: |
+          (time() - aaa_collector_batch_last_load_seconds{batch=~"corp-code|dart-backfill"}) > 28 * 3600
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "무게이트 배치 신선도 갭 — {{ $labels.batch }} > 28h 미적재"
+          description: "매일 배치 {{ $labels.batch }} 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
+
+  # ---------------------------------------------------------------------------
   # 그룹 10: 안전 모드 진입/해제 — SPEC-OBSV-SYSALERT-001
   # ---------------------------------------------------------------------------
   # collector가 KIS 토큰·WebSocket 안전 모드에 진입/해제할 때 즉시 경보.

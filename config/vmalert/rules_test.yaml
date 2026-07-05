@@ -769,6 +769,124 @@ tests:
         alertname: CollectorBatchStale
         exp_alerts: []
 
+  # ===========================================================================
+  # SPEC-OBSV-WATERMARK-001 REQ-WM-024 — 신규 Module E 실행 신선도 라벨 유닛테스트
+  # ===========================================================================
+
+  # TI-WM-E-001. [발화] overseas-news stale>1h AND us_market_open==1 AND holiday_count>=20 → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-news"}'
+        values: '0+0x133'
+      - series: 'aaa_collector_us_market_open'
+        values: '1+0x133'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '25+0x133'
+    alert_rule_test:
+      - eval_time: 1h6m
+        groupname: collector-collection-gap-overseas-news
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: overseas-news
+              tier: TICKET
+            exp_annotations:
+              summary: "해외 뉴스 배치 신선도 갭 — overseas-news > 1h 미적재"
+              description: "US 세션 중(us_market_open==1, holiday_count>=20) 해외 뉴스 배치 10분 주기 수집이 1h 이상 중단됨(REQ-WM-024)."
+
+  # TI-WM-E-002. [무발화] overseas-news stale>1h 이지만 us_market_open==0(장외) → 억제.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-news"}'
+        values: '0+0x133'
+      - series: 'aaa_collector_us_market_open'
+        values: '0+0x133'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '25+0x133'
+    alert_rule_test:
+      - eval_time: 1h6m
+        groupname: collector-collection-gap-overseas-news
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # TI-WM-E-003. [발화] extended-hours stale>100h → 발화(게이트 무관).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="extended-hours"}'
+        values: '0+0x12130'
+    alert_rule_test:
+      - eval_time: 101h5m
+        groupname: collector-collection-gap-nogate-100h
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: extended-hours
+              tier: TICKET
+            exp_annotations:
+              summary: "무게이트 배치 신선도 갭 — extended-hours > 100h 미적재"
+              description: "MON-FRI 배치 extended-hours 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-WM-024)."
+
+  # TI-WM-E-004. [발화] overseas-rights stale>100h → 발화(게이트 무관).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-rights"}'
+        values: '0+0x12130'
+    alert_rule_test:
+      - eval_time: 101h5m
+        groupname: collector-collection-gap-nogate-100h
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: overseas-rights
+              tier: TICKET
+            exp_annotations:
+              summary: "무게이트 배치 신선도 갭 — overseas-rights > 100h 미적재"
+              description: "MON-FRI 배치 overseas-rights 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-WM-024)."
+
+  # TI-WM-E-005. [발화] corp-code stale>28h → 발화(매일 잡, 게이트 무관).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="corp-code"}'
+        values: '0+0x3500'
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap-nogate-28h
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: corp-code
+              tier: TICKET
+            exp_annotations:
+              summary: "무게이트 배치 신선도 갭 — corp-code > 28h 미적재"
+              description: "매일 배치 corp-code 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
+
+  # TI-WM-E-006. [발화] dart-backfill stale>28h → 발화(매일 잡, 게이트 무관).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="dart-backfill"}'
+        values: '0+0x3500'
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap-nogate-28h
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: dart-backfill
+              tier: TICKET
+            exp_annotations:
+              summary: "무게이트 배치 신선도 갭 — dart-backfill > 28h 미적재"
+              description: "매일 배치 dart-backfill 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
+
   # ====================================================================
   # SPEC-OBSV-SYSALERT-001: collector-safemode 룰 유닛테스트
   # ===========================================================================
