@@ -1,6 +1,6 @@
 # =============================================================================
-# Alertmanager 라우팅 — 모든 알림 → 시스템봇(Telegram) 단일 receiver
-# SPEC-COLLECTOR-OBSV-001 TI-005 + TI-006 + TI-007
+# Alertmanager 라우팅 — 시스템봇(Telegram) PAGE/TICKET 2티어 라우팅
+# SPEC-COLLECTOR-OBSV-001 TI-005 + TI-006 + TI-007 / SPEC-OBSV-WATERMARK-001 REQ-WM-025
 # =============================================================================
 # 런타임 마운트: ${AAA_SSD_BASE}/config/alertmanager/alertmanager.yml → /etc/alertmanager/alertmanager.yml:ro
 #
@@ -15,29 +15,59 @@
 #     → /run/secrets/* 는 호스트 파일 권한을 그대로 미러하므로, 호스트
 #       ${AAA_SSD_BASE}/secrets/alertmanager.{bot_token,chat_id}를 0644로 둬야
 #       nobody(65534) 실행 AM이 읽는다(0600이면 NOT_READABLE). secrets 디렉토리 700이 호스트 노출 차단.
+#
+# [SPEC-OBSV-WATERMARK-001 REQ-WM-025] 모든 vmalert 알림은 rules.yml에서 `tier: PAGE|TICKET` 라벨을
+#   부여받는다. 여기서는 동일한 텔레그램 봇(단일 채팅)으로 발송하되, tier 라벨로 receiver를 분기해
+#   메시지 접두어만 [PAGE]/[TICKET]로 구분한다(1인 운영 — 봇/채널 분리 없이 가독성만 확보).
+#   route.receiver(기본값)는 안전망(tier 라벨 누락 시 폴백)이며, 정상 흐름에서는 항상 routes의 매처가 선반영된다.
 
 route:
-  receiver: system-bot-telegram
+  receiver: system-bot-telegram-ticket
   # DP5 보수 초기값(M5 라이브 튜닝 전제) — REQ-052 상태 전이 1회 발송은 AM 기본 동작이 충족,
   #   repeat_interval은 미복구(지속) 장애의 재알림 주기(알림 피로 방지).
   group_by: ["alertname", "batch"]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
+  routes:
+    # PAGE: CollectorDown, 데드맨, 일봉 워터마크 KRX/US, 국내·해외 틱 침묵, 안전모드 진입,
+    #   시장지표 전소스 탈진 — REQ-WM-025 최소 핵심셋(§8 결정 1+4).
+    - matchers:
+        - tier = "PAGE"
+      receiver: system-bot-telegram-page
+      continue: false
+    # TICKET: 나머지 전체(기본 경로이자 명시적 매치 둘 다 허용 — tier 라벨 누락 시 상위 route.receiver로 폴백).
+    - matchers:
+        - tier = "TICKET"
+      receiver: system-bot-telegram-ticket
+      continue: false
 
 receivers:
-  - name: system-bot-telegram
+  - name: system-bot-telegram-page
     telegram_configs:
       # send_resolved: 장애 발생 1회 + 복구(resolved) 1회 발송(REQ-052 상태 전이).
       - send_resolved: true
         # bot_token_file/chat_id_file: 실값 미커밋, compose secrets로 마운트된 값-전용 파일에서 로드.
+        #   PAGE/TICKET 모두 동일 봇·동일 채팅으로 발송(1인 운영, 봇 분리 불필요) — 메시지 접두어로만 구분.
         bot_token_file: /run/secrets/am_bot_token
         chat_id_file: /run/secrets/am_chat_id
         parse_mode: HTML
         # parse_mode: HTML에서 summary/description의 <, >, & 가 Telegram HTML 파싱을 깨뜨려
         #   실제 알림이 무음 전송 실패할 수 있으므로 html 이스케이프를 적용한다(batch 라벨 등 동적값 방어).
         message: |
-          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>[AAA collector] {{ .Status | toUpper }}</b>
+          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>[PAGE][AAA collector] {{ .Status | toUpper }}</b>
+          {{ range .Alerts }}• {{ .Annotations.summary | html }}
+          {{ .Annotations.description | html }}
+          {{ end }}
+
+  - name: system-bot-telegram-ticket
+    telegram_configs:
+      - send_resolved: true
+        bot_token_file: /run/secrets/am_bot_token
+        chat_id_file: /run/secrets/am_chat_id
+        parse_mode: HTML
+        message: |
+          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>[TICKET][AAA collector] {{ .Status | toUpper }}</b>
           {{ range .Alerts }}• {{ .Annotations.summary | html }}
           {{ .Annotations.description | html }}
           {{ end }}
