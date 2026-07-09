@@ -567,7 +567,9 @@ groups:
           description: "{{ $labels.series }} coverage_ratio {{ $value }} < 0.95가 1h 이상 지속(REQ-WM-018). 일1회 계산이라 해소 후 최대 ~24h 잔류 가능(MI-06)."
 
   # ---------------------------------------------------------------------------
-  # 그룹 W5: 백필 이상 — REQ-WM-019(clamp) / REQ-WM-020(정체)
+  # 그룹 W5: 백필 이상 — REQ-WM-019(clamp) / REQ-WM-020(정체) /
+  #          REQ-BACKFILL-157/-146b(GROUP_A 카운터) / REQ-BACKFILL-154/-155(밀도 게이지)
+  #          (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-158)
   # ---------------------------------------------------------------------------
   - name: collector-backfill-anomaly
     interval: 30s
@@ -597,6 +599,57 @@ groups:
         annotations:
           summary: "백필 정체 — pending_slots > 0 그리고 26h 무전진"
           description: "미완료 백필 슬롯이 잔존하나 26h 동안 windows_total 증가 없음(REQ-WM-020). progress_ratio 절대값으로는 판단하지 않음(lazy 시딩 분모 증가 시 정당 하락)."
+
+      # GROUP_A 조기 완료 의심(REQ-BACKFILL-157) — 확인 프로브가 비어있지 않은 응답으로 조기 완료를 차단할 때마다 증가.
+      # clamp_suspected(GROUP_B 전용)와 대칭인 GROUP_A 신호(REQ-BACKFILL-158, SPEC-COLLECTOR-BACKFILL-010).
+      - alert: CollectorBackfillEarlyCompletionSuspect
+        expr: increase(aaa_collector_backfill_early_completion_suspect_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "백필 GROUP_A 조기 완료 의심 — 1h 내 증가"
+          description: "aaa_collector_backfill_early_completion_suspect_total이 1h 내 증가. 확인 프로브가 조기 COMPLETED를 차단(REQ-BACKFILL-157) — 구코드였다면 손상이 났을 지점."
+
+      # GROUP_A anomaly-FAILED 종결(REQ-BACKFILL-146b) — oldest=null·rawRowCount>0 이상 status가 N 사이클 끝에
+      # terminal FAILED로 종결될 때 status당 1회 증가. pending_slots(FAILED 제외)로 비가시(REQ-BACKFILL-158).
+      - alert: CollectorBackfillAnomalyFailed
+        expr: increase(aaa_collector_backfill_anomaly_failed_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "백필 GROUP_A anomaly-FAILED 종결 — 1h 내 증가"
+          description: "aaa_collector_backfill_anomaly_failed_total이 1h 내 증가. oldest=null·rawRowCount>0 반복 이상이 bounded FAILED로 종결(REQ-BACKFILL-146b)."
+
+      # 과거 밀도 게이지 A(하한 미달, REQ-BACKFILL-154) — 신뢰 가능한 하한 존재 종목 중 MIN(trade_date)>floor인 종목 수>0이 1h 지속.
+      # 지속 상태 게이지 디바운스(W3/W4 for:1h와 정합, REQ-BACKFILL-158).
+      - alert: CollectorBackfillBelowFloor
+        expr: aaa_collector_backfill_below_floor_stocks > 0
+        for: 1h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "백필 과거 밀도 하한 미달 — {{ $labels.series }} > 0"
+          description: "{{ $labels.series }} below_floor_stocks {{ $value }} > 0이 1h 이상 지속. 신뢰 하한 존재 종목의 MIN(trade_date)가 기대 최과거일 미달(REQ-BACKFILL-154)."
+
+      # 과거 밀도 게이지 B(내부 구멍, REQ-BACKFILL-155) — 보유 구간 내부에 캘린더상 존재하나 부재한 거래일이 있는 종목 수>0이 1h 지속.
+      - alert: CollectorBackfillInternalGap
+        expr: aaa_collector_backfill_internal_gap_stocks > 0
+        for: 1h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "백필 과거 밀도 내부 구멍 — {{ $labels.series }} > 0"
+          description: "{{ $labels.series }} internal_gap_stocks {{ $value }} > 0이 1h 이상 지속. 보유 구간 내부에 거래일 캘린더 대비 부재 거래일 존재(REQ-BACKFILL-155)."
 
   # ---------------------------------------------------------------------------
   # 그룹 W6: 틱 침묵 — REQ-WM-021(국내) / REQ-WM-028(해외)

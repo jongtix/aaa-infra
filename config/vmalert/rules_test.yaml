@@ -1213,6 +1213,128 @@ tests:
         alertname: CollectorBackfillStalled
         exp_alerts: []
 
+  # TI-WM-BF-005. [발화] early_completion_suspect_total 5분 내 증가 → CollectorBackfillEarlyCompletionSuspect 발화
+  # (REQ-BACKFILL-157/-158).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_early_completion_suspect_total'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillEarlyCompletionSuspect
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "백필 GROUP_A 조기 완료 의심 — 1h 내 증가"
+              description: "aaa_collector_backfill_early_completion_suspect_total이 1h 내 증가. 확인 프로브가 조기 COMPLETED를 차단(REQ-BACKFILL-157) — 구코드였다면 손상이 났을 지점."
+
+  # TI-WM-BF-006. [무발화] early_completion_suspect_total 무증가 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_early_completion_suspect_total'
+        values: '0+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillEarlyCompletionSuspect
+        exp_alerts: []
+
+  # TI-WM-BF-007. [발화] anomaly_failed_total 5분 내 증가 → CollectorBackfillAnomalyFailed 발화
+  # (REQ-BACKFILL-146b/-158).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_anomaly_failed_total'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillAnomalyFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "백필 GROUP_A anomaly-FAILED 종결 — 1h 내 증가"
+              description: "aaa_collector_backfill_anomaly_failed_total이 1h 내 증가. oldest=null·rawRowCount>0 반복 이상이 bounded FAILED로 종결(REQ-BACKFILL-146b)."
+
+  # TI-WM-BF-008. [무발화] anomaly_failed_total 무증가 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_anomaly_failed_total'
+        values: '0+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillAnomalyFailed
+        exp_alerts: []
+
+  # TI-WM-BF-009. [발화] below_floor_stocks{series=daily-ohlcv-krx}=3(>0) 상시 → for:1h 후 발화(REQ-BACKFILL-154/-158).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_below_floor_stocks{series="daily-ohlcv-krx",market="domestic"}'
+        values: '3+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillBelowFloor
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: daily-ohlcv-krx
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "백필 과거 밀도 하한 미달 — daily-ohlcv-krx > 0"
+              description: "daily-ohlcv-krx below_floor_stocks 3 > 0이 1h 이상 지속. 신뢰 하한 존재 종목의 MIN(trade_date)가 기대 최과거일 미달(REQ-BACKFILL-154)."
+
+  # TI-WM-BF-010. [무발화] below_floor_stocks=0 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_below_floor_stocks{series="daily-ohlcv-krx",market="domestic"}'
+        values: '0+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillBelowFloor
+        exp_alerts: []
+
+  # TI-WM-BF-011. [발화] internal_gap_stocks{series=daily-ohlcv-us}=2(>0) 상시 → for:1h 후 발화(REQ-BACKFILL-155/-158).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_internal_gap_stocks{series="daily-ohlcv-us",market="overseas"}'
+        values: '2+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillInternalGap
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: daily-ohlcv-us
+              market: overseas
+              tier: TICKET
+            exp_annotations:
+              summary: "백필 과거 밀도 내부 구멍 — daily-ohlcv-us > 0"
+              description: "daily-ohlcv-us internal_gap_stocks 2 > 0이 1h 이상 지속. 보유 구간 내부에 거래일 캘린더 대비 부재 거래일 존재(REQ-BACKFILL-155)."
+
+  # TI-WM-BF-012. [무발화] internal_gap_stocks=0 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_internal_gap_stocks{series="daily-ohlcv-us",market="overseas"}'
+        values: '0+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillInternalGap
+        exp_alerts: []
+
   # ===========================================================================
   # 룰 W6: collector-tick-silence — REQ-WM-021(국내) / REQ-WM-028(해외) / AC-11 / AC-12
   # ===========================================================================
