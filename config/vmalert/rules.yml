@@ -1174,3 +1174,59 @@ groups:
         annotations:
           summary: "예상 실행 신선도 갭 — {{ $labels.batch }} 직전 슬롯 미완료"
           description: "배치 {{ $labels.batch }}의 cron 예상 실행 슬롯 + 마진이 경과했으나 마지막 적재(last_load)가 그 슬롯 이전에 머묾. collector 배치 로그·CatchUpRunner 재실행 여부를 확인할 것(REQ-XR-019)."
+
+  # ---------------------------------------------------------------------------
+  # 그룹 XR-I: 예상 실행 데드맨 3종(SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-023/024/025, Module I, DP-6)
+  # ---------------------------------------------------------------------------
+  # [HARD ADD-only] 그룹 XR-H와 동일 원칙 — 기존 collector-watermark-deadman(그룹 W1)을 대체하지 않고
+  #   구조·debounce 스타일만 미러한다. 워터마크 데드맨은 데이터 워터마크 시계열 소실을, 이 그룹은
+  #   expected_run 시계열 소실을 감시하며 서로 별개·상보(§6 Exclusion 8).
+  - name: collector-expected-run-deadman
+    interval: 30s
+    rules:
+      # 총-소실(REQ-XR-023): expected_run 또는 enrolled_total 시계열 전체 부재.
+      # for: 10m — 스크랩 staleness보다 길게 잡아 CollectorDown과의 중복 발화 억제(그룹 W1과 동일 근거).
+      - alert: CollectorExpectedRunSeriesMissing
+        expr: |
+          absent(aaa_collector_batch_expected_run_seconds)
+          or absent(aaa_collector_batch_enrolled_total)
+        for: 10m
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled_total"
+          description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled_total 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
+
+      # 부분-소실(REQ-XR-024): 관측 시계열 수 < 레지스트리 자기-보고 크기(enrolled_total).
+      # [설계 개선] 워터마크 데드맨(그룹 W1)의 하드코딩 임계 17(MI-05 유지보수 함정)과 달리, 이 룰은
+      #   enrolled_total 자기참조 비교라 레지스트리 편입/제거 시 상수 갱신이 불필요(self-updating).
+      # [HARD 전제] 이 for:10m debounce의 안전성은 REQ-XR-031(부팅 시 eager 전수 등록)을 전제로 한다 —
+      #   lazy 등록이면 주1회 배치가 재배포 후 시계열 부재로 이 룰을 배포마다 확정 오발시킨다(DP-6).
+      - alert: CollectorExpectedRunSeriesCountLow
+        expr: count(aaa_collector_batch_expected_run_seconds) < scalar(aaa_collector_batch_enrolled_total)
+        for: 10m
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "예상 실행 시계열 개수 부족 — {{ $value }} < enrolled_total"
+          description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled_total) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
+
+      # pair-missing(REQ-XR-025): 편입은 됐으나(expected_run 있음) last_load를 한 번도 stamp한 적 없는 배치.
+      #   주 실행 신선도 룰(그룹 XR-H)은 이 경우 존재하지 않는 시계열 비교로 빈 벡터를 산출해 침묵하므로
+      #   (PromQL: 부재 시계열 비교는 참이 아니라 무결과) 별도 데드맨이 필요하다.
+      # for: 26h — REQ-XR-018 warm-start 범위 확장(news 2종·split·extended-hours 배선)과 동반해, 부팅~
+      #   첫 성공 실행 전의 정당한 빈-창이 오발로 이어지지 않도록 함.
+      - alert: CollectorExpectedRunPairMissing
+        expr: aaa_collector_batch_expected_run_seconds unless on(batch) aaa_collector_batch_last_load_seconds
+        for: 26h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "예상 실행-완료 짝 누락 — {{ $labels.batch }} last_load 무기록"
+          description: "배치 {{ $labels.batch }}가 레지스트리에 편입되어 expected_run은 있으나 last_load를 26시간 동안 한 번도 stamp하지 않음. 신규 편입 배치의 첫 실행 여부·스케줄러 배선을 확인할 것(REQ-XR-025)."
