@@ -18,8 +18,14 @@
 #
 # [SPEC-OBSV-WATERMARK-001 REQ-WM-025] 모든 vmalert 알림은 rules.yml에서 `tier: PAGE|TICKET` 라벨을
 #   부여받는다. 여기서는 동일한 텔레그램 봇(단일 채팅)으로 발송하되, tier 라벨로 receiver를 분기해
-#   메시지 접두어만 [PAGE]/[TICKET]로 구분한다(1인 운영 — 봇/채널 분리 없이 가독성만 확보).
+#   메시지 접두어만 구분한다(1인 운영 — 봇/채널 분리 없이 가독성만 확보).
 #   route.receiver(기본값)는 안전망(tier 라벨 누락 시 폴백)이며, 정상 흐름에서는 항상 routes의 매처가 선반영된다.
+#
+# [메시지 표준 해부도, 2026-07-08] 접두어는 내부 용어(PAGE/TICKET/FIRING) 대신 한글 표기:
+#   PAGE 발생=🚨 [긴급] / TICKET 발생=⚠️ [점검] / 해소(공통)=✅ [해소].
+#   본문 = 알림별 「• 제목(볼드) (시작시각~)」 → 「상태: description」 → 「확인: action」(action은
+#   rules.yml annotations의 선택 필드 — 없는 룰은 확인 줄이 렌더되지 않아 점진 도입 가능).
+#   시작시각 {{ .StartsAt.Local }}은 AM 컨테이너 TZ를 따른다(KST 표기는 compose의 TZ=Asia/Seoul 전제).
 
 route:
   receiver: system-bot-telegram-ticket
@@ -55,9 +61,10 @@ receivers:
         # parse_mode: HTML에서 summary/description의 <, >, & 가 Telegram HTML 파싱을 깨뜨려
         #   실제 알림이 무음 전송 실패할 수 있으므로 html 이스케이프를 적용한다(batch 라벨 등 동적값 방어).
         message: |
-          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>[PAGE][AAA collector] {{ .Status | toUpper }}</b>
-          {{ range .Alerts }}• {{ .Annotations.summary | html }}
-          {{ .Annotations.description | html }}
+          {{ if eq .Status "firing" }}🚨 <b>[긴급]</b>{{ else }}✅ <b>[해소]</b>{{ end }}
+          {{ range .Alerts }}• <b>{{ .Annotations.summary | html }}</b> ({{ .StartsAt.Local.Format "01-02 15:04" }}~)
+          상태: {{ .Annotations.description | html }}{{ if .Annotations.action }}
+          확인: {{ .Annotations.action | html }}{{ end }}
           {{ end }}
 
   - name: system-bot-telegram-ticket
@@ -67,9 +74,10 @@ receivers:
         chat_id_file: /run/secrets/am_chat_id
         parse_mode: HTML
         message: |
-          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>[TICKET][AAA collector] {{ .Status | toUpper }}</b>
-          {{ range .Alerts }}• {{ .Annotations.summary | html }}
-          {{ .Annotations.description | html }}
+          {{ if eq .Status "firing" }}⚠️ <b>[점검]</b>{{ else }}✅ <b>[해소]</b>{{ end }}
+          {{ range .Alerts }}• <b>{{ .Annotations.summary | html }}</b> ({{ .StartsAt.Local.Format "01-02 15:04" }}~)
+          상태: {{ .Annotations.description | html }}{{ if .Annotations.action }}
+          확인: {{ .Annotations.action | html }}{{ end }}
           {{ end }}
 
 # DP7 발송 실패 복원력(REQ-054): Alertmanager 내장 재시도(미복구 alert를 보류 상태로 유지하여

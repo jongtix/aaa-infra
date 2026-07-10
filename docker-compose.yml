@@ -258,6 +258,9 @@ services:
         limits:
           memory: 64M
           cpus: "0.25"
+    environment:
+      # 텔레그램 메시지 템플릿의 {{ .StartsAt.Local }} KST 렌더링용(이미지에 zoneinfo 포함 실측 2026-07-08).
+      - TZ=Asia/Seoul
     expose:
       # 9093 Alertmanager API(내부 전용, vmalert notifier 대상).
       - "9093"
