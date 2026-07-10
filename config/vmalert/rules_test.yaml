@@ -2185,3 +2185,174 @@ tests:
               summary: "NAS 디스크 사용률 1단계 — /volume1 (75%)"
               description: "/volume1 사용률이 70% 초과 지속."
               action: "ssh nas-ugreen \"df -h /volume1 /volume2\" → docker system df·로그·백업 순으로 대용량 정리"
+
+  # ===========================================================================
+  # 룰 XR-H: collector-collection-gap-expected-run — REQ-XR-019 (SPEC-COLLECTOR-EXPECTED-RUN-001 M2)
+  # ===========================================================================
+  # [HARD ADD-only] 아래 케이스는 신규 그룹 전용이며 기존 그룹2/5/6/9b/9c 등 케이스를 대체하지 않는다.
+  # 조건은 (i) last_load < expected_run 와 (ii) time()-expected_run-run_margin > 0 를 동시에 요구한다.
+
+  # TI-XR-H-001. [발화] last_load=0(미완료) + expected_run=1000 + margin=3600 → 6h 시점 (i)/(ii) 둘 다 참 → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '0+0x730'
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
+        values: '1000+0x730'
+      - series: 'aaa_collector_batch_run_margin_seconds{batch="overseas-daily"}'
+        values: '3600+0x730'
+    alert_rule_test:
+      - eval_time: 6h
+        groupname: collector-collection-gap-expected-run
+        alertname: CollectorBatchStaleExpectedRun
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: overseas-daily
+              tier: TICKET
+            exp_annotations:
+              summary: "예상 실행 신선도 갭 — overseas-daily 직전 슬롯 미완료"
+              description: "배치 overseas-daily의 cron 예상 실행 슬롯 + 마진이 경과했으나 마지막 적재(last_load)가 그 슬롯 이전에 머묾. collector 배치 로그·CatchUpRunner 재실행 여부를 확인할 것(REQ-XR-019)."
+
+  # TI-XR-H-002. [무발화] last_load(100000) >= expected_run(1000) → (i) 거짓 → 미발화(직전 슬롯 성공 완료).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '100000+0x730'
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
+        values: '1000+0x730'
+      - series: 'aaa_collector_batch_run_margin_seconds{batch="overseas-daily"}'
+        values: '3600+0x730'
+    alert_rule_test:
+      - eval_time: 6h
+        groupname: collector-collection-gap-expected-run
+        alertname: CollectorBatchStaleExpectedRun
+        exp_alerts: []
+
+  # TI-XR-H-003. [무발화] last_load=0(미완료)이나 슬롯+마진 미경과(expected_run=20000, margin=3600,
+  #   eval 6h=21600s → 21600-20000-3600<0) → (ii) 거짓 → 미발화(마진 유예 구간).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '0+0x730'
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
+        values: '20000+0x730'
+      - series: 'aaa_collector_batch_run_margin_seconds{batch="overseas-daily"}'
+        values: '3600+0x730'
+    alert_rule_test:
+      - eval_time: 6h
+        groupname: collector-collection-gap-expected-run
+        alertname: CollectorBatchStaleExpectedRun
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 XR-I: collector-expected-run-deadman — REQ-XR-023/024/025 (Module I, DP-6)
+  # ===========================================================================
+
+  # TI-XR-I-001. [발화, 총-소실] expected_run 시계열 전체 부재(enrolled_total만 존재) → 10m 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_enrolled_total'
+        values: '20+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunSeriesMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled_total"
+              description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled_total 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
+
+  # TI-XR-I-002. [무발화, 총-소실] 둘 다 존재 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
+        values: '1000+0x21'
+      - series: 'aaa_collector_batch_enrolled_total'
+        values: '20+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunSeriesMissing
+        exp_alerts: []
+
+  # TI-XR-I-003. [발화, 부분-소실] expected_run 3개 시계열만 노출 + enrolled_total=5 → count(3)<5 → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
+        values: '1000+0x21'
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
+        values: '1000+0x21'
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-rights"}'
+        values: '1000+0x21'
+      - series: 'aaa_collector_batch_enrolled_total'
+        values: '5+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunSeriesCountLow
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "예상 실행 시계열 개수 부족 — 3 < enrolled_total"
+              description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled_total) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
+
+  # TI-XR-I-004. [무발화, 부분-소실] expected_run 3개 시계열 == enrolled_total(3) → count==enrolled_total → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
+        values: '1000+0x21'
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
+        values: '1000+0x21'
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-rights"}'
+        values: '1000+0x21'
+      - series: 'aaa_collector_batch_enrolled_total'
+        values: '3+0x21'
+    alert_rule_test:
+      - eval_time: 10m30s
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunSeriesCountLow
+        exp_alerts: []
+
+  # TI-XR-I-005. [발화, pair-missing] overseas-split은 expected_run만 있고 last_load 무기록(다른 배치의
+  #   last_load만 존재해 unless on(batch) 라벨 조인이 올바름을 입증) → 26h 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
+        values: '1000+0x3180'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '999+0x3180'
+    alert_rule_test:
+      - eval_time: 26h5m
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunPairMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: overseas-split
+              tier: TICKET
+            exp_annotations:
+              summary: "예상 실행-완료 짝 누락 — overseas-split last_load 무기록"
+              description: "배치 overseas-split가 레지스트리에 편입되어 expected_run은 있으나 last_load를 26시간 동안 한 번도 stamp하지 않음. 신규 편입 배치의 첫 실행 여부·스케줄러 배선을 확인할 것(REQ-XR-025)."
+
+  # TI-XR-I-006. [무발화, pair-missing] 동일 배치에 expected_run·last_load 둘 다 존재 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
+        values: '1000+0x3180'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-split"}'
+        values: '999+0x3180'
+    alert_rule_test:
+      - eval_time: 26h5m
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunPairMissing
+        exp_alerts: []
