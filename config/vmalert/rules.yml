@@ -35,6 +35,15 @@
 #   룰 일부는 `notify: fire_only` 라벨을 부여해 5분 윈도우 소진 등으로 인한 가짜 ✅해소 통지를
 #   alertmanager.yml에서 억제한다(대상: SM 3종, SD-1, BF-1/3/4/7 — 각 그룹 주석 참조).
 #
+#   [SPEC-COLLECTOR-EXPECTED-RUN-001 M1, collector 배포 후 노출, M2 신규 그룹만 소비 — ADD-only,
+#    §8.1 확인 게이트 통과 전까지 구 그룹과 병행 실행]:
+#   aaa_collector_batch_expected_run_seconds{batch}   (gauge, cron 산출 KST epoch, 순수 함수·휴장 캘린더 무의존,
+#                                                       주말엔 직전 슬롯값 고정, 부팅 시 eager 전수 등록)
+#   aaa_collector_batch_run_margin_seconds{batch}      (gauge, 배치별 허용 마진 초, 부팅 시 eager 전수 등록)
+#   aaa_collector_batch_enrolled_total                 (gauge, 라벨 없음, 레지스트리 크기 self-updating)
+#   aaa_collector_batch_last_data_seconds{batch}       (gauge, KST epoch, 현재 overseas-shortsale-interest만 —
+#                                                       success>0 도착 시에만 갱신, 본 세션에서는 미소비)
+#
 # 휴장 억제(REQ-043) 핵심 = `and on() aaa_collector_market_open == 1` 조인:
 #   market_open 은 batch 라벨이 없고 batch 메트릭은 batch 라벨이 있어 라벨셋이 다르다.
 #   `and on()`(공집합 매칭)으로 라벨 무시 교집합을 만들어 "장중일 때만" 게이팅한다.
@@ -1125,3 +1134,43 @@ groups:
           summary: "NAS CPU 부하 3단계 — {{ $value | humanizePercentage }}"
           description: "5분 부하평균(코어 대비)이 90% 초과 지속 — 디스크 I/O 대기도 포함되는 지표라 CPU가 아닌 I/O 병목일 수 있음. CPU는 TICKET 유지(오탐성)."
           action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 부하 원인 컨테이너·I/O 확인"
+
+  # ---------------------------------------------------------------------------
+  # 그룹 XR-H: 예상 실행 신선도 — 라벨 무관 단일 룰(SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-019, Module H)
+  # ---------------------------------------------------------------------------
+  # [HARD ADD-only, 2026-07-10] 이 그룹은 신규 그룹이며 기존 collector-collection-gap(그룹 2)·
+  #   -overseas(그룹5)·-overseas-interest(그룹6)·-weekly·-news·-watchlist-us·-overseas-news·
+  #   -nogate-100h·-nogate-28h·-gate-health를 어떤 것도 대체·수정하지 않는다 — §8.1 확인 게이트
+  #   (collector M1 배포 + count(expected_run)==enrolled_total ≥24h 연속 관찰) 통과 전까지 구·신 룰
+  #   병행 실행(REQ-XR-030). 게이트 통과 후 구 룰 제거는 별도 세션(§8.2 "추가 → 확인 → 제거").
+  #
+  # 알림명을 CollectorBatchStale(그룹2 기존)과 의도적으로 구분해 CollectorBatchStaleExpectedRun으로
+  #   명명한다 — 컷오버 완료 전 두 알림 계열의 발화 출처를 구분하기 위함(최종 이름 통일 여부는
+  #   §8.1 게이트 통과 후 별도 세션 결정).
+  #
+  # `batch` 라벨 필터링(제외 정규식) 불필요 — 이 룰은 collector 레지스트리(REQ-XR-002)에 편입된 배치
+  #   전체에 라벨 무관 적용된다(그것이 라벨 무관 단일 룰의 요점, DP-4). 게이트-레거시 3배치
+  #   (domestic-daily/market-indicators/dart-disclosure)는 collector M1에서 애초에 레지스트리에
+  #   편입되지 않으므로(§3.2) expected_run 게이지 자체가 그 3배치에 대해 존재하지 않아 자동으로 이
+  #   룰 대상에서 제외된다 — 별도 필터 불요.
+  #
+  # 조건은 expected_run(cron 산출 앵커)과 last_load(완료 timestamp)를 반드시 둘 다 참조한다(REQ-XR-019
+  #   HARD 필수 의미 요소) — expected_run 단독 조건은 성공/실패 무관 상시 발화(≈20h/24h) 회귀가 된다.
+  #   (i) last_load < expected_run: 직전 예상 실행 슬롯이 아직 완료 stamp되지 않음
+  #   (ii) time() - expected_run - run_margin > 0: 그 슬롯 + 마진이 경과함
+  - name: collector-collection-gap-expected-run
+    interval: 30s
+    rules:
+      - alert: CollectorBatchStaleExpectedRun
+        expr: |
+          (aaa_collector_batch_last_load_seconds < aaa_collector_batch_expected_run_seconds)
+          and
+          ((time() - aaa_collector_batch_expected_run_seconds - aaa_collector_batch_run_margin_seconds) > 0)
+        for: 5m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "예상 실행 신선도 갭 — {{ $labels.batch }} 직전 슬롯 미완료"
+          description: "배치 {{ $labels.batch }}의 cron 예상 실행 슬롯 + 마진이 경과했으나 마지막 적재(last_load)가 그 슬롯 이전에 머묾. collector 배치 로그·CatchUpRunner 재실행 여부를 확인할 것(REQ-XR-019)."
