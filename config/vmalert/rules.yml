@@ -24,6 +24,16 @@
 #   aaa_collector_us_market_open                              (gauge 1/0, 반일 13:00 ET 이후 0 보정)
 #   aaa_collector_us_market_gate_holiday_count                (gauge, fail-open 가드용, >=20 정상)
 #   aaa_collector_batch_silent_drops_total                    (counter, 라벨 없음, 총합만)
+#   aaa_collector_backfill_early_completion_suspect_total     (counter, 라벨 없음, SPEC-COLLECTOR-BACKFILL-010)
+#   aaa_collector_backfill_anomaly_failed_total               (counter, 라벨 없음, SPEC-COLLECTOR-BACKFILL-010)
+#   aaa_collector_backfill_below_floor_stocks{series}         (gauge, SPEC-COLLECTOR-BACKFILL-010)
+#   aaa_collector_backfill_internal_gap_stocks{series}        (gauge, SPEC-COLLECTOR-BACKFILL-010)
+#   aaa_collector_backfill_cap_saturated_total                (counter, 라벨 없음, GROUPC REQ-GC-013)
+#
+# [2026-07-10 텔레그램 메시지 규격 재설계, aaa-infra#78] annotations에 선택 필드 `action`을 도입한다
+#   (없는 룰은 alertmanager 메시지의 "확인:" 줄이 렌더되지 않음 — 점진 도입). 이벤트형(카운터 증분)
+#   룰 일부는 `notify: fire_only` 라벨을 부여해 5분 윈도우 소진 등으로 인한 가짜 ✅해소 통지를
+#   alertmanager.yml에서 억제한다(대상: SM 3종, SD-1, BF-1/3/4/7 — 각 그룹 주석 참조).
 #
 # 휴장 억제(REQ-043) 핵심 = `and on() aaa_collector_market_open == 1` 조인:
 #   market_open 은 batch 라벨이 없고 batch 메트릭은 batch 라벨이 있어 라벨셋이 다르다.
@@ -31,9 +41,11 @@
 #   게이트가 0이거나 market_open 시계열이 부재(absent)하면 `and on() ...==1`이 빈 벡터가 되어
 #   (a)/(b) 룰은 발화하지 않는다 → 휴장/게이트부재 자동 억제(REQ-043 구조적 충족).
 #
-# [SPEC-OBSV-WATERMARK-001 REQ-WM-025] 모든 알림에 tier 라벨(PAGE|TICKET)을 부여한다.
+# [SPEC-OBSV-WATERMARK-001 REQ-WM-025, 2026-07-10 개정] 모든 알림에 tier 라벨(PAGE|TICKET)을 부여한다.
 #   PAGE = 최소 핵심셋: CollectorDown, 데드맨(워터마크 시계열 소실), 일봉 워터마크 KRX/US 신선도,
-#   국내·해외 틱 침묵, 안전모드 진입, 시장지표 전소스 탈진. 나머지 전부 TICKET(§8 결정 1+4).
+#   국내·해외 틱 침묵, WebSocket 구독 0(틱 침묵 알림의 유일 대체 경보), 안전모드 진입,
+#   NAS 디스크·RAM Critical(쓰기 실패·OOM 전조). 나머지 전부 TICKET(§8 결정 1+4, MarketIndicator
+#   전소스 탈진은 2026-07-10 룰 삭제로 PAGE 최소 핵심셋에서 제외).
 #   Alertmanager가 tier 라벨로 [PAGE]/[TICKET] 텔레그램 접두어 라우팅을 수행한다(alertmanager.yml).
 #
 # [SPEC-OBSV-WATERMARK-001 REQ-WM-024 배치 라벨 매핑 참고, research.md §2 실측]
@@ -105,18 +117,22 @@ groups:
           description: "장중(market_open==1) 배치 {{ $labels.batch }} 마지막 적재 후 28h 초과 경과. 휴장 시 억제됨."
 
   # ---------------------------------------------------------------------------
-  # 그룹 3: 게이트 신선도 — 억제·collector-down과 독립 발화(REQ-046)
+  # 그룹 3: 국장 휴장일 캘린더 건강 — 억제·collector-down과 독립 발화(REQ-046)
+  # [2026-07-10] "시장 세션 게이트" 용어를 "국장 휴장일 캘린더"로 치환(실체 명확화 — KIS CTCA0903R
+  #   기반 개장일 캘린더, 매일 08:10 KST + 부팅 시 즉시 1회 갱신). GA-1 임계 30h→26h 개정(마진
+  #   6h→2h — 갱신은 하루 1회 단발이라 26h 시점이면 이미 사이클 확실 상실, GA-2와 마진 통일).
   # ---------------------------------------------------------------------------
   - name: collector-gate-health
     interval: 30s
     rules:
-      # TI-004d 게이트-staleness: 게이트가 set 된 적 있으나(>0) 30h 초과 미갱신.
-      # 게이트 신선도 임계 30h = spec.md §2.4 REQ-034 단일 출처(게이트 cron 일1회 ~24h + 마진 6h).
-      # [HARD] `> 0` 가드: boot-unset(==0)을 제외 — x=0이면 time()-x는 항상 30h 초과라 오발하므로 분리.
+      # TI-004d 캘린더-staleness: 캘린더가 set 된 적 있으나(>0) 26h 초과 미갱신.
+      # 캘린더 신선도 임계 26h = spec.md §2.4 REQ-034 단일 출처(캘린더 cron 일1회 ~24h + 마진 2h,
+      # 2026-07-10 30h→26h 개정).
+      # [HARD] `> 0` 가드: boot-unset(==0)을 제외 — x=0이면 time()-x는 항상 26h 초과라 오발하므로 분리.
       # [D3] cron 연속 실패는 별도 카운터 없이 이 staleness가 포섭(last-update 정지=stale).
       - alert: CollectorGateStale
         expr: |
-          ((time() - aaa_collector_market_gate_last_update_seconds) > 30 * 3600)
+          ((time() - aaa_collector_market_gate_last_update_seconds) > 26 * 3600)
           and (aaa_collector_market_gate_last_update_seconds > 0)
         for: 5m
         labels:
@@ -124,13 +140,14 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "시장 세션 게이트 stale — 30h 초과 미갱신"
-          description: "collector UP이나 게이트 last-update가 30h 초과 미갱신(cron 침묵 실패 포함). 억제·다운과 독립 발화."
+          summary: "국장 휴장일 캘린더 갱신 중단 — 26시간 초과"
+          description: "KIS 국장 휴장일 캘린더(매일 08:10 KST 갱신)가 26시간 이상 미갱신 — 직전 캘린더로 동작 중. 방치 시 휴장일을 개장일로 오판해 장중 알림(틱 침묵 등)이 휴장일에 오발 가능."
+          action: "collector 로그(08:10 \"시장 세션 게이트 갱신 실패\" 경고) → KIS CTCA0903R 호출 실패 원인(키·네트워크) 확인"
 
-      # TI-004d boot-unset: 게이트가 부팅 후 한 번도 설정되지 않음(==0).
-      # [D3·HARD] `for: 26h` — 게이트 cron은 일1회(~24h). 26h(24h 사이클 + 마진 2h) 동안 줄곧 0이면
-      #   "한 사이클이 지나도 게이트가 끝내 설정되지 않음"으로 판정. 매 부팅/배포 직후에는
-      #   다음 cron(최대 ~24h 내)이 곧 게이트를 set 하므로 26h 임계를 넘기지 못해 오발하지 않는다.
+      # TI-004d boot-unset: 캘린더가 부팅 후 한 번도 설정되지 않음(==0).
+      # [D3·HARD] `for: 26h` — 캘린더 cron은 일1회(~24h). 26h(24h 사이클 + 마진 2h) 동안 줄곧 0이면
+      #   "한 사이클이 지나도 캘린더가 끝내 설정되지 않음"으로 판정. 매 부팅/배포 직후에는
+      #   다음 cron(최대 ~24h 내)이 곧 캘린더를 set 하므로 26h 임계를 넘기지 못해 오발하지 않는다.
       - alert: CollectorGateUnset
         expr: aaa_collector_market_gate_last_update_seconds == 0
         for: 26h
@@ -139,48 +156,59 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "시장 세션 게이트 미설정 고착 — 부팅 후 26h 미갱신"
-          description: "게이트 last-update가 부팅 후 26h(>1 cron 사이클) 동안 0 유지. 부팅 직후 오발 방지용 26h for 적용."
+          summary: "국장 휴장일 캘린더 미설정 고착 — 부팅 후 26시간"
+          description: "부팅 직후 갱신과 다음 08:10 정기 갱신이 모두 실패 — 캘린더 없이 요일·시각만으로 장중 판정 중."
+          action: "collector 로그(부팅/08:10 갱신 실패 경고) → KIS CTCA0903R 호출 실패 원인 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 4: WebSocket 구독 무음 — 장중 틱 수집 완전 중단 탐지(SPEC-OBSV-WEBSOCKET-001)
+  # [2026-07-10 Family TI 확정] TI-3(NoSubscription) TICKET→PAGE 승격(severity/tier 불일치 해소 —
+  #   구독 0이면 틱 침묵 PAGE 2종이 `구독>0` 조건으로 억제되는 유일 경보, 틱은 원본 비보관이라
+  #   중단 시간만큼 영구 유실). TI-3·TI-4 미장 게이트 확장(국내 market_open 단독은 해외 WS 추가
+  #   이전 유산 — OBSV-001) — 국장 또는(미장 세션 중 + holiday_count 가드) 조건으로 확대.
   # ---------------------------------------------------------------------------
   - name: collector-websocket
     interval: 30s
     rules:
-      # TI-WS-001~004 장중 구독 0 → 3m 지속 시 발화. 장외·absent 시 억제.
-      # `and on() (aaa_collector_market_open == 1)` — 기존 휴장 억제 패턴 재사용.
-      # market_open 이 국내 전용이므로 발화 범위는 국내 장중으로 한정된다.
+      # TI-WS-001~004 장중(국장 또는 미장) 구독 0 → 3m 지속 시 발화. 장외·absent 시 억제.
+      # holiday_count>=20 가드 = 미장 캘린더 init 완료 판정 상수와 동일 기준(TI-2 관용구 재사용).
       # tick_active_subscriptions absent 시 expr이 빈 벡터 → 구조적 억제(REQ-003).
       - alert: CollectorWebSocketNoSubscription
         expr: |
           (aaa_collector_tick_active_subscriptions == 0)
-          and on() (aaa_collector_market_open == 1)
+          and on() (
+            (aaa_collector_market_open == 1)
+            or (aaa_collector_us_market_open == 1 and on() aaa_collector_us_market_gate_holiday_count >= 20)
+          )
         for: 3m
         labels:
           severity: critical
           component: collector
-          tier: TICKET
+          tier: PAGE
         annotations:
-          summary: "국내 WebSocket 구독 종목 0 — 틱 수집 완전 중단"
-          description: "장중(market_open==1)에 tick_active_subscriptions가 3분 이상 0. WebSocket 장 개시 실패 또는 전체 구독 해제 의심."
+          summary: "WebSocket 구독 0 — 틱 수집 전면 중단"
+          description: "장중 구독 종목이 3분 이상 0 — 장 개시 구독 실패 또는 전체 구독 해제. 이 상태에선 틱 침묵 알림(도메스틱/해외)도 억제되므로 이 알림이 유일한 경보."
+          action: "collector 로그(장 개시 구독·세션 연결) → 복구 후 stream:tick:domestic|overseas 발행 재개 확인"
 
-      # TI-WS-005~011 장중 특정 alias 세션 끊김 → 5m 지속 시 발화. 장외·absent 시 억제.
+      # TI-WS-005~011 장중(국장 또는 미장) 특정 alias 세션 끊김 → 5m 지속 시 발화. 장외·absent 시 억제.
       # severity: warning — 특정 alias 부분 장애(full critical은 CollectorWebSocketNoSubscription).
-      # `and on() (aaa_collector_market_open == 1)` — 기존 휴장 억제 패턴 재사용(REQ-002).
       # alias 라벨 벡터 매칭으로 alias별 개별 발화(REQ-004). CollectorWebSocketNoSubscription과 독립(REQ-005).
       - alert: CollectorWebSocketSessionDisconnected
         expr: |
           (aaa_collector_websocket_session_connected == 0)
-          and on() (aaa_collector_market_open == 1)
+          and on() (
+            (aaa_collector_market_open == 1)
+            or (aaa_collector_us_market_open == 1 and on() aaa_collector_us_market_gate_holiday_count >= 20)
+          )
         for: 5m
         labels:
           severity: warning
           component: collector
           tier: TICKET
         annotations:
-          summary: "WebSocket 세션 연결 끊김 — {{ $labels.alias }}"
-          description: "장중(market_open==1) alias={{ $labels.alias }} 세션이 5분 이상 disconnected 상태. partial failure 의심."
+          summary: "WebSocket 세션 끊김 — {{ $labels.alias }}"
+          description: "계좌 {{ $labels.alias }} 세션이 5분 이상 미연결(재연결 실패 지속). 부분 장애 — 다른 계좌 세션·구독은 유지 중."
+          action: "collector 로그(해당 alias 재연결) → 구독 수·틱 수신 정상 여부 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 5: 해외(미국) 일봉·공매도 Daily stale — 100h 무억제
@@ -396,8 +424,9 @@ groups:
           component: collector
           tier: PAGE
         annotations:
-          summary: "PAGE 대상 워터마크 시계열 소실 — daily-ohlcv-krx/us"
-          description: "aaa_collector_data_watermark_seconds{series=\"daily-ohlcv-krx\" 또는 \"daily-ohlcv-us\"}가 10분 이상 부재. 단일 시리즈 소실 감시(REQ-WM-016)."
+          summary: "국내/미국 일봉 워터마크 10분 이상 측정 안 됨"
+          description: "데이터가 늦은 게 아니라, 최신 여부를 알려주는 계측값 자체가 사라짐 — 워터마크 계산 로직 이상 의심(REQ-WM-016)."
+          action: "collector 로그에서 워터마크 관련 예외 확인. CollectorDown 알림이 없다면 프로세스 자체는 정상 동작 중"
 
       # [유지보수 HARD] 임계 17은 §3 사전(시리즈 사전) 크기와 동기화되어야 한다.
       #   시리즈 사전에 항목을 추가/제거하면 이 임계값을 함께 갱신할 것(MI-05).
@@ -409,11 +438,16 @@ groups:
           component: collector
           tier: PAGE
         annotations:
-          summary: "워터마크 시계열 개수 부족 — {{ $value }} < 17"
-          description: "aaa_collector_data_watermark_seconds 노출 시계열 수가 사전 크기(17) 미만으로 10분 이상 지속. 부분 소실 감시(REQ-WM-016)."
+          summary: "일봉·환율·매매동향·공시 등 워터마크 시계열 개수 부족 — {{ $value }}종만 측정"
+          description: "총 17종 데이터 중 최신 데이터를 나타내는 워터마크가 {{ $value }}종만 측정되는 상태가 10분 이상 지속 — 특정 데이터 종류만 계산이 실패했을 가능성(REQ-WM-016)."
+          action: "/actuator/prometheus에서 aaa_collector_data_watermark_seconds 조회 → 빠진 데이터 종류 식별"
 
   # ---------------------------------------------------------------------------
   # 그룹 W2: 워터마크 신선도 — 즉시형(REQ-WM-017 §4.1)
+  # [2026-07-10 Family B 확정] 다중 시리즈 룰 분할 방침 적용 — 시리즈별 9룰로 분할(제목 한글화·
+  #   확인 줄 배치별 첫 대응 명시 목적). B-8(disclosures) 8h→17h30m, B-9(market-vix) 24h→28h —
+  #   발화 시각을 심야 밖(익일 09:00대)으로 정렬(TICKET급이라 심야 통지 실익 없음, 임계 유효 구간
+  #   내 이동이라 설계 의미 불변).
   # ---------------------------------------------------------------------------
   # (expected - on(market) group_right data_watermark{series=...}) > 0 이 deadline 동안 지속되면 발화.
   # group_right — data_watermark(시장당 여러 series)가 "many"측, expected(시장당 1개)가 "one"측이므로
@@ -421,11 +455,11 @@ groups:
   - name: collector-watermark-freshness-immediate
     interval: 30s
     rules:
-      # daily-ohlcv-krx/us — PAGE, 4h(§4.1)
-      - alert: CollectorWatermarkFreshnessStalePage
+      # B-1 국내 일봉 — PAGE, 4h(§4.1). 기준점 KRX 정규장 마감 15:30 KST.
+      - alert: CollectorWatermarkFreshnessStaleDomesticDaily
         expr: |
           (aaa_collector_expected_watermark_seconds
-           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"daily-ohlcv-krx|daily-ohlcv-us"}
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx"}
           ) > 0
         for: 4h
         labels:
@@ -433,14 +467,31 @@ groups:
           component: collector
           tier: PAGE
         annotations:
-          summary: "일봉 워터마크 신선도 갭 — {{ $labels.series }} 4h 초과"
-          description: "expected_watermark 대비 data_watermark({{ $labels.series }})가 세션 마감 후 4h 이상 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+          summary: "국내 일봉 갱신 지연"
+          description: "장 마감 후 4시간이 지나도 최신 거래일까지 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+          action: "domestic-daily 배치(평일 16:00) 로그 → daily_ohlcv 최근 거래일 조회"
 
-      # market-usdkrw / investor-trend / short-sale-domestic — TICKET, 4h
-      - alert: CollectorWatermarkFreshnessStaleTicket4h
+      # B-2 미국 일봉 — PAGE, 4h. 기준점 US 정규장 마감 16:00 ET.
+      - alert: CollectorWatermarkFreshnessStaleOverseasDaily
         expr: |
           (aaa_collector_expected_watermark_seconds
-           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"market-usdkrw|investor-trend|short-sale-domestic"}
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="daily-ohlcv-us"}
+          ) > 0
+        for: 4h
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+        annotations:
+          summary: "미국 일봉 갱신 지연"
+          description: "미국 장 마감 후 4시간이 지나도 최신 거래일까지 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+          action: "overseas-daily 배치(평일 16:30 ET) 로그 → daily_ohlcv 최근 거래일 조회"
+
+      # B-3 원/달러 환율 — TICKET, 4h.
+      - alert: CollectorWatermarkFreshnessStaleUsdKrw
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="market-usdkrw"}
           ) > 0
         for: 4h
         labels:
@@ -448,14 +499,47 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 신선도 갭 — {{ $labels.series }} 4h 초과"
-          description: "expected_watermark 대비 data_watermark({{ $labels.series }})가 세션 마감 후 4h 이상 뒤처짐(REQ-WM-017 즉시형)."
+          summary: "원/달러 환율 갱신 지연"
+          description: "장 마감 후 4시간이 지나도 당일 환율이 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
+          action: "market-indicators 배치(평일 17:00) 로그에서 KOREAEXIM→Yahoo 폴백 동작 확인 → market_indicators에서 USDKRW 최근 일자 조회"
 
-      # extended-hours-pre / extended-hours-after — TICKET, 6h(US 마감 기산)
-      - alert: CollectorWatermarkFreshnessStaleTicket6h
+      # B-4 투자자별 매매동향 — TICKET, 4h. domestic-supply-investor는 독립 크론 없이 일봉 체인 후속.
+      - alert: CollectorWatermarkFreshnessStaleInvestorTrend
         expr: |
           (aaa_collector_expected_watermark_seconds
-           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"extended-hours-pre|extended-hours-after"}
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="investor-trend"}
+          ) > 0
+        for: 4h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "투자자별 매매동향 갱신 지연"
+          description: "장 마감 후 4시간이 지나도 당일 수급 데이터가 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
+          action: "domestic-supply-investor 배치(평일 16:00 일봉 체인 후속) 로그 → investor_trend 최근 일자 조회"
+
+      # B-5 국내 공매도 — TICKET, 4h. domestic-supply-short-sale도 일봉 체인 후속.
+      - alert: CollectorWatermarkFreshnessStaleShortSaleDomestic
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="short-sale-domestic"}
+          ) > 0
+        for: 4h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "국내 공매도 갱신 지연"
+          description: "장 마감 후 4시간이 지나도 당일 공매도 데이터가 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
+          action: "domestic-supply-short-sale 배치(평일 16:00 일봉 체인 후속) 로그 → short_sale_domestic 최근 일자 조회"
+
+      # B-6 미국 프리장 시세 — TICKET, 6h(US 마감 기산). ExtendedHoursScheduler PRE 10:00 ET.
+      - alert: CollectorWatermarkFreshnessStaleExtendedHoursPre
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="extended-hours-pre"}
           ) > 0
         for: 6h
         labels:
@@ -463,117 +547,185 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 신선도 갭 — {{ $labels.series }} 6h 초과"
-          description: "expected_watermark(US) 대비 data_watermark({{ $labels.series }})가 US 세션 마감 후 6h 이상 뒤처짐(REQ-WM-017 즉시형)."
+          summary: "미국 프리장 시세 갱신 지연"
+          description: "미국 정규장 마감 후 6시간이 지나도 당일 프리장 시세가 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
+          action: "extended-hours PRE 배치(평일 10:00 ET) 로그 → extended_hours에서 PRE 세션 최근 일자 조회"
 
-      # disclosures — TICKET, 8h
-      - alert: CollectorWatermarkFreshnessStaleTicket8h
+      # B-7 미국 애프터장 시세 — TICKET, 6h. ExtendedHoursScheduler AFTER 20:30 ET(실여유 1.5h).
+      - alert: CollectorWatermarkFreshnessStaleExtendedHoursAfter
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="extended-hours-after"}
+          ) > 0
+        for: 6h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "미국 애프터장 시세 갱신 지연"
+          description: "미국 정규장 마감 후 6시간이 지나도 당일 애프터장 시세가 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
+          action: "extended-hours AFTER 배치(평일 20:30 ET) 로그 → extended_hours에서 AFTER 세션 최근 일자 조회"
+
+      # B-8 DART 공시 — TICKET, 8h→17h30m(2026-07-10, 심야 발화 회피). 유일 수집 경로는 DART
+      #   폴링 평일 22:00 KST — 17h30m으로도 폴링 후 11h 마진, 다음 폴링(+30.5h) 이전이라 설계 불변.
+      - alert: CollectorWatermarkFreshnessStaleDisclosures
         expr: |
           (aaa_collector_expected_watermark_seconds
            - on(market) group_right aaa_collector_data_watermark_seconds{series="disclosures"}
           ) > 0
-        for: 8h
+        for: 17h30m
         labels:
           severity: warning
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 신선도 갭 — disclosures 8h 초과"
-          description: "expected_watermark 대비 data_watermark(disclosures)가 세션 마감 후 8h 이상 뒤처짐(REQ-WM-017 즉시형)."
+          summary: "DART 공시 수집 지연"
+          description: "장 마감 후 다음 날 아침(09:00)까지 당일 공시가 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
+          action: "DART 폴링(평일 22:00) 로그 → disclosures 최근 접수일자 조회"
 
-      # market-vix — TICKET, 24h
-      - alert: CollectorWatermarkFreshnessStaleTicket24h
+      # B-9 VIX — TICKET, 24h→28h(2026-07-10, 심야 발화 회피). 정상 도착 기준점+12h(시장지표
+      #   배치 평일 17:00 KST 1회) — 임계 유효 구간(12h~36h) 내 이동이라 설계 의미 불변.
+      - alert: CollectorWatermarkFreshnessStaleVix
         expr: |
           (aaa_collector_expected_watermark_seconds
            - on(market) group_right aaa_collector_data_watermark_seconds{series="market-vix"}
           ) > 0
-        for: 24h
+        for: 28h
         labels:
           severity: warning
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 신선도 갭 — market-vix 24h 초과"
-          description: "expected_watermark(US) 대비 data_watermark(market-vix)가 세션 마감 후 24h 이상 뒤처짐(REQ-WM-017 즉시형)."
+          summary: "VIX 갱신 지연"
+          description: "미국 정규장 마감 후 다음 날 아침(09:00, 동절기 10:00)까지 VIX가 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
+          action: "market-indicators 배치(평일 17:00) 로그에서 CBOE→FRED→Yahoo 폴백 순서 확인 → market_indicators에서 VIX 최근 일자 조회"
 
   # ---------------------------------------------------------------------------
   # 그룹 W3: 워터마크 신선도 — lag 허용형(REQ-WM-017 §4.1)
+  # [2026-07-10 Family C 확정] 시리즈별 4룰로 분할(6d 룰이 credit-balance|macro-fred 2종 묶음이던
+  #   것을 분리). for(유예)를 09:00 정렬로 조정 — C-1/C-3/C-4 1h→17h30m, C-2 1h→4h(둘 다 심야
+  #   발화·배치 전 조기 발화 회피, 일 단위 임계 자체는 불변). lag형은 며칠 단위 데이터라 시간 단위
+  #   지연 통지의 실익이 없다는 판단.
   # ---------------------------------------------------------------------------
-  # 정당한 T+N 지연을 허용하고 초과분만 감지: (expected - watermark) > N일, debounce for:1h.
+  # 정당한 T+N 지연을 허용하고 초과분만 감지: (expected - watermark) > N일.
   - name: collector-watermark-freshness-lag
     interval: 30s
     rules:
-      # credit-balance(T+3영업일) / macro-fred(T+2영업일) — TICKET, >6d
-      - alert: CollectorWatermarkFreshnessLagStale6d
+      # C-1 국내 신용잔고(T+3영업일 정상 지연) — TICKET, >6d, for 1h→17h30m
+      - alert: CollectorWatermarkFreshnessLagCreditBalance
         expr: |
           (aaa_collector_expected_watermark_seconds
-           - on(market) group_right aaa_collector_data_watermark_seconds{series=~"credit-balance|macro-fred"}
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="credit-balance"}
           ) > 6 * 24 * 3600
-        for: 1h
+        for: 17h30m
         labels:
           severity: warning
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 lag 허용 초과 — {{ $labels.series }} 6일 초과"
-          description: "expected_watermark 대비 data_watermark({{ $labels.series }})가 정당 지연 허용치(6일)를 초과(REQ-WM-017 lag 허용형)."
+          summary: "국내 신용잔고 수집 지연"
+          description: "지연 허용치(6일)를 넘어서도 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐 (정상 공표 지연 3영업일)(REQ-WM-017 lag 허용형)."
+          action: "domestic-supply-credit-balance 배치(평일 16:00 일봉 체인 후속) 로그 → credit_balance 최근 일자 조회"
 
-      # analyst-estimates(T+1 희소) — TICKET, >5d
-      - alert: CollectorWatermarkFreshnessLagStale5d
+      # C-2 미국 거시지표(FRED, T+2영업일 정상 지연) — TICKET, >6d, for 1h→4h
+      - alert: CollectorWatermarkFreshnessLagMacroFred
+        expr: |
+          (aaa_collector_expected_watermark_seconds
+           - on(market) group_right aaa_collector_data_watermark_seconds{series="macro-fred"}
+          ) > 6 * 24 * 3600
+        for: 4h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "미국 거시지표(FRED) 수집 지연"
+          description: "지연 허용치(6일)를 넘어서도 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐 (정상 공표 지연 2영업일)(REQ-WM-017 lag 허용형)."
+          action: "macro-external 배치(평일 19:00) 로그에서 FRED 소스 확인 → macro_indicators에서 FRED 시리즈 최근 일자 조회"
+
+      # C-3 국내 투자의견(T+1 희소) — TICKET, >5d, for 1h→17h30m
+      - alert: CollectorWatermarkFreshnessLagAnalystEstimates
         expr: |
           (aaa_collector_expected_watermark_seconds
            - on(market) group_right aaa_collector_data_watermark_seconds{series="analyst-estimates"}
           ) > 5 * 24 * 3600
-        for: 1h
+        for: 17h30m
         labels:
           severity: warning
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 lag 허용 초과 — analyst-estimates 5일 초과"
-          description: "expected_watermark 대비 data_watermark(analyst-estimates)가 정당 지연 허용치(5일)를 초과(REQ-WM-017 lag 허용형)."
+          summary: "국내 투자의견 수집 지연"
+          description: "지연 허용치(5일)를 넘어서도 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐 (원래 갱신이 드문 데이터)(REQ-WM-017 lag 허용형)."
+          action: "domestic-invest-opinion 배치(평일 18:00) 로그 → analyst_estimates 최근 일자 조회"
 
-      # macro-ecos(잠정) — TICKET, >4d
-      - alert: CollectorWatermarkFreshnessLagStale4d
+      # C-4 국내 거시지표(ECOS, 잠정) — TICKET, >4d, for 1h→17h30m
+      - alert: CollectorWatermarkFreshnessLagMacroEcos
         expr: |
           (aaa_collector_expected_watermark_seconds
            - on(market) group_right aaa_collector_data_watermark_seconds{series="macro-ecos"}
           ) > 4 * 24 * 3600
-        for: 1h
+        for: 17h30m
         labels:
           severity: warning
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 lag 허용 초과 — macro-ecos 4일 초과"
-          description: "expected_watermark 대비 data_watermark(macro-ecos)가 정당 지연 허용치(4일, 잠정)를 초과(REQ-WM-017 lag 허용형)."
+          summary: "국내 거시지표(ECOS) 수집 지연"
+          description: "지연 허용치(4일, 잠정)를 넘어서도 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 lag 허용형)."
+          action: "macro-external 배치(평일 19:00) 로그에서 ECOS 소스 확인 → macro_indicators에서 ECOS 시리즈 최근 일자 조회"
 
   # ---------------------------------------------------------------------------
   # 그룹 W4: 워터마크 커버리지 — REQ-WM-018
+  # [2026-07-10 Family D 확정] 국내/미국 2룰로 분할(제목 한글화 "일부 종목 누락", {{ $value }}→
+  #   humanizePercentage). 이 게이지는 최신 거래일 하루치만 검사 — 과거 구간 결측(하한 미달·내부
+  #   구멍)은 BACKFILL-010 W5 밀도 게이지(BF-5/6) 몫으로 구조적으로 다르다(BACKFILL-010 경계 절 참조).
   # ---------------------------------------------------------------------------
   # ACTIVE 커버리지 시리즈(daily-ohlcv-krx/us만, 유니버스 정제 전제)의 coverage_ratio<0.95가 1h 지속.
   - name: collector-watermark-coverage
     interval: 30s
     rules:
-      - alert: CollectorWatermarkCoverageLow
-        expr: aaa_collector_data_coverage_ratio{series=~"daily-ohlcv-krx|daily-ohlcv-us"} < 0.95
+      # D-1 국내 — 게이지 계산 매일 19:35 KST(마감+4h 신선도 데드라인 정렬).
+      - alert: CollectorWatermarkCoverageLowDomestic
+        expr: aaa_collector_data_coverage_ratio{series="daily-ohlcv-krx"} < 0.95
         for: 1h
         labels:
           severity: warning
           component: collector
           tier: TICKET
         annotations:
-          summary: "워터마크 커버리지 미달 — {{ $labels.series }} < 0.95"
-          description: "{{ $labels.series }} coverage_ratio {{ $value }} < 0.95가 1h 이상 지속(REQ-WM-018). 일1회 계산이라 해소 후 최대 ~24h 잔류 가능(MI-06)."
+          summary: "국내 일봉 일부 종목 누락"
+          description: "감시 대상 국내 종목(주식+ETF) 중 최신 거래일 일봉이 적재된 비율이 {{ $value | humanizePercentage }} — 기준 95% 미달 (하루 1회 19:35 계산이라 복구 후에도 다음 계산까지 알림이 남을 수 있음)(REQ-WM-018)."
+          action: "domestic-daily 배치(평일 16:00) 로그에서 종목별 실패 확인 → daily_ohlcv에서 최신 거래일 빠진 국내 종목 조회"
+
+      # D-2 미국 — 게이지 계산 매일 10:00 KST(데드라인 20:00 ET의 DST 안전 상수).
+      - alert: CollectorWatermarkCoverageLowOverseas
+        expr: aaa_collector_data_coverage_ratio{series="daily-ohlcv-us"} < 0.95
+        for: 1h
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "미국 일봉 일부 종목 누락"
+          description: "감시 대상 미국 종목(주식+ETF) 중 최신 거래일 일봉이 적재된 비율이 {{ $value | humanizePercentage }} — 기준 95% 미달 (하루 1회 10:00 계산이라 복구 후에도 다음 계산까지 알림이 남을 수 있음)(REQ-WM-018)."
+          action: "overseas-daily 배치(평일 16:30 ET) 로그에서 종목별 실패 확인 → daily_ohlcv에서 최신 거래일 빠진 해외 종목 조회"
 
   # ---------------------------------------------------------------------------
   # 그룹 W5: 백필 이상 — REQ-WM-019(clamp) / REQ-WM-020(정체) /
   #          REQ-BACKFILL-157/-146b(GROUP_A 카운터) / REQ-BACKFILL-154/-155(밀도 게이지)
   #          (SPEC-COLLECTOR-BACKFILL-010 REQ-BACKFILL-158)
+  # [2026-07-10 Family BF 확정] 문구 3줄 표준 재정렬 + BF-7 신설(cap_saturated_total — GROUPC SPEC
+  #   REQ-GC-013은 카운터 신설까지만이라 룰 소유자가 없었음. cap 포화는 FAILED 종단이라 Stalled
+  #   (pending_slots FAILED 제외)·AnomalyFailed(별개 카운터) 모두 비가시였던 알림 사각 해소).
+  #   이벤트형(카운터 증분) 4종은 `notify: fire_only` 라벨 — alertmanager.yml에서 resolved 통지
+  #   억제(5분 윈도우 소진 가짜 ✅해소 방지). Stalled·BelowFloor·InternalGap은 상태형(resolved 유효).
   # ---------------------------------------------------------------------------
   - name: collector-backfill-anomaly
     interval: 30s
     rules:
+      # BF-1 — 이벤트형, resolved 억제.
       - alert: CollectorBackfillClampSuspected
         expr: increase(aaa_collector_backfill_clamp_suspected_total[1h]) > 0
         for: 0m
@@ -581,12 +733,14 @@ groups:
           severity: warning
           component: collector
           tier: TICKET
+          notify: fire_only
         annotations:
-          summary: "백필 clamp 의심 — 1h 내 증가"
-          description: "aaa_collector_backfill_clamp_suspected_total이 1h 내 증가. KIS 응답 클램프로 인한 조기 COMPLETED 오판 의심(REQ-WM-019)."
+          summary: "백필 응답 잘림 의심 — 조기 완료 오판 위험"
+          description: "최근 1시간 내 KIS 응답이 캡에 걸려 잘린 정황 감지 — 과거 구간이 덜 채워졌는데 완료로 오판했을 수 있음(REQ-WM-019)."
+          action: "collector 로그(백필 크론, 매일 02:00 KST·주말 +5회)에서 clamp 의심 종목 확인 → backfill_status 진행점 대조"
 
-      # pending_slots(PENDING+IN_PROGRESS)>0 이면서 26h 동안 windows_total 무전진 → 정체.
-      # FAILED 종결·전량 COMPLETED 시 pending_slots=0이 되어 발화하지 않는다(MI-09).
+      # BF-2 — pending_slots(PENDING+IN_PROGRESS)>0 이면서 26h 동안 windows_total 무전진 → 정체.
+      # FAILED 종결·전량 COMPLETED 시 pending_slots=0이 되어 발화하지 않는다(MI-09). 상태형.
       - alert: CollectorBackfillStalled
         expr: |
           (aaa_collector_backfill_pending_slots > 0)
@@ -597,11 +751,13 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "백필 정체 — pending_slots > 0 그리고 26h 무전진"
-          description: "미완료 백필 슬롯이 잔존하나 26h 동안 windows_total 증가 없음(REQ-WM-020). progress_ratio 절대값으로는 판단하지 않음(lazy 시딩 분모 증가 시 정당 하락)."
+          summary: "백필 정체 — 미완료 종목 26시간 무진행"
+          description: "미완료 백필 종목이 남아 있는데 26시간 동안 진행이 없음 — 백필 엔진·스케줄 이상 의심(REQ-WM-020). progress_ratio 절대값으로는 판단하지 않음(lazy 시딩 분모 증가 시 정당 하락)."
+          action: "collector 로그(백필 크론 실행 여부) → backfill_status에서 PENDING·IN_PROGRESS 잔존 조회"
 
-      # GROUP_A 조기 완료 의심(REQ-BACKFILL-157) — 확인 프로브가 비어있지 않은 응답으로 조기 완료를 차단할 때마다 증가.
-      # clamp_suspected(GROUP_B 전용)와 대칭인 GROUP_A 신호(REQ-BACKFILL-158, SPEC-COLLECTOR-BACKFILL-010).
+      # BF-3 GROUP_A 조기 완료 차단(REQ-BACKFILL-157) — 확인 프로브가 비어있지 않은 응답으로 조기
+      # 완료를 차단할 때마다 증가. clamp_suspected(GROUP_B 전용)와 대칭인 GROUP_A 신호(REQ-BACKFILL-158).
+      # 이벤트형, resolved 억제. 차단 자체는 정상 방어 동작 — "방어 성공+KIS 이상 의심" 뉘앙스.
       - alert: CollectorBackfillEarlyCompletionSuspect
         expr: increase(aaa_collector_backfill_early_completion_suspect_total[1h]) > 0
         for: 0m
@@ -609,12 +765,15 @@ groups:
           severity: warning
           component: collector
           tier: TICKET
+          notify: fire_only
         annotations:
-          summary: "백필 GROUP_A 조기 완료 의심 — 1h 내 증가"
-          description: "aaa_collector_backfill_early_completion_suspect_total이 1h 내 증가. 확인 프로브가 조기 COMPLETED를 차단(REQ-BACKFILL-157) — 구코드였다면 손상이 났을 지점."
+          summary: "백필 조기 완료 차단 — 과거 데이터 잔존 발견"
+          description: "완료 직전 확인 프로브가 \"아직 데이터가 남아 있음\"을 발견해 완료 처리를 차단 — 차단 자체는 정상 방어 동작이나, 반복되면 KIS 응답 이상 의심(REQ-BACKFILL-157)."
+          action: "collector 로그(확인 프로브 차단 종목) → 다음 사이클에서 해당 종목 진행 재개 여부 확인"
 
-      # GROUP_A anomaly-FAILED 종결(REQ-BACKFILL-146b) — oldest=null·rawRowCount>0 이상 status가 N 사이클 끝에
-      # terminal FAILED로 종결될 때 status당 1회 증가. pending_slots(FAILED 제외)로 비가시(REQ-BACKFILL-158).
+      # BF-4 GROUP_A anomaly-FAILED 종결(REQ-BACKFILL-146b) — oldest=null·rawRowCount>0 이상 status가
+      # N 사이클 끝에 terminal FAILED로 종결될 때 status당 1회 증가. pending_slots(FAILED 제외)로
+      # 비가시(REQ-BACKFILL-158). 이벤트형, resolved 억제.
       - alert: CollectorBackfillAnomalyFailed
         expr: increase(aaa_collector_backfill_anomaly_failed_total[1h]) > 0
         for: 0m
@@ -622,12 +781,15 @@ groups:
           severity: warning
           component: collector
           tier: TICKET
+          notify: fire_only
         annotations:
-          summary: "백필 GROUP_A anomaly-FAILED 종결 — 1h 내 증가"
-          description: "aaa_collector_backfill_anomaly_failed_total이 1h 내 증가. oldest=null·rawRowCount>0 반복 이상이 bounded FAILED로 종결(REQ-BACKFILL-146b)."
+          summary: "백필 이상 종결(FAILED) — 수동 조사 필요"
+          description: "이상 응답(건수는 있는데 진행점 해석 불가)이 반복돼 해당 종목 백필이 FAILED로 종결됨 — 자동 재시도 없음, 방치 시 그 종목 과거 데이터 영구 미완(REQ-BACKFILL-146b)."
+          action: "collector 로그(FAILED 종결 종목·사유) → backfill_status FAILED 행 조회 → 원인 조사 후 수동 리셋 판단"
 
-      # 과거 밀도 게이지 A(하한 미달, REQ-BACKFILL-154) — 신뢰 가능한 하한 존재 종목 중 MIN(trade_date)>floor인 종목 수>0이 1h 지속.
-      # 지속 상태 게이지 디바운스(W3/W4 for:1h와 정합, REQ-BACKFILL-158).
+      # BF-5 과거 밀도 게이지 A(하한 미달, REQ-BACKFILL-154) — 신뢰 가능한 하한 존재 종목 중
+      # MIN(trade_date)>floor인 종목 수>0이 1h 지속. 지속 상태 게이지 디바운스(W3/W4 for:1h와 정합).
+      # 상태형. 분할 없이 series 라벨 노출(2026-07-10 확정 — 종목 수 통지라 분할 실익 작음).
       - alert: CollectorBackfillBelowFloor
         expr: aaa_collector_backfill_below_floor_stocks > 0
         for: 1h
@@ -636,10 +798,12 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "백필 과거 밀도 하한 미달 — {{ $labels.series }} > 0"
-          description: "{{ $labels.series }} below_floor_stocks {{ $value }} > 0이 1h 이상 지속. 신뢰 하한 존재 종목의 MIN(trade_date)가 기대 최과거일 미달(REQ-BACKFILL-154)."
+          summary: "백필 과거 데이터 하한 미달 — {{ $labels.series }} {{ $value }}종목"
+          description: "기대 최과거일까지 채워지지 않은 종목 존재 (하루 1회 계산이라 복구 후에도 다음 계산까지 알림이 남을 수 있음)(REQ-BACKFILL-154)."
+          action: "collector 로그(밀도 게이지 계산) → 감지 SQL(remediation-targets.md)로 대상 종목 조회"
 
-      # 과거 밀도 게이지 B(내부 구멍, REQ-BACKFILL-155) — 보유 구간 내부에 캘린더상 존재하나 부재한 거래일이 있는 종목 수>0이 1h 지속.
+      # BF-6 과거 밀도 게이지 B(내부 구멍, REQ-BACKFILL-155) — 보유 구간 내부에 캘린더상 존재하나
+      # 부재한 거래일이 있는 종목 수>0이 1h 지속. 상태형.
       - alert: CollectorBackfillInternalGap
         expr: aaa_collector_backfill_internal_gap_stocks > 0
         for: 1h
@@ -648,8 +812,25 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "백필 과거 밀도 내부 구멍 — {{ $labels.series }} > 0"
-          description: "{{ $labels.series }} internal_gap_stocks {{ $value }} > 0이 1h 이상 지속. 보유 구간 내부에 거래일 캘린더 대비 부재 거래일 존재(REQ-BACKFILL-155)."
+          summary: "백필 과거 데이터 내부 구멍 — {{ $labels.series }} {{ $value }}종목"
+          description: "보유 구간 중간에 캘린더상 있어야 할 거래일이 빠진 종목 존재 (하루 1회 계산이라 복구 후에도 다음 계산까지 알림이 남을 수 있음)(REQ-BACKFILL-155)."
+          action: "collector 로그(밀도 게이지 계산) → 감지 SQL(remediation-targets.md)로 대상 종목 조회"
+
+      # BF-7 [신설, 2026-07-10] 백필 100행 캡 포화(국내 액면교체) — GROUPC SPEC(REQ-GC-013)은
+      # 카운터 신설까지만이었고 룰 소유자가 없던 사각. 설계상 도달 거의 불가한 안전밸브라 발생 자체가
+      # 조사 대상. 이벤트형, resolved 억제.
+      - alert: CollectorBackfillCapSaturated
+        expr: increase(aaa_collector_backfill_cap_saturated_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+          notify: fire_only
+        annotations:
+          summary: "백필 100행 캡 포화 — 액면교체 FAILED 종단"
+          description: "국내 액면교체 백필 응답이 100행 캡에 도달 — 절단 의심으로 해당 종목 FAILED 종단, 자동 재시도 없음 (설계상 도달 거의 불가한 안전밸브 — 발생 자체가 조사 대상)(REQ-GC-013)."
+          action: "collector 로그(백필 크론, 매일 02:00 KST·주말 +5회) → backfill_status FAILED 행 last_error 확인 후 수동 조사"
 
   # ---------------------------------------------------------------------------
   # 그룹 W6: 틱 침묵 — REQ-WM-021(국내) / REQ-WM-028(해외)
@@ -672,8 +853,9 @@ groups:
           component: collector
           tier: PAGE
         annotations:
-          summary: "국내 틱 침묵 — 300초 이상 무수신"
-          description: "국내 장중(market_open==1) 구독>0 상태에서 tick_last_seen_seconds{market=\"domestic\"}가 300초 이상 갱신되지 않거나 부재(REQ-WM-021, absent-aware)."
+          summary: "국내 틱 수신 중단"
+          description: "국장 장중 구독 유지 상태에 국내 틱 데이터 5분 이상 전 종목 무수신(REQ-WM-021, absent-aware)."
+          action: "collector 로그(WebSocket 수신) → redis XINFO STREAM stream:tick:domestic 최종 발행 시각 확인"
 
       # US 세션 중(holiday_count>=20 가드) 구독>0인데 해외 틱이 300초 이상 침묵(absent 포함) → PAGE.
       # 반일 조기폐장 오탐은 REQ-WM-030(us_market_open 13:00 ET 이후 0 보정)이 해소.
@@ -692,11 +874,15 @@ groups:
           component: collector
           tier: PAGE
         annotations:
-          summary: "해외 틱 침묵 — 300초 이상 무수신"
-          description: "US 세션 중(us_market_open==1, holiday_count>=20) 구독>0 상태에서 tick_last_seen_seconds{market=\"overseas\"}가 300초 이상 갱신되지 않거나 부재(REQ-WM-028, 결정 4)."
+          summary: "미국 틱 수신 중단"
+          description: "미장 장중 구독 유지 상태에 해외 틱 데이터 5분 이상 전 종목 무수신(REQ-WM-028, 결정 4)."
+          action: "collector 로그(WebSocket 수신) → redis XINFO STREAM stream:tick:overseas 최종 발행 시각 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 W7: silent_drops — REQ-WM-022
+  # [2026-07-10 Family SD 확정] 이벤트형(카운터 증분) → `notify: fire_only`(resolved 통지 억제).
+  #   행별 상세 로그 부재(aaa-infra#86 등록) — 확인 줄에 폴백 구절("로그 미발견 시 VM 시각 대조")을
+  #   선반영해 이슈 랜딩 대기 없이 즉시 실행 가능하게 함.
   # ---------------------------------------------------------------------------
   - name: collector-silent-drops
     interval: 30s
@@ -708,12 +894,19 @@ groups:
           severity: warning
           component: collector
           tier: TICKET
+          notify: fire_only
         annotations:
-          summary: "silent_drops 증가 — 1h 내 발생"
-          description: "aaa_collector_batch_silent_drops_total(총합, 라벨 없음)이 1h 내 증가. INSERT IGNORE 중복 제외분 감시(REQ-WM-022)."
+          summary: "수집 데이터 행 침묵 유실 감지"
+          description: "최근 1시간 내 INSERT 단계에서 중복이 아닌 사유(형식 오류·절단·제약 위반)로 조용히 버려진 행 발생 — 저장됐어야 할 데이터가 유실됨(REQ-WM-022)."
+          action: "collector 로그(침묵 드롭 WARN — 테이블·에러코드·행) → 해당 테이블·원본 대조. 로그 미발견 시 VM 카운터 증가 시각으로 배치 식별"
 
   # ---------------------------------------------------------------------------
   # 그룹 10: 안전 모드 진입/해제 — SPEC-OBSV-SYSALERT-001
+  # [2026-07-10 Family SM 확정] Entered를 module(token/ws)별 2룰로 분할 — token(TTL 백오프
+  #   1~4h 자동 재시도)과 ws(TTL 없음, 수동 삭제가 유일한 해제 수단)는 원인·대응이 정반대라
+  #   한 룰로 못 담김. 전부 이벤트형(카운터 증분) → `notify: fire_only`(resolved 통지 억제).
+  #   해제 관측 사각(exit_total은 token 발급 성공 경로만 증가, ws는 exit() 호출 자체가 없음)은
+  #   aaa-infra#85(상태형 게이지 safe_mode_active 신설)로 근본 해소 예정 — SM-2 문구에 한계 명시.
   # ---------------------------------------------------------------------------
   # collector가 KIS 토큰·WebSocket 안전 모드에 진입/해제할 때 즉시 경보.
   # 메트릭: SafeModeManager.enter()/exit()가 Micrometer counter를 증가시킨다.
@@ -721,17 +914,35 @@ groups:
   - name: collector-safemode
     interval: 30s
     rules:
+      # SM-1a — module="token": TTL 백오프 1h→2h→4h로 자동 재시도.
       - alert: CollectorSafeModeEntered
-        expr: increase(aaa_collector_safe_mode_enter_total[5m]) > 0
+        expr: increase(aaa_collector_safe_mode_enter_total{module="token"}[5m]) > 0
         for: 0m
         labels:
           severity: critical
           component: collector
           tier: PAGE
+          notify: fire_only
         annotations:
-          summary: "수집기 안전 모드 진입 — {{ $labels.module }}/{{ $labels.alias }}"
-          description: "5분 내 안전 모드 진입 감지. 원인 확인 → 수동 해제 필요 (TECHSPEC §1.3 수동 개입 절차 참조)."
+          summary: "안전 모드 진입 — KIS 토큰 (계좌 {{ $labels.alias }})"
+          description: "토큰 발급 실패로 계좌 {{ $labels.alias }}의 KIS 호출 차단 중. 1~4시간 백오프 후 자동 재시도 — 짧은 간격 반복 진입이면 앱키 문제 의심."
+          action: "collector 로그(진입 원인 예외) → 재발급 성공 로그 또는 redis 키 safe_mode:collector:token:{alias} 소멸 확인"
 
+      # SM-1b — module="ws": TTL 없이 영구 저장, 수동 삭제 전까지 자동 복구 없음.
+      - alert: CollectorSafeModeEntered
+        expr: increase(aaa_collector_safe_mode_enter_total{module="ws"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: collector
+          tier: PAGE
+          notify: fire_only
+        annotations:
+          summary: "안전 모드 진입 — WebSocket (계좌 {{ $labels.alias }})"
+          description: "WebSocket 연결 오류 반복으로 계좌 {{ $labels.alias }}의 재연결 차단 중. 자동 복구 없음 — 수동 해제 전까지 유지."
+          action: "collector 로그(진입 원인 예외) → 원인 해소 후 redis 키 safe_mode:collector:ws:{alias} 수동 삭제(TECHSPEC §1.3)"
+
+      # SM-2 — 실질 발화는 token뿐(exit_total 증가 경로가 token 발급 성공 하나) → 분할 불요.
       - alert: CollectorSafeModeExited
         expr: increase(aaa_collector_safe_mode_exit_total[5m]) > 0
         for: 0m
@@ -739,46 +950,49 @@ groups:
           severity: info
           component: collector
           tier: TICKET
+          notify: fire_only
         annotations:
-          summary: "수집기 안전 모드 해제 — {{ $labels.module }}/{{ $labels.alias }}"
-          description: "안전 모드 해제 감지. 정상 수집 재개 여부를 확인하세요."
+          summary: "안전 모드 해제 — 토큰 (계좌 {{ $labels.alias }})"
+          description: "계좌 {{ $labels.alias }} 안전 모드 해제(토큰 발급 성공). 참고: TTL 자연 만료·수동 삭제로 풀린 경우엔 이 알림이 오지 않음(aaa-infra#85)."
+          action: "이후 배치·WS 정상 수집 재개 여부 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 11: 시장지표 소스 체인 Fallback 가시성 — SPEC-COLLECTOR-MARKETIND-002
+  # [2026-07-10 Family MI 확정] 2종→1종 재편.
+  #   ① MarketIndicatorExhausted 삭제 — 실행 실패+데이터 없음 이중 체크는 이 그룹만의 예외였음
+  #      (다른 계열은 전부 "데이터 없음" 단일 감시). 탈진의 결과(미적재)는 기존 워터마크 신선도
+  #      (market-usdkrw 4h/market-vix 24h→28h TICKET, 위 그룹 W2)가 담당.
+  #   ② MarketIndicatorPrimaryStale을 Family B와 동형인 상대식으로 재설계: batch_last_load(수집
+  #      실행 자체) − source_last_success(기본 소스 성공) > 25h. 차이값은 실패마다 24h씩 계단
+  #      점프하므로 25h = 2회 연속 실패부터 발화(1회 실패는 예비 소스가 대체 수집해 결손 0 —
+  #      TICKET 열화 알림 소음을 줄이려는 의도적 관용). 주말·공휴일 동결 면역이라 market_open
+  #      게이트 제거(월요일 오탐 원천 소멸). 발화·해소 항상 17:05경(market-indicators 배치 직후).
+  #   ③ `> 0` 가드는 aaa-infra#88(warm-start 편입) 랜딩 전까지 임시 유지 — 재기동 시 게이지가
+  #      0으로 리셋되는 동안의 무장해제 구멍을 완전히 막지는 못하지만, 부재 상태 오발은 방지한다.
   # ---------------------------------------------------------------------------
-  # REQ-014: Primary 소스(KOREAEXIM/CBOE) 28h+ 미수집 경보 (State-Driven)
-  # REQ-015: 전 소스 탈진 즉시 경보 (Unwanted)
-  # 두 룰 모두 기존 system-bot-telegram receiver 사용.
   - name: collector-market-indicator
     interval: 30s
     rules:
-      # REQ-014: Primary 소스(KOREAEXIM/CBOE) staleness > 28h AND market_open == 1
-      # `> 0` 가드: boot-unset(==0) 제외 — 초기값 0이면 time()-0 항상 28h 초과라 오발 방지.
+      # MI-1 — 수집 기본 소스(KOREAEXIM/CBOE)가 batch_last_load 대비 25h(2회차) 이상 뒤처짐.
+      # `> 0` 가드: boot-unset(==0) 제외 — 초기값 0이면 항상 25h 초과라 오발 방지(#88 랜딩 전 임시).
       - alert: MarketIndicatorPrimaryStale
         expr: >
           (
-            (time() - aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"}) > 28 * 3600
+            (aaa_collector_batch_last_load_seconds{batch="market-indicators"}
+             - on() group_right() aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"}
+            ) > 25 * 3600
           ) and (
             aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"} > 0
-          ) and on() aaa_collector_market_open == 1
-        for: 0m
+          )
+        for: 5m
         labels:
           severity: warning
+          component: collector
           tier: TICKET
         annotations:
-          summary: "시장지표 Primary 소스({{ $labels.source }}) 28시간 이상 미수집"
-          description: "indicator={{ $labels.indicator }}, source={{ $labels.source }}"
-
-      # REQ-015: 전 소스 탈진 즉시 경보 (5분 내 increase > 0)
-      - alert: MarketIndicatorExhausted
-        expr: increase(aaa_collector_market_indicator_exhausted_total[5m]) > 0
-        for: 0m
-        labels:
-          severity: critical
-          tier: PAGE
-        annotations:
-          summary: "시장지표 소스 체인 전원 탈진 — {{ $labels.indicator }} {{ $labels.method }}"
-          description: "indicator={{ $labels.indicator }}, method={{ $labels.method }}"
+          summary: "시장지표 수집 기본 소스 중단 — {{ $labels.indicator }} ({{ $labels.source }})"
+          description: "{{ $labels.indicator }}의 수집 기본 소스 {{ $labels.source }}가 2회차 이상 연속 실패 — 예비 소스가 대체 수집 중(데이터 결손 없음), 기본 소스 복구 필요(예비 상시화 방지)."
+          action: "collector 로그({{ $labels.source }} 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 12: NAS 호스트 자원 — 디스크·RAM·CPU 3단계 (SPEC-INFRA-NODE-001)
@@ -787,7 +1001,9 @@ groups:
   # CPU = node_load5/4 (N100 4코어 하드코딩, §5 V-1). absent 시 비교식 빈 벡터로 구조적 억제(REQ-NE-014).
   # 다단계 동시 발화: 임계 초과 시 해당하는 모든 단계가 동시에 발화한다(예: 95% → W1+W2+Critical).
   # 의도적 설계 — AM inhibit 룰 제외(§6). 상위 알림이 유실되더라도 하위 알림이 보장된다.
-  # [SPEC-OBSV-WATERMARK-001 REQ-WM-026] PAGE 최소 핵심셋에 미포함 — 전부 TICKET.
+  # [SPEC-OBSV-WATERMARK-001 REQ-WM-026, 2026-07-10 개정] 디스크 Critical(>90%)·RAM Critical(>95%)
+  #   2종만 TICKET→PAGE 승격(쓰기 실패=전 서비스 정지 전조·OOM=분 단위 진행). CPU Critical(>90%)은
+  #   load5/4가 I/O 대기 포함 프록시라 오탐성 — TICKET 유지.
   - name: node-resource
     interval: 60s
     rules:
@@ -802,8 +1018,9 @@ groups:
           component: node
           tier: TICKET
         annotations:
-          summary: "디스크 사용률 경고(1단계) — {{ $labels.mountpoint }} > 70%"
-          description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 70%. 5분 지속."
+          summary: "NAS 디스크 사용률 1단계 — {{ $labels.mountpoint }} ({{ $value | humanizePercentage }})"
+          description: "{{ $labels.mountpoint }} 사용률이 70% 초과 지속."
+          action: "ssh nas-ugreen \"df -h /volume1 /volume2\" → docker system df·로그·백업 순으로 대용량 정리"
 
       - alert: NodeDiskWarning2
         expr: |
@@ -815,8 +1032,9 @@ groups:
           component: node
           tier: TICKET
         annotations:
-          summary: "디스크 사용률 경고(2단계) — {{ $labels.mountpoint }} > 80%"
-          description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 80%. 5분 지속."
+          summary: "NAS 디스크 사용률 2단계 — {{ $labels.mountpoint }} ({{ $value | humanizePercentage }})"
+          description: "{{ $labels.mountpoint }} 사용률이 80% 초과 지속."
+          action: "ssh nas-ugreen \"df -h /volume1 /volume2\" → docker system df·로그·백업 순으로 대용량 정리"
 
       - alert: NodeDiskCritical
         expr: |
@@ -826,10 +1044,11 @@ groups:
         labels:
           severity: critical
           component: node
-          tier: TICKET
+          tier: PAGE
         annotations:
-          summary: "디스크 사용률 위험(3단계) — {{ $labels.mountpoint }} > 90%"
-          description: "{{ $labels.mountpoint }} 사용률 {{ $value | humanizePercentage }} > 90%. 2분 지속 — 쓰기 실패 임박."
+          summary: "NAS 디스크 사용률 3단계 — {{ $labels.mountpoint }} ({{ $value | humanizePercentage }})"
+          description: "{{ $labels.mountpoint }} 사용률이 90% 초과 지속 — 쓰기 실패 임박, 즉시 공간 확보 필요."
+          action: "ssh nas-ugreen \"df -h /volume1 /volume2\" → docker system df·로그·백업 순으로 대용량 정리"
 
       # --- RAM: 사용률 80/90/95% (8GB NAS 상시 60~70%대 운영 패턴 반영, 2026-07-05 상향) ---
       - alert: NodeMemoryWarning1
@@ -840,8 +1059,9 @@ groups:
           component: node
           tier: TICKET
         annotations:
-          summary: "RAM 사용률 경고(1단계) — > 80%"
-          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 80%. 10분 지속."
+          summary: "NAS 메모리 사용률 1단계 — {{ $value | humanizePercentage }}"
+          description: "호스트 메모리 사용률이 80% 초과 지속."
+          action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
 
       - alert: NodeMemoryWarning2
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
@@ -851,8 +1071,9 @@ groups:
           component: node
           tier: TICKET
         annotations:
-          summary: "RAM 사용률 경고(2단계) — > 90%"
-          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 90%. 10분 지속."
+          summary: "NAS 메모리 사용률 2단계 — {{ $value | humanizePercentage }}"
+          description: "호스트 메모리 사용률이 90% 초과 지속."
+          action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
 
       - alert: NodeMemoryCritical
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.95
@@ -860,10 +1081,11 @@ groups:
         labels:
           severity: critical
           component: node
-          tier: TICKET
+          tier: PAGE
         annotations:
-          summary: "RAM 사용률 위험(3단계) — > 95%"
-          description: "호스트 메모리 사용률 {{ $value | humanizePercentage }} > 95%. 3분 지속 — OOM Killer 위험."
+          summary: "NAS 메모리 사용률 3단계 — {{ $value | humanizePercentage }}"
+          description: "호스트 메모리 사용률이 95% 초과 지속 — OOM Killer가 컨테이너를 강제 종료할 위험."
+          action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
 
       # --- CPU: node_load5/4 70/85/90% ---
       # node_load5/4: 5분 부하평균 ÷ 코어수(4, N100 하드코딩). 순수 CPU 사용률이 아닌 프록시.
@@ -876,8 +1098,9 @@ groups:
           component: node
           tier: TICKET
         annotations:
-          summary: "CPU 부하 경고(1단계) — load5/4 > 70%"
-          description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 70%. 5분 지속."
+          summary: "NAS CPU 부하 1단계 — {{ $value | humanizePercentage }}"
+          description: "5분 부하평균(코어 대비)이 70% 초과 지속 — 디스크 I/O 대기도 포함되는 지표라 CPU가 아닌 I/O 병목일 수 있음."
+          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 부하 원인 컨테이너·I/O 확인"
 
       - alert: NodeCpuWarning2
         expr: (node_load5 / 4) > 0.85
@@ -887,8 +1110,9 @@ groups:
           component: node
           tier: TICKET
         annotations:
-          summary: "CPU 부하 경고(2단계) — load5/4 > 85%"
-          description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 85%. 5분 지속."
+          summary: "NAS CPU 부하 2단계 — {{ $value | humanizePercentage }}"
+          description: "5분 부하평균(코어 대비)이 85% 초과 지속 — 디스크 I/O 대기도 포함되는 지표라 CPU가 아닌 I/O 병목일 수 있음."
+          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 부하 원인 컨테이너·I/O 확인"
 
       - alert: NodeCpuCritical
         expr: (node_load5 / 4) > 0.90
@@ -898,5 +1122,6 @@ groups:
           component: node
           tier: TICKET
         annotations:
-          summary: "CPU 부하 위험(3단계) — load5/4 > 90%"
-          description: "5분 부하평균/코어수 {{ $value | humanizePercentage }} > 90%. 2분 지속."
+          summary: "NAS CPU 부하 3단계 — {{ $value | humanizePercentage }}"
+          description: "5분 부하평균(코어 대비)이 90% 초과 지속 — 디스크 I/O 대기도 포함되는 지표라 CPU가 아닌 I/O 병목일 수 있음. CPU는 TICKET 유지(오탐성)."
+          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 부하 원인 컨테이너·I/O 확인"
