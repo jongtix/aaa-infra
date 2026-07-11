@@ -1,0 +1,276 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — 수집 갭(단·중주기) — 28h 기본(룰7)·해외 100h(룰8)·뉴스 1h(룰11)·watchlist-us 28h(룰12)
+# SPEC-OBSV-BATCH-COVERAGE-001
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+#   또는: vmalert-tool unittest --files='/rules/rules_test_*.yaml'  (순차, CWD=config/vmalert 마운트)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.145.0 \
+#     unittest --files=/rules/rules_test_gap_daily.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [시간 모델] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
+#   "X시간 경과"는 last_update 계열을 0으로 두고 eval_time 을 X시간보다 크게 잡아 재현한다.
+#   `+0xN` = 동일값 N+1개(30s 간격). 시리즈 길이는 eval_time 이상이어야 한다.
+# [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다
+#   (누락 시 vmalert-tool이 라벨 불일치로 FAILED 처리).
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ===========================================================================
+  # SPEC-OBSV-BATCH-COVERAGE-001 — 신규 배치 모니터링 사각 해소
+  # ===========================================================================
+  # 시간 모델: last_load_seconds=0 이면 time()-0=eval_time → "eval_time 만큼 경과"를 재현.
+  # 시리즈 길이: eval_time(초)/30(s 간격) + for:5m(=10 steps) 이상이어야 한다.
+
+  # ===========================================================================
+  # 룰 7: collector-collection-gap — 기존 28h 룰 batch 필터 검증
+  # SPEC-OBSV-BATCH-COVERAGE-001 AC-2 / REQ-003 / REQ-004
+  # ===========================================================================
+
+  # T12. [REQ-WM-024 신규 제외 재확인] domestic-invest-opinion(series=analyst-estimates 대응)도
+  #      ACTIVE 워터마크 신선도로 전환되어 그룹2 기본 28h 룰에서 제외됨 — stale+market_open==1이어도 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-invest-opinion"}'
+        values: '0+0x3540'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x3540'
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # T13. [발화] watchlist-sync-krx stale>28h AND market_open==1 → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="watchlist-sync-krx"}'
+        values: '0+0x3500'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x3500'
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: watchlist-sync-krx
+              tier: TICKET
+            exp_annotations:
+              summary: "배치 신선도 갭 — watchlist-sync-krx > 28h 미적재"
+              description: "장중(market_open==1) 배치 watchlist-sync-krx 마지막 적재 후 28h 초과 경과. 휴장 시 억제됨."
+
+  # T14. [배치 필터 검증] overseas-daily stale>28h + market_open==1 이지만
+  #      batch 필터(batch!~"overseas-.*") 로 collector-collection-gap에서 미발화.
+  #      overseas-daily는 100h 룰(그룹 5)이 전담 — 28h 룰은 오발하지 않아야 함.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '0+0x3500'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x3500'
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # T15. [REQ-WM-024 신규 제외 재확인] macro-external(series=macro-ecos/macro-fred 공유 배치)도
+  #      ACTIVE 워터마크 신선도로 전환되어 그룹2 기본 28h 룰에서 제외됨 — stale+market_open==1이어도 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="macro-external"}'
+        values: '0+0x3540'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x3540'
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 8: collector-collection-gap-overseas — 100h 무억제
+  # SPEC-OBSV-BATCH-COVERAGE-001 AC-4 / AC-5 / AC-6 / REQ-007 / REQ-008
+  # ===========================================================================
+  # 시리즈 길이: 101h5m = 363900s → N = 363900/30 = 12130
+
+  # T16. [발화] overseas-daily stale>100h → 발화(게이트 무관).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '0+0x12130'
+    alert_rule_test:
+      - eval_time: 101h5m
+        groupname: collector-collection-gap-overseas
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: overseas-daily
+              tier: TICKET
+            exp_annotations:
+              summary: "해외 배치 신선도 갭 — overseas-daily > 100h 미적재"
+              description: "해외(미국) MON-FRI 배치 overseas-daily 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-007/008)."
+
+  # T17. [발화] overseas-shortsale-daily stale>100h → 발화(게이트 무관).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-shortsale-daily"}'
+        values: '0+0x12130'
+    alert_rule_test:
+      - eval_time: 101h5m
+        groupname: collector-collection-gap-overseas
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: overseas-shortsale-daily
+              tier: TICKET
+            exp_annotations:
+              summary: "해외 배치 신선도 갭 — overseas-shortsale-daily > 100h 미적재"
+              description: "해외(미국) MON-FRI 배치 overseas-shortsale-daily 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-007/008)."
+
+  # T18. [무발화] overseas-daily 정상 주말 갭(73h) — 100h 임계 미초과, 미발화(AC-5).
+  # 73h = 73*3600/30 = 8760 steps
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '0+0x8770'
+    alert_rule_test:
+      - eval_time: 73h5m
+        groupname: collector-collection-gap-overseas
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # T19. [무발화] overseas-daily 3일 연휴 갭(97h) — 100h 임계 미초과, 미발화(AC-5).
+  # 97h = 97*3600/30 = 11640 steps
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '0+0x11650'
+    alert_rule_test:
+      - eval_time: 97h5m
+        groupname: collector-collection-gap-overseas
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # T20. [absent 억제] overseas-daily last_load 시계열 부재 → 미발화(AC-6 / REQ-010).
+  #      `time()-absent`가 빈 벡터 → 구조적 억제.
+  - interval: 30s
+    input_series: []
+    alert_rule_test:
+      - eval_time: 101h5m
+        groupname: collector-collection-gap-overseas
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 11: collector-collection-gap-news — 1h + 장중 게이트
+  # SPEC-OBSV-BATCH-COVERAGE-001 AC-2 / AC-3 / AC-6 / REQ-006
+  # ===========================================================================
+  # 시리즈 길이: 1h5m = 3900s → N = 3900/30 = 130
+
+  # T27. [발화] domestic-news stale>1h AND market_open==1 → 발화.
+  # eval_time = 1h6m: 조건이 t=3630s(1h30s)에 처음 TRUE → for:5m 후 t=3930s(1h5m30s) 충족.
+  # 1h6m=3960s → 시리즈 N=132. 충분한 여유.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-news"}'
+        values: '0+0x133'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x133'
+    alert_rule_test:
+      - eval_time: 1h6m
+        groupname: collector-collection-gap-news
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: domestic-news
+              tier: TICKET
+            exp_annotations:
+              summary: "뉴스 배치 신선도 갭 — domestic-news > 1h 미적재"
+              description: "장중(market_open==1) 뉴스 배치 10분 주기 수집이 1h 이상 중단됨. 휴장 시 억제됨(REQ-006)."
+
+  # T28. [휴장 억제] domestic-news stale>1h 이지만 market_open==0 → 억제(AC-3).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-news"}'
+        values: '0+0x133'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x133'
+    alert_rule_test:
+      - eval_time: 1h6m
+        groupname: collector-collection-gap-news
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # T29. [absent 억제] domestic-news 시계열 부재 → 미발화(AC-6 / REQ-010).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x133'
+    alert_rule_test:
+      - eval_time: 1h6m
+        groupname: collector-collection-gap-news
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 12: collector-collection-gap-watchlist-us — 28h 무게이트(REQ-013)
+  # SPEC-OBSV-BATCH-COVERAGE-001 AC-4 / AC-6
+  # ===========================================================================
+  # 시리즈 길이: 29h = 104400s → N = 104400/30 = 3480 + margin 20 = 3500
+
+  # T30. [발화] watchlist-sync-us stale>28h → 발화(게이트 무관, 매일 잡이라 무억제).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="watchlist-sync-us"}'
+        values: '0+0x3500'
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap-watchlist-us
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: watchlist-sync-us
+              tier: TICKET
+            exp_annotations:
+              summary: "미국 관심종목 동기화 신선도 갭 — watchlist-sync-us > 28h 미적재"
+              description: "미국 관심종목 동기화(매일 ET 08:50) 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-013)."
+
+  # T31. [무발화] watchlist-sync-us stale<28h → 미발화(정상 24h 주기 허용).
+  # 25h: eval_time=25h5m, 25h < 28h → 미발화
+  # 25h5m = (25*3600+5*60)/30 = 3010 steps
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="watchlist-sync-us"}'
+        values: '0+0x3010'
+    alert_rule_test:
+      - eval_time: 25h5m
+        groupname: collector-collection-gap-watchlist-us
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # T32. [absent 억제] watchlist-sync-us 시계열 부재 → 미발화(AC-6 / REQ-010).
+  - interval: 30s
+    input_series: []
+    alert_rule_test:
+      - eval_time: 29h
+        groupname: collector-collection-gap-watchlist-us
+        alertname: CollectorBatchStale
+        exp_alerts: []
+

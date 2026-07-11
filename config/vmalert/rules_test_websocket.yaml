@@ -1,0 +1,364 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — 웹소켓·틱 — 구독 무음(NoSubscription)·세션 단절(SessionDisconnected)·틱 침묵(W6 tick-silence)
+# SPEC-COLLECTOR-OBSV-001 / SPEC-OBSV-WEBSOCKET-001 / SPEC-OBSV-WATERMARK-001 REQ-WM-021/028
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+#   또는: vmalert-tool unittest --files='/rules/rules_test_*.yaml'  (순차, CWD=config/vmalert 마운트)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.145.0 \
+#     unittest --files=/rules/rules_test_websocket.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [시간 모델] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
+#   "X시간 경과"는 last_update 계열을 0으로 두고 eval_time 을 X시간보다 크게 잡아 재현한다.
+#   `+0xN` = 동일값 N+1개(30s 간격). 시리즈 길이는 eval_time 이상이어야 한다.
+# [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다
+#   (누락 시 vmalert-tool이 라벨 불일치로 FAILED 처리).
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ===========================================================================
+  # 룰 6: CollectorWebSocketNoSubscription — 장중 틱 구독 무음 탐지
+  # SPEC-OBSV-WEBSOCKET-001 TI-WS-001/002/003/004
+  # ===========================================================================
+
+  # TI-WS-001. [발화] tick_active_subscriptions==0 AND market_open==1 → 3m 이상 → firing.
+  # 장 개시 후 3m5s 평가: subscriptions=0 유지, market_open=1 유지 → for:3m 충족.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '0+0x20'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "WebSocket 구독 0 — 틱 수집 전면 중단"
+              description: "장중 구독 종목이 3분 이상 0 — 장 개시 구독 실패 또는 전체 구독 해제. 이 상태에선 틱 침묵 알림(도메스틱/해외)도 억제되므로 이 알림이 유일한 경보."
+              action: "collector 로그(장 개시 구독·세션 연결) → 복구 후 stream:tick:domestic|overseas 발행 재개 확인"
+
+  # TI-WS-002. [휴장 억제] subscriptions==0 이지만 market_open==0(장외/휴장)이고 us_market_open도 없음 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '0+0x20'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts: []
+
+  # TI-WS-003. [장 개시 엣지 오발 방지] market_open 전환 후 3m 이내 subscriptions 회복 → 미발화.
+  # 0~2m: subscriptions=0, 2m~: subscriptions=10(정상 연결) — for:3m 미충족.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '0 0 0 0 10 10 10 10 10 10'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts: []
+
+  # TI-WS-004. [absent 억제] tick_active_subscriptions 시계열 부재 → 미발화(REQ-003).
+  # market_open==1 이지만 subscriptions 시계열 자체가 없으면 expr이 빈 벡터 → 구조적 억제.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 3m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketNoSubscription
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 13: collector-websocket — CollectorWebSocketSessionDisconnected
+  # SPEC-OBSV-WS-SESSION-001 TI-WS-005~011
+  # ===========================================================================
+  # 세션별(alias) partial failure 감지. for:5m + 장중 게이트.
+  # 시리즈 길이: 5m30s = 330s → N = 330/30 = 11 steps (여유 포함 15)
+
+  # TI-WS-005. [발화] session_connected==0 AND market_open==1 → 5m 지속 → firing.
+  # alias 라벨이 발화 알림에 보존되는지 확인(REQ-004).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+              tier: TICKET
+            exp_annotations:
+              summary: "WebSocket 세션 끊김 — stock"
+              description: "계좌 stock 세션이 5분 이상 미연결(재연결 실패 지속). 부분 장애 — 다른 계좌 세션·구독은 유지 중."
+              action: "collector 로그(해당 alias 재연결) → 구독 수·틱 수신 정상 여부 확인"
+
+  # TI-WS-006. [장외 억제] session_connected==0 이지만 market_open==0(장외/휴장) → 미발화(REQ-002).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # TI-WS-007. [absent 억제] session_connected 시계열 부재 + market_open==1 → 미발화(REQ-003).
+  #     expr이 빈 벡터 → 구조적 억제.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # TI-WS-008. [정상 미발화] session_connected==1(연결 중) + market_open==1 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '1+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # TI-WS-009. [partial failure 핵심] stock=0, dc=1, market_open==1 → stock만 발화, dc 미발화.
+  #     SPEC의 존재 이유: NoSubscription과 달리 특정 alias만 끊긴 partial failure 감지.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_websocket_session_connected{alias="dc"}'
+        values: '1+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+              tier: TICKET
+            exp_annotations:
+              summary: "WebSocket 세션 끊김 — stock"
+              description: "계좌 stock 세션이 5분 이상 미연결(재연결 실패 지속). 부분 장애 — 다른 계좌 세션·구독은 유지 중."
+              action: "collector 로그(해당 alias 재연결) → 구독 수·틱 수신 정상 여부 확인"
+
+  # TI-WS-010. [alias별 독립 발화 — REQ-004] stock=0, dc=0, market_open==1 → 두 개의 독립 알림.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_websocket_session_connected{alias="dc"}'
+        values: '0+0x15'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+              tier: TICKET
+            exp_annotations:
+              summary: "WebSocket 세션 끊김 — stock"
+              description: "계좌 stock 세션이 5분 이상 미연결(재연결 실패 지속). 부분 장애 — 다른 계좌 세션·구독은 유지 중."
+              action: "collector 로그(해당 alias 재연결) → 구독 수·틱 수신 정상 여부 확인"
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: dc
+              tier: TICKET
+            exp_annotations:
+              summary: "WebSocket 세션 끊김 — dc"
+              description: "계좌 dc 세션이 5분 이상 미연결(재연결 실패 지속). 부분 장애 — 다른 계좌 세션·구독은 유지 중."
+              action: "collector 로그(해당 alias 재연결) → 구독 수·틱 수신 정상 여부 확인"
+
+  # TI-WS-011. [for:5m 미만 억제] 연결 끊김이 4m30s 시점에서 아직 for:5m 미충족 → 미발화.
+  #     for:5m 설정값 정확성 검증. 만약 for 값이 잘못됐다면 이 케이스에서 실패한다.
+  # 4m30s = 270s → 시리즈 N = 270/30 = 9 steps
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '0+0x9'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x9'
+    alert_rule_test:
+      - eval_time: 4m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts: []
+
+  # TI-WS-012. [상태 전이] connected=1→0 전환 후 5m 지속 → 발화.
+  #     전환 전 정상 연결 기간이 for:5m 카운터를 리셋하는지 검증.
+  # steps 0~3: connected=1(2m), steps 4~15: connected=0 — for:5m 충족(t=420s=step 14) 후 발화.
+  # 7m30s = 450s = step 15 → 시리즈 16개 필요(steps 0~15)
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_websocket_session_connected{alias="stock"}'
+        values: '1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x15'
+    alert_rule_test:
+      - eval_time: 7m30s
+        groupname: collector-websocket
+        alertname: CollectorWebSocketSessionDisconnected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              alias: stock
+              tier: TICKET
+            exp_annotations:
+              summary: "WebSocket 세션 끊김 — stock"
+              description: "계좌 stock 세션이 5분 이상 미연결(재연결 실패 지속). 부분 장애 — 다른 계좌 세션·구독은 유지 중."
+              action: "collector 로그(해당 alias 재연결) → 구독 수·틱 수신 정상 여부 확인"
+
+  # 룰 W6: collector-tick-silence — REQ-WM-021(국내) / REQ-WM-028(해외) / AC-11 / AC-12
+  # ===========================================================================
+
+  # TI-WM-TICK-001. [발화, PAGE] 국내 장중 구독>0인데 tick_last_seen_seconds{market="domestic"} 시계열 자체가
+  #      부재(absent) → CollectorTickSilentDomestic 즉시 발화(absent-aware).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentDomestic
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "국내 틱 수신 중단"
+              description: "국장 장중 구독 유지 상태에 국내 틱 데이터 5분 이상 전 종목 무수신(REQ-WM-021, absent-aware)."
+              action: "collector 로그(WebSocket 수신) → redis XINFO STREAM stream:tick:domestic 최종 발행 시각 확인"
+
+  # TI-WM-TICK-002. [무발화] 국내 휴장(market_open==0) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '0+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentDomestic
+        exp_alerts: []
+
+  # TI-WM-TICK-003. [무발화] 국내 틱이 지속 수신 중(last_seen이 time()과 함께 전진) → 미발화.
+  # last_seen 값이 30초 간격으로 함께 전진 → time()-max(last_seen) 항상 작게 유지(diff<300).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x21'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x21'
+      - series: 'aaa_collector_tick_last_seen_seconds{symbol="005930",market="domestic"}'
+        values: '0+30x21'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentDomestic
+        exp_alerts: []
+
+  # TI-WM-TICK-004. [발화, PAGE] US 세션 중(holiday_count>=20 가드 통과)인데 해외 틱 시계열 부재(absent)
+  #      → CollectorTickSilentOverseas 즉시 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_us_market_open'
+        values: '1+0x5'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '25+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentOverseas
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              tier: PAGE
+            exp_annotations:
+              summary: "미국 틱 수신 중단"
+              description: "미장 장중 구독 유지 상태에 해외 틱 데이터 5분 이상 전 종목 무수신(REQ-WM-028, 결정 4)."
+              action: "collector 로그(WebSocket 수신) → redis XINFO STREAM stream:tick:overseas 최종 발행 시각 확인"
+
+  # TI-WM-TICK-005. [무발화] holiday_count<20(게이트 init 미완료, fail-open 가드) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_us_market_open'
+        values: '1+0x5'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '10+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentOverseas
+        exp_alerts: []
+
+  # TI-WM-TICK-006. [무발화] US 장외(us_market_open==0) → 미발화(반일 조기폐장 REQ-WM-030 보정 시나리오 포함).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_us_market_open'
+        values: '0+0x5'
+      - series: 'aaa_collector_us_market_gate_holiday_count'
+        values: '25+0x5'
+      - series: 'aaa_collector_tick_active_subscriptions'
+        values: '5+0x5'
+    alert_rule_test:
+      - eval_time: 90s
+        groupname: collector-tick-silence
+        alertname: CollectorTickSilentOverseas
+        exp_alerts: []
+
+  # ===========================================================================

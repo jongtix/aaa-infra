@@ -1,0 +1,95 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — 수집 갭(장주기) — 주간 배치 8d + 장중 게이트(룰10). 시뮬레이션 시간 2위 샤드라 단독 분리.
+# SPEC-OBSV-BATCH-COVERAGE-001
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+#   또는: vmalert-tool unittest --files='/rules/rules_test_*.yaml'  (순차, CWD=config/vmalert 마운트)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.145.0 \
+#     unittest --files=/rules/rules_test_gap_weekly.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [시간 모델] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
+#   "X시간 경과"는 last_update 계열을 0으로 두고 eval_time 을 X시간보다 크게 잡아 재현한다.
+#   `+0xN` = 동일값 N+1개(30s 간격). 시리즈 길이는 eval_time 이상이어야 한다.
+# [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다
+#   (누락 시 vmalert-tool이 라벨 불일치로 FAILED 처리).
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ===========================================================================
+  # 룰 10: collector-collection-gap-weekly — 8d + 장중 게이트
+  # SPEC-OBSV-BATCH-COVERAGE-001 AC-2 / AC-3 / AC-6 / REQ-005
+  # ===========================================================================
+  # 시리즈 길이: 8d5h5m ≈ 709500s → N = 709500/30 = 23650
+
+  # T23. [발화] domestic-financial-ratio stale>8d AND market_open==1 → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-financial-ratio"}'
+        values: '0+0x23660'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x23660'
+    alert_rule_test:
+      - eval_time: 8d5h5m
+        groupname: collector-collection-gap-weekly
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: domestic-financial-ratio
+              tier: TICKET
+            exp_annotations:
+              summary: "주간 배치 신선도 갭 — domestic-financial-ratio > 8d 미적재"
+              description: "장중(market_open==1) 주간 배치 domestic-financial-ratio 마지막 적재 후 8일(7일 주기 + 마진 1일) 초과 경과. 휴장 시 억제됨(REQ-005)."
+
+  # T24. [발화] domestic-etf-representative stale>8d AND market_open==1 → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-etf-representative"}'
+        values: '0+0x23660'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x23660'
+    alert_rule_test:
+      - eval_time: 8d5h5m
+        groupname: collector-collection-gap-weekly
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: domestic-etf-representative
+              tier: TICKET
+            exp_annotations:
+              summary: "주간 배치 신선도 갭 — domestic-etf-representative > 8d 미적재"
+              description: "장중(market_open==1) 주간 배치 domestic-etf-representative 마지막 적재 후 8일(7일 주기 + 마진 1일) 초과 경과. 휴장 시 억제됨(REQ-005)."
+
+  # T25. [휴장 억제] domestic-financial-ratio stale>8d 이지만 market_open==0 → 억제(AC-3).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-financial-ratio"}'
+        values: '0+0x23660'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x23660'
+    alert_rule_test:
+      - eval_time: 8d5h5m
+        groupname: collector-collection-gap-weekly
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
+  # T26. [absent 억제] 주간 배치 last_load 시계열 부재 → 미발화(AC-6 / REQ-010).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_open'
+        values: '1+0x23660'
+    alert_rule_test:
+      - eval_time: 8d5h5m
+        groupname: collector-collection-gap-weekly
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
