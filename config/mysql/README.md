@@ -18,6 +18,7 @@ collector는 어떤 테이블에도 `DELETE`/DDL을 갖지 않는다(소프트 �
 
 | 파일 | 실행 시점 | 내용 |
 |------|-----------|------|
+| `my.cnf` | 컨테이너 기동 시 마운트 (`/etc/mysql/conf.d/my.cnf:ro`) | 서버 커스텀 설정 — 문자셋(utf8mb4)·KST·InnoDB 버퍼풀·binlog·로그. **변경 반영에 MySQL 재기동 필요(수동, 자동 배포 대상 아님)** |
 | `initdb.d/01-init-collector.sh` | MySQL 데이터 디렉토리 **최초 init** (자동) | `flyway`·`collector` 유저 생성 + **db 단위** 권한 (flyway 전체 DDL / collector `SELECT,INSERT`) |
 | `grants/collector-tier2-grants.sql` | 스키마 생성 **이후** (수동/런북, 1회) | collector **테이블 단위 UPDATE** 4종 |
 
