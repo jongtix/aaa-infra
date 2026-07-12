@@ -2250,10 +2250,10 @@ tests:
   # 룰 XR-I: collector-expected-run-deadman — REQ-XR-023/024/025 (Module I, DP-6)
   # ===========================================================================
 
-  # TI-XR-I-001. [발화, 총-소실] expected_run 시계열 전체 부재(enrolled_total만 존재) → 10m 후 발화.
+  # TI-XR-I-001. [발화, 총-소실] expected_run 시계열 전체 부재(enrolled만 존재) → 10m 후 발화.
   - interval: 30s
     input_series:
-      - series: 'aaa_collector_batch_enrolled_total'
+      - series: 'aaa_collector_batch_enrolled'
         values: '20+0x21'
     alert_rule_test:
       - eval_time: 10m30s
@@ -2265,15 +2265,15 @@ tests:
               component: collector
               tier: PAGE
             exp_annotations:
-              summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled_total"
-              description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled_total 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
+              summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled"
+              description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
 
   # TI-XR-I-002. [무발화, 총-소실] 둘 다 존재 → 미발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
         values: '1000+0x21'
-      - series: 'aaa_collector_batch_enrolled_total'
+      - series: 'aaa_collector_batch_enrolled'
         values: '20+0x21'
     alert_rule_test:
       - eval_time: 10m30s
@@ -2281,7 +2281,7 @@ tests:
         alertname: CollectorExpectedRunSeriesMissing
         exp_alerts: []
 
-  # TI-XR-I-003. [발화, 부분-소실] expected_run 3개 시계열만 노출 + enrolled_total=5 → count(3)<5 → 발화.
+  # TI-XR-I-003. [발화, 부분-소실] expected_run 3개 시계열만 노출 + enrolled=5 → count(3)<5 → 발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
@@ -2290,7 +2290,7 @@ tests:
         values: '1000+0x21'
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-rights"}'
         values: '1000+0x21'
-      - series: 'aaa_collector_batch_enrolled_total'
+      - series: 'aaa_collector_batch_enrolled'
         values: '5+0x21'
     alert_rule_test:
       - eval_time: 10m30s
@@ -2302,10 +2302,10 @@ tests:
               component: collector
               tier: PAGE
             exp_annotations:
-              summary: "예상 실행 시계열 개수 부족 — 3 < enrolled_total"
-              description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled_total) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
+              summary: "예상 실행 시계열 개수 부족 — 3 < enrolled"
+              description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
 
-  # TI-XR-I-004. [무발화, 부분-소실] expected_run 3개 시계열 == enrolled_total(3) → count==enrolled_total → 미발화.
+  # TI-XR-I-004. [무발화, 부분-소실] expected_run 3개 시계열 == enrolled(3) → count==enrolled → 미발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
@@ -2314,7 +2314,7 @@ tests:
         values: '1000+0x21'
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-rights"}'
         values: '1000+0x21'
-      - series: 'aaa_collector_batch_enrolled_total'
+      - series: 'aaa_collector_batch_enrolled'
         values: '3+0x21'
     alert_rule_test:
       - eval_time: 10m30s

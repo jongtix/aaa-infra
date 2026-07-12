@@ -40,7 +40,7 @@
 #   aaa_collector_batch_expected_run_seconds{batch}   (gauge, cron 산출 KST epoch, 순수 함수·휴장 캘린더 무의존,
 #                                                       주말엔 직전 슬롯값 고정, 부팅 시 eager 전수 등록)
 #   aaa_collector_batch_run_margin_seconds{batch}      (gauge, 배치별 허용 마진 초, 부팅 시 eager 전수 등록)
-#   aaa_collector_batch_enrolled_total                 (gauge, 라벨 없음, 레지스트리 크기 self-updating)
+#   aaa_collector_batch_enrolled                 (gauge, 라벨 없음, 레지스트리 크기 self-updating)
 #   aaa_collector_batch_last_data_seconds{batch}       (gauge, KST epoch, 현재 overseas-shortsale-interest만 —
 #                                                       success>0 도착 시에만 갱신, 본 세션에서는 미소비)
 #
@@ -1141,7 +1141,7 @@ groups:
   # [HARD ADD-only, 2026-07-10] 이 그룹은 신규 그룹이며 기존 collector-collection-gap(그룹 2)·
   #   -overseas(그룹5)·-overseas-interest(그룹6)·-weekly·-news·-watchlist-us·-overseas-news·
   #   -nogate-100h·-nogate-28h·-gate-health를 어떤 것도 대체·수정하지 않는다 — §8.1 확인 게이트
-  #   (collector M1 배포 + count(expected_run)==enrolled_total ≥24h 연속 관찰) 통과 전까지 구·신 룰
+  #   (collector M1 배포 + count(expected_run)==enrolled ≥24h 연속 관찰) 통과 전까지 구·신 룰
   #   병행 실행(REQ-XR-030). 게이트 통과 후 구 룰 제거는 별도 세션(§8.2 "추가 → 확인 → 제거").
   #
   # 알림명을 CollectorBatchStale(그룹2 기존)과 의도적으로 구분해 CollectorBatchStaleExpectedRun으로
@@ -1184,36 +1184,36 @@ groups:
   - name: collector-expected-run-deadman
     interval: 30s
     rules:
-      # 총-소실(REQ-XR-023): expected_run 또는 enrolled_total 시계열 전체 부재.
+      # 총-소실(REQ-XR-023): expected_run 또는 enrolled 시계열 전체 부재.
       # for: 10m — 스크랩 staleness보다 길게 잡아 CollectorDown과의 중복 발화 억제(그룹 W1과 동일 근거).
       - alert: CollectorExpectedRunSeriesMissing
         expr: |
           absent(aaa_collector_batch_expected_run_seconds)
-          or absent(aaa_collector_batch_enrolled_total)
+          or absent(aaa_collector_batch_enrolled)
         for: 10m
         labels:
           severity: critical
           component: collector
           tier: PAGE
         annotations:
-          summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled_total"
-          description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled_total 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
+          summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled"
+          description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
 
-      # 부분-소실(REQ-XR-024): 관측 시계열 수 < 레지스트리 자기-보고 크기(enrolled_total).
+      # 부분-소실(REQ-XR-024): 관측 시계열 수 < 레지스트리 자기-보고 크기(enrolled).
       # [설계 개선] 워터마크 데드맨(그룹 W1)의 하드코딩 임계 17(MI-05 유지보수 함정)과 달리, 이 룰은
-      #   enrolled_total 자기참조 비교라 레지스트리 편입/제거 시 상수 갱신이 불필요(self-updating).
+      #   enrolled 자기참조 비교라 레지스트리 편입/제거 시 상수 갱신이 불필요(self-updating).
       # [HARD 전제] 이 for:10m debounce의 안전성은 REQ-XR-031(부팅 시 eager 전수 등록)을 전제로 한다 —
       #   lazy 등록이면 주1회 배치가 재배포 후 시계열 부재로 이 룰을 배포마다 확정 오발시킨다(DP-6).
       - alert: CollectorExpectedRunSeriesCountLow
-        expr: count(aaa_collector_batch_expected_run_seconds) < scalar(aaa_collector_batch_enrolled_total)
+        expr: count(aaa_collector_batch_expected_run_seconds) < scalar(aaa_collector_batch_enrolled)
         for: 10m
         labels:
           severity: critical
           component: collector
           tier: PAGE
         annotations:
-          summary: "예상 실행 시계열 개수 부족 — {{ $value }} < enrolled_total"
-          description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled_total) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
+          summary: "예상 실행 시계열 개수 부족 — {{ $value }} < enrolled"
+          description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
 
       # pair-missing(REQ-XR-025): 편입은 됐으나(expected_run 있음) last_load를 한 번도 stamp한 적 없는 배치.
       #   주 실행 신선도 룰(그룹 XR-H)은 이 경우 존재하지 않는 시계열 비교로 빈 벡터를 산출해 침묵하므로
