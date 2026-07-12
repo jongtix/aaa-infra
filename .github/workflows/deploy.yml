@@ -1,0 +1,152 @@
+# CD — NAS 자동 배포. CI(ci.yml, name: "CI") 성공 시 workflow_run 연쇄로만 트리거된다(REQ-CD-001).
+# self-hosted job은 pull_request 트리거를 갖지 않는다(REQ-CD-001 부정절 — fork-PR 보호).
+#
+# T-003 골격: 가드 → 체크아웃(tarball fallback) → env 파싱 안전장치 → per-file diff → 백업.
+# 서비스별 반영(T-004)·헬스 검증/복원/통지(T-005)는 아래 TODO 스텁으로 남겨둔다.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions: {}  # 워크플로 전체 기본 권한 차단, job별 최소 권한 선언(REQ-SEC-001)
+
+concurrency:
+  # 겹치는 실행이 동일 백업 디렉토리·NAS 파일에 경합하는 것을 방지한다(REQ-CD-021).
+  # cancel-in-progress: false를 채택한다 — SPEC은 "대기하거나 스킵"을 모두 허용하지만,
+  # true(취소)로 두면 진행 중이던 배포가 파일 동기화·백업 중간에 강제 종료되어
+  # 실패 복원 로직(REQ-CD-019) 없이 배포가 통째로 유실될 위험이 있다. 대기가 더 안전하다.
+  group: aaa-infra-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    # REQ-CD-002: conclusion != 'success' 또는 head_branch != main이면 어떤 배포 동작도 수행하지 않는다.
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    permissions:
+      contents: read  # checkout 전용, 그 외 권한 불필요(REQ-SEC-001)
+
+    env:
+      AAA_INFRA_DIR: ${{ vars.AAA_INFRA_DIR }}
+
+    steps:
+      - name: Checkout (head_sha, tarball fallback — NAS runner has no git binary)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Parse AAA_SSD_BASE (fail-closed on parse error)
+        # REQ-CD-004: collector와 동일한 awk _parse_env 패턴(lib.sh parse_env_or_fail)으로 해석.
+        # REQ-CD-004A: 파싱 실패 시 이후 단계를 전부 건너뛰기 위해 결과를 output 플래그로만 넘긴다
+        # (이 스텝 자체는 항상 exit 0 — 실패 판단은 후속 스텝의 명시적 if 조건에 위임).
+        # 값(AAA_SSD_BASE 내용)은 어떤 로그에도 echo하지 않는다(REQ-CD-004 부정절, AC-CD-003A).
+        id: env_parse
+        run: |
+          set -u
+          source .github/deploy/lib.sh
+
+          if ! AAA_SSD_BASE=$(parse_env_or_fail 'AAA_SSD_BASE' "$AAA_INFRA_DIR/.env"); then
+            echo "ssd_base_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "ssd_base_ok=true" >> "$GITHUB_OUTPUT"
+          echo "AAA_SSD_BASE=$AAA_SSD_BASE" >> "$GITHUB_ENV"
+
+      - name: Notify on env parse failure
+        # REQ-CD-004A: "환경변수 읽기 실패 — 안전을 위해 수동 처리"를 Telegram으로 통지.
+        if: steps.env_parse.outputs.ssd_base_ok != 'true'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_OPERATOR_CHAT_ID }}
+        run: |
+          set -u
+          source .github/deploy/lib.sh
+          NL=$'\n'
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          telegram_notify "$BOT_TOKEN" "$CHAT_ID" \
+            "🚨 <b>aaa-infra CD 중단</b>${NL}상태: 환경변수 읽기 실패(AAA_SSD_BASE) — 안전을 위해 수동 처리. 커밋 ${SHORT_SHA}."
+
+      - name: Stop pipeline if env parse failed
+        # REQ-CD-004A shall not proceed: 통지 이후 동기화·반영 단계를 전부 건너뛰고 종료.
+        if: steps.env_parse.outputs.ssd_base_ok != 'true'
+        run: |
+          echo "[FATAL] AAA_SSD_BASE 파싱 실패 — 이후 동기화 단계를 건너뛰고 종료(REQ-CD-004A)"
+          exit 1
+
+      - name: Compute per-file deploy diff
+        # REQ-CD-005~007: 체크아웃본 vs NAS 현재 사본 per-file diff, 배포대상 한정+제외목록 적용.
+        id: diff
+        if: steps.env_parse.outputs.ssd_base_ok == 'true'
+        run: |
+          set -u
+          source .github/deploy/lib.sh
+          diff_files=$(compute_deploy_diff "$GITHUB_WORKSPACE" "$AAA_INFRA_DIR" "$AAA_SSD_BASE")
+          {
+            echo "files<<DEPLOY_DIFF_EOF"
+            echo "$diff_files"
+            echo "DEPLOY_DIFF_EOF"
+          } >> "$GITHUB_OUTPUT"
+          if [ -z "$diff_files" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Backup changed files
+        # REQ-CD-008: 덮어쓰기 전 변경 파일을 타임스탬프 백업 디렉토리에 백업.
+        # 빈 diff(no-op 배포)는 정상 종료 — 백업 없이 스킵(acceptance.md 엣지 케이스).
+        id: backup
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          set -u
+          source .github/deploy/lib.sh
+          backup_dir=$(create_backup_dir "$AAA_SSD_BASE")
+          echo "backup_dir=$backup_dir" >> "$GITHUB_OUTPUT"
+          while IFS= read -r rel; do
+            [ -z "$rel" ] && continue
+            target=$(nas_target_path "$rel" "$AAA_INFRA_DIR" "$AAA_SSD_BASE") || continue
+            backup_file "$target" "$rel" "$backup_dir"
+          done <<< "${{ steps.diff.outputs.files }}"
+
+      - name: Prune old backups (retain N=10, DP-4)
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          set -u
+          source .github/deploy/lib.sh
+          prune_backup_retention "$AAA_SSD_BASE/backups/cicd" 10
+
+      # TODO: T-004 — 서비스별 최소 반영 로직(.github/deploy/reflect.sh 신설 예정).
+      # rules.yml/alertmanager.yml/vector.yaml → docker restart, scrape.yml → VM SIGHUP(재시작 금지),
+      # docker-compose.yml diff → 관측 서비스 목록 자기 블록 한정 `up -d --wait --no-deps` vs
+      # 공유 top-level/collector/analyzer 블록 → 스킵+통지(REQ-CD-013A). DB 무재시작 불변식
+      # (mysql/redis never recreate, config diff notify-only, users.acl 무접근)도 이 단계에서 구현.
+      # REQ-CD-009~017, REQ-CD-013A.
+      - name: "[TODO T-004] Reflect changes to NAS services"
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          echo "[TODO] T-004에서 구현 예정 — 서비스별 최소 반영(.github/deploy/reflect.sh)"
+
+      # TODO: T-005 — 배포 후 헬스 검증(.github/deploy/verify.sh)·실패 시 백업 복원
+      # (.github/deploy/rollback.sh)·통지. REQ-CD-018(compose --wait 게이팅)/018A(vmalert·
+      # alertmanager health-status 폴링)/018B(vector running+grace period)/019(실패 시 복원+통지,
+      # "자동복원됨" vs "수동개입 필요" 구분)/020(성공+DB skip 시 대기 항목 통지).
+      - name: "[TODO T-005] Post-deploy health verification"
+        if: steps.diff.outputs.has_changes == 'true'
+        run: |
+          echo "[TODO] T-005에서 구현 예정 — 헬스 검증(.github/deploy/verify.sh)"
+
+      - name: "[TODO T-005] Notify hook stub (success / DB notify-only pending items)"
+        # 실제 telegram_notify 호출 배선은 T-005 몫이다. 지금은 스텁만 남겨 훅 지점을 표시한다.
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_OPERATOR_CHAT_ID }}
+        run: |
+          echo "[TODO] T-005에서 telegram_notify(REQ-CD-019/020) 실제 호출로 교체 예정"
+
+      # TODO: T-005 — 실패 시 백업 복원 스텝(if: failure()). 현재는 T-004/T-005 미구현이라
+      # 실패 주입 시나리오(AC-CD-fail) 검증 대상 없음 — T-005에서 rollback.sh 호출 배선 추가.
