@@ -1,0 +1,158 @@
+# 검증 전용 CI — push:main 단독 트리거, 배포 동작 없음(REQ-CI-001).
+# CD(deploy.yml, self-hosted NAS runner)는 이 워크플로의 workflow_run 완료 이벤트로만 트리거된다.
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}  # 워크플로 전체 기본 권한 차단, job별 최소 권한 선언(REQ-SEC-001)
+
+jobs:
+  # --- compose 문법 검증 (REQ-CI-002) ---
+  compose-config:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Prepare dummy .env + secret files
+        # docker-compose.yml의 env_file 참조(.env.mysql/.env.redis/.env.common/.env.collector)는
+        # 실제 파일 존재를 요구한다(compose config가 검증). 값은 비어 있어도 문법 검증엔 무관하다.
+        # alertmanager/vector 등의 볼륨 마운트 소스 파일·top-level secrets 파일은 실측 확인 결과
+        # `docker compose config -q`가 존재를 요구하지 않는다(문법+변수 참조 검증만 수행).
+        run: |
+          AAA_SSD_BASE="${GITHUB_WORKSPACE}/.ci-dummy/ssd"
+          AAA_HDD_BASE="${GITHUB_WORKSPACE}/.ci-dummy/hdd"
+          mkdir -p "$AAA_SSD_BASE/secrets"
+          : > "$AAA_SSD_BASE/secrets/.env.mysql"
+          : > "$AAA_SSD_BASE/secrets/.env.redis"
+          : > "$AAA_SSD_BASE/secrets/.env.common"
+          : > "$AAA_SSD_BASE/secrets/.env.collector"
+          {
+            echo "AAA_SSD_BASE=$AAA_SSD_BASE"
+            echo "AAA_HDD_BASE=$AAA_HDD_BASE"
+          } > "${GITHUB_WORKSPACE}/.env"
+
+      - name: docker compose config -q
+        run: docker compose config -q
+
+  # --- vmalert 룰 유닛테스트 (REQ-CI-003, [HARD] 버전 일치 — compose 핀 파싱 위임) ---
+  vmalert-unittest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Run vmalert unittest shards (glob-delegated, count not hardcoded)
+        # run-unittests.sh는 docker-compose.yml의 vmalert 이미지 태그를 grep -oP로 직접
+        # 파싱하고(REQ-CI-008 [HARD] 버전 일치 자동 보장), rules_test_*.yaml glob으로 샤드를
+        # 동적 수집한다(REQ-CI-003 shall not — 샤드 개수·이름 하드코딩 금지).
+        working-directory: config/vmalert
+        run: ./run-unittests.sh
+
+  # --- alertmanager 설정 검증 (REQ-CI-004) ---
+  amtool-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: amtool check-config (compose-pinned alertmanager version)
+        # DP-2: amtool check-config는 alertmanager.yml의 bot_token_file/chat_id_file 경로
+        # (/run/secrets/am_bot_token 등) 존재를 요구하지 않는다 — 문법·구조 검증만 수행한다
+        # (실측 확인, 2026-07-12). 1차 시도가 실패할 경우에만 더미 시크릿 파일을 스텁해 재시도한다.
+        run: |
+          AM_TAG=$(grep -oP 'prom/alertmanager:\K\S+' docker-compose.yml | head -1)
+          [ -n "$AM_TAG" ] || { echo "[FAIL] docker-compose.yml에서 alertmanager 이미지 태그를 찾을 수 없음"; exit 1; }
+          IMG="prom/alertmanager:${AM_TAG}"
+
+          run_amtool() {
+            docker run --rm --entrypoint /bin/amtool \
+              -v "$PWD/config/alertmanager/alertmanager.yml":/etc/alertmanager/alertmanager.yml:ro \
+              "$1" \
+              check-config /etc/alertmanager/alertmanager.yml
+          }
+
+          if run_amtool "$IMG"; then
+            exit 0
+          fi
+
+          echo "[INFO] 1차 검증 실패 — 더미 시크릿 파일 스텁 후 재시도 (DP-2 fallback)"
+          STUB_DIR="${GITHUB_WORKSPACE}/.ci-dummy/secrets"
+          mkdir -p "$STUB_DIR"
+          cp alertmanager.bot_token.example "$STUB_DIR/am_bot_token"
+          cp alertmanager.chat_id.example "$STUB_DIR/am_chat_id"
+
+          docker run --rm --entrypoint /bin/amtool \
+            -v "$PWD/config/alertmanager/alertmanager.yml":/etc/alertmanager/alertmanager.yml:ro \
+            -v "$STUB_DIR/am_bot_token":/run/secrets/am_bot_token:ro \
+            -v "$STUB_DIR/am_chat_id":/run/secrets/am_chat_id:ro \
+            "$IMG" \
+            check-config /etc/alertmanager/alertmanager.yml
+
+  # --- VictoriaMetrics scrape 설정 검증 (REQ-CI-005) ---
+  vm-scrape-dryrun:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: VictoriaMetrics -dryRun (compose-pinned version)
+        run: |
+          VM_TAG=$(grep -oP 'victoriametrics/victoria-metrics:\K\S+' docker-compose.yml | head -1)
+          [ -n "$VM_TAG" ] || { echo "[FAIL] docker-compose.yml에서 victoria-metrics 이미지 태그를 찾을 수 없음"; exit 1; }
+          docker run --rm \
+            -v "$PWD/config/victoriametrics/scrape.yml":/etc/victoriametrics/scrape.yml:ro \
+            "victoriametrics/victoria-metrics:${VM_TAG}" \
+            -promscrape.config=/etc/victoriametrics/scrape.yml -dryRun
+
+  # --- vector 파이프라인 설정 검증 (REQ-CI-006) ---
+  vector-validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: vector validate --no-environment (compose-pinned version)
+        run: |
+          VECTOR_TAG=$(grep -oP 'timberio/vector:\K\S+' docker-compose.yml | head -1)
+          [ -n "$VECTOR_TAG" ] || { echo "[FAIL] docker-compose.yml에서 vector 이미지 태그를 찾을 수 없음"; exit 1; }
+          docker run --rm \
+            -v "$PWD/config/vector/vector.yaml":/etc/vector/vector.yaml:ro \
+            "timberio/vector:${VECTOR_TAG}" \
+            validate --no-environment /etc/vector/vector.yaml
+
+  # --- 셸 스크립트 정적 검사 (REQ-CI-007) ---
+  shellcheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: shellcheck (scripts/*.sh, config/vmalert/*.sh, .github/deploy/*.sh)
+        # -S warning: error+warning 등급을 게이트(info/style은 제외). 기존 스크립트의
+        # SC2164(cd 실패 미처리)·SC2001(style)은 선행 커밋에서 정리 완료.
+        # .github/deploy/*.sh는 T-002 산출물(존재 시에만 포함) — nullglob으로 없어도 실패하지 않음.
+        run: |
+          shopt -s nullglob
+          targets=(scripts/*.sh config/vmalert/*.sh .github/deploy/*.sh)
+          shopt -u nullglob
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "[FAIL] shellcheck 대상 스크립트를 찾을 수 없음"
+            exit 1
+          fi
+          docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -S warning "${targets[@]}"
