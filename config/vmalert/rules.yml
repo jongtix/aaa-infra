@@ -30,6 +30,12 @@
 #   aaa_collector_backfill_internal_gap_stocks{series}        (gauge, SPEC-COLLECTOR-BACKFILL-010)
 #   aaa_collector_backfill_cap_saturated_total                (counter, 라벨 없음, GROUPC REQ-GC-013)
 #
+#   [SPEC-OBSV-WATERMARK-002 M1, collector v1.57.0 배포 후 노출, M2(B-2)만 소비]:
+#   aaa_collector_expected_watermark_daily_seconds{market="overseas"}  (gauge, KST 자정 epoch, US 일봉
+#     D+2 적재 지연 반영한 직전 개장일 기대치. market당 단일 시계열 — 기존 공유 기대 게이지
+#     aaa_collector_expected_watermark_seconds와는 별도 메트릭명, 다른 해외 신선도 룰은 영향 없음(REQ-WM2-010).
+#     absent=US 게이트 미준비(holiday_count<20), B-2 구조적 억제(REQ-WM2-002)
+#
 # [2026-07-10 텔레그램 메시지 규격 재설계, aaa-infra#78] annotations에 선택 필드 `action`을 도입한다
 #   (없는 룰은 alertmanager 메시지의 "확인:" 줄이 렌더되지 않음 — 점진 도입). 이벤트형(카운터 증분)
 #   룰 일부는 `notify: fire_only` 라벨을 부여해 5분 윈도우 소진 등으로 인한 가짜 ✅해소 통지를
@@ -415,9 +421,12 @@ groups:
           action: "domestic-daily 배치(평일 16:00) 로그 → daily_ohlcv 최근 거래일 조회"
 
       # B-2 미국 일봉 — PAGE, 4h. 기준점 US 정규장 마감 16:00 ET.
+      # [SPEC-OBSV-WATERMARK-002 REQ-WM2-009, 2026-07-12] D+2 적재 지연을 반영한 일봉 전용 기대 게이지로
+      #   재배선(회귀 배경: aaa-infra#92). 공유 기대 게이지 대비 1개장일 후퇴된 값이라 정상 D+2 적재 시
+      #   diff==0(무발화). 다른 해외 신선도 룰(B-3~B-9)은 기존 공유 게이지를 그대로 참조(REQ-WM2-010).
       - alert: CollectorWatermarkFreshnessStaleOverseasDaily
         expr: |
-          (aaa_collector_expected_watermark_seconds
+          (aaa_collector_expected_watermark_daily_seconds
            - on(market) group_right aaa_collector_data_watermark_seconds{series="daily-ohlcv-us"}
           ) > 0
         for: 4h

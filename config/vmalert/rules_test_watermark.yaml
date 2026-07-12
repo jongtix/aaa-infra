@@ -1,6 +1,7 @@
 # =============================================================================
 # vmalert 룰 유닛테스트 — 워터마크 — 데드맨(W1)·신선도 즉시형(W2)·lag 허용형(W3)·커버리지(W4)·백필 이상(W5)·침묵 드롭(W7)
 # SPEC-OBSV-WATERMARK-001 REQ-WM-016~020/022
+# SPEC-OBSV-WATERMARK-002 REQ-WM2-009/010/012 — B-2(daily-ohlcv-us) 일봉 전용 기대 게이지 재배선(TI-WM-FR-009~012)
 # =============================================================================
 # 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
 #   또는: vmalert-tool unittest --files='/rules/rules_test_*.yaml'  (순차, CWD=config/vmalert 마운트)
@@ -281,6 +282,80 @@ tests:
         alertname: CollectorWatermarkFreshnessStaleVix
         exp_alerts: []
 
+  # [SPEC-OBSV-WATERMARK-002 REQ-WM2-009/010/012, 2026-07-12] B-2가 신규 일봉 전용 기대 게이지
+  #   aaa_collector_expected_watermark_daily_seconds{market="overseas"}로 재배선됨(D+2 적재 지연 정합).
+  #   TI-WM-FR-009~012.
+
+  # TI-WM-FR-009. [발화, PAGE, B-2] daily-ohlcv-us: 일봉 전용 기대 게이지 diff=10000(>0) 상시 → 4h 지속 후 발화(AC-3).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '100000+0x491'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '90000+0x491'
+    alert_rule_test:
+      - eval_time: 4h5m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleOverseasDaily
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              series: daily-ohlcv-us
+              market: overseas
+              tier: PAGE
+            exp_annotations:
+              summary: "미국 일봉 갱신 지연"
+              description: "미국 장 마감 후 4시간이 지나도 최신 거래일까지 적재되지 않음 — 기대 대비 2h 46m 40s 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+              action: "overseas-daily 배치(평일 16:30 ET) 로그 → daily_ohlcv 최근 거래일 조회"
+
+  # TI-WM-FR-010. [무발화, diff==0] 정상 D+2 타이밍 — 일봉 전용 기대 게이지 == 실적 워터마크(직전 개장일 봉
+  #   이미 05:30 KST 적재 완료) → 4h5m 경과해도 미발화(AC-1). 동일 값 관계로 주말/월요일 경계(AC-4/AC-5,
+  #   M1 UsMarketSessionGateTest에서 직전 개장일 계산 자체는 검증됨)도 diff==0으로 귀결되므로 별도 시나리오
+  #   불필요(AC-11c).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '100000+0x491'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '100000+0x491'
+    alert_rule_test:
+      - eval_time: 4h5m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleOverseasDaily
+        exp_alerts: []
+
+  # TI-WM-FR-011. [무발화, for 미충족] TI-WM-FR-009와 동일 조건이나 eval_time=3h55m(<4h) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '100000+0x475'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '90000+0x475'
+    alert_rule_test:
+      - eval_time: 3h55m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleOverseasDaily
+        exp_alerts: []
+
+  # TI-WM-FR-012. [회귀 없음, AC-8] 신규 일봉 기대 게이지와 기존 공유 해외 기대 게이지가 동시에 노출되고
+  #   값이 크게 어긋나도(daily=999999 vs shared=100000), B-2 이외의 해외 신선도 룰(B-6 extended-hours-pre)은
+  #   여전히 공유 게이지만 참조해 diff==0으로 미발화 — 신규 메트릭명 분리로 on(market) group_right 조인의
+  #   "one"측 유일성이 깨지지 않음을 검증(REQ-WM2-003/010, §3.1 회귀 표면적 0 근거).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="overseas"}'
+        values: '100000+0x491'
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '999999+0x491'
+      - series: 'aaa_collector_data_watermark_seconds{series="extended-hours-pre",market="overseas"}'
+        values: '100000+0x491'
+    alert_rule_test:
+      - eval_time: 4h5m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleExtendedHoursPre
+        exp_alerts: []
+
   # ===========================================================================
   # 룰 W3: collector-watermark-freshness-lag — REQ-WM-017 lag 허용형
   # [2026-07-10 Family C 확정] 시리즈별 4룰로 분할, for 09:00 정렬 조정(C-1/C-3/C-4 1h→17h30m,
@@ -445,6 +520,9 @@ tests:
         alertname: CollectorWatermarkCoverageLowDomestic
         exp_alerts: []
 
+  # [SPEC-OBSV-WATERMARK-002 REQ-WM2-005/011] D-2 expr 자체는 불변 — 분모 기준일 후퇴는 collector 측
+  #   CoverageRefresher.refreshUsCoverage()에서 이미 처리됨(M1 배포 완료). 이 룰 테스트는 합성 비율 값만
+  #   검증하므로 게이지 소스가 바뀌어도 시나리오 변경 불필요.
   # TI-WM-COV-003. [발화, D-2] daily-ohlcv-us coverage=0.90(<0.95) 상시 → for:1h 후 발화.
   - interval: 30s
     input_series:
