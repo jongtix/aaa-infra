@@ -46,7 +46,9 @@ tests:
         alertname: CollectorBatchStale
         exp_alerts: []
 
-  # T13. [발화] watchlist-sync-krx stale>28h AND market_open==1 → 발화.
+  # T13. [SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-021 재분류 확인] watchlist-sync-krx는 예상-실행
+  #      모델(collector-collection-gap-expected-run)로 재분류되어 구 그룹2 필터에서 제외됨 —
+  #      stale+market_open==1이어도 미발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="watchlist-sync-krx"}'
@@ -57,19 +59,11 @@ tests:
       - eval_time: 29h
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: watchlist-sync-krx
-              tier: TICKET
-            exp_annotations:
-              summary: "배치 신선도 갭 — watchlist-sync-krx > 28h 미적재"
-              description: "장중(market_open==1) 배치 watchlist-sync-krx 마지막 적재 후 28h 초과 경과. 휴장 시 억제됨."
+        exp_alerts: []
 
   # T14. [배치 필터 검증] overseas-daily stale>28h + market_open==1 이지만
   #      batch 필터(batch!~"overseas-.*") 로 collector-collection-gap에서 미발화.
-  #      overseas-daily는 100h 룰(그룹 5)이 전담 — 28h 룰은 오발하지 않아야 함.
+  #      overseas-daily는 예상-실행 모델(collector-collection-gap-expected-run)이 전담 — 28h 룰은 오발하지 않아야 함.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
@@ -97,82 +91,10 @@ tests:
         exp_alerts: []
 
   # ===========================================================================
-  # 룰 8: collector-collection-gap-overseas — 100h 무억제
-  # SPEC-OBSV-BATCH-COVERAGE-001 AC-4 / AC-5 / AC-6 / REQ-007 / REQ-008
+  # [REMOVED 2026-07-12, SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-022/027] 룰 8
+  # (collector-collection-gap-overseas, 100h)의 T16~T20을 삭제 — 대상 배치
+  # (overseas-daily/overseas-shortsale-daily)는 collector-collection-gap-expected-run이 대체.
   # ===========================================================================
-  # 시리즈 길이: 101h5m = 363900s → N = 363900/30 = 12130
-
-  # T16. [발화] overseas-daily stale>100h → 발화(게이트 무관).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '0+0x12130'
-    alert_rule_test:
-      - eval_time: 101h5m
-        groupname: collector-collection-gap-overseas
-        alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: overseas-daily
-              tier: TICKET
-            exp_annotations:
-              summary: "해외 배치 신선도 갭 — overseas-daily > 100h 미적재"
-              description: "해외(미국) MON-FRI 배치 overseas-daily 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-007/008)."
-
-  # T17. [발화] overseas-shortsale-daily stale>100h → 발화(게이트 무관).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-shortsale-daily"}'
-        values: '0+0x12130'
-    alert_rule_test:
-      - eval_time: 101h5m
-        groupname: collector-collection-gap-overseas
-        alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: overseas-shortsale-daily
-              tier: TICKET
-            exp_annotations:
-              summary: "해외 배치 신선도 갭 — overseas-shortsale-daily > 100h 미적재"
-              description: "해외(미국) MON-FRI 배치 overseas-shortsale-daily 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-007/008)."
-
-  # T18. [무발화] overseas-daily 정상 주말 갭(73h) — 100h 임계 미초과, 미발화(AC-5).
-  # 73h = 73*3600/30 = 8760 steps
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '0+0x8770'
-    alert_rule_test:
-      - eval_time: 73h5m
-        groupname: collector-collection-gap-overseas
-        alertname: CollectorBatchStale
-        exp_alerts: []
-
-  # T19. [무발화] overseas-daily 3일 연휴 갭(97h) — 100h 임계 미초과, 미발화(AC-5).
-  # 97h = 97*3600/30 = 11640 steps
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '0+0x11650'
-    alert_rule_test:
-      - eval_time: 97h5m
-        groupname: collector-collection-gap-overseas
-        alertname: CollectorBatchStale
-        exp_alerts: []
-
-  # T20. [absent 억제] overseas-daily last_load 시계열 부재 → 미발화(AC-6 / REQ-010).
-  #      `time()-absent`가 빈 벡터 → 구조적 억제.
-  - interval: 30s
-    input_series: []
-    alert_rule_test:
-      - eval_time: 101h5m
-        groupname: collector-collection-gap-overseas
-        alertname: CollectorBatchStale
-        exp_alerts: []
 
   # ===========================================================================
   # 룰 11: collector-collection-gap-news — 1h + 장중 게이트

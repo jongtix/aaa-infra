@@ -96,6 +96,10 @@ groups:
   #   domestic-invest-opinion. 신규 Module E 라벨(extended-hours/corp-code/dart-backfill) 제외
   #   — 전용 그룹(아래)에서 별도 임계로 처리하므로 기본 28h 룰과 이중 발화하지 않도록 필터.
   #   overseas-news/overseas-rights는 기존 `overseas-.*` 패턴에 이미 포함되어 자동 제외.
+  # [SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-020/021] 추가 제외: 게이트-레거시 3배치
+  #   (domestic-daily/market-indicators/dart-disclosure — 워터마크가 데이터 신선도를 이미 커버,
+  #   실행 감시에서만 제거) + watchlist-sync-krx(라벨 무관 예상-실행 모델로 재분류,
+  #   그룹 collector-collection-gap-expected-run이 대체).
   # ---------------------------------------------------------------------------
   - name: collector-collection-gap
     interval: 30s
@@ -109,12 +113,14 @@ groups:
       #   중복이 된 라벨(domestic-supply-investor/credit-balance/short-sale, macro-external,
       #   domestic-invest-opinion) + 신규 Module E 라벨(extended-hours/corp-code/dart-backfill, 전용
       #   그룹에서 별도 처리).
+      # [SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-020/021] 추가 제외: domestic-daily/market-indicators/
+      #   dart-disclosure(게이트-레거시, 실행 감시 제거)·watchlist-sync-krx(예상-실행 모델로 재분류).
       # [유지보수] aaa-collector에 신규 스케줄러 추가 시:
       #   기본 28h+gate 임계 → 이 필터 변경 불필요.
       #   커스텀 임계(100h/18d/8d/1h 등) → 이 정규식에 추가 AND 별도 그룹 생성. 누락 시 오발.
       - alert: CollectorBatchStale
         expr: |
-          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours|corp-code|dart-backfill"}) > 28 * 3600)
+          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours|corp-code|dart-backfill|domestic-daily|market-indicators|dart-disclosure|watchlist-sync-krx"}) > 28 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
         labels:
@@ -220,55 +226,13 @@ groups:
           action: "collector 로그(해당 alias 재연결) → 구독 수·틱 수신 정상 여부 확인"
 
   # ---------------------------------------------------------------------------
-  # 그룹 5: 해외(미국) 일봉·공매도 Daily stale — 100h 무억제
-  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-007/008
-  # [SPEC-OBSV-WATERMARK-001] daily-ohlcv-us(overseas-daily)는 워터마크 PAGE 룰과 이중 안전망으로 유지.
-  #   short-sale-overseas-daily(overseas-shortsale-daily)는 워터마크 신선도 O-1 잔여(aaa-infra#77 미해소)라
-  #   본 그룹이 유일한 감시망 — 활성 유지 필수(REQ-WM-017 §4.2).
+  # [REMOVED 2026-07-12, SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-022/§8.2] 구 그룹 5
+  # (collector-collection-gap-overseas, 100h, overseas-daily/overseas-shortsale-daily)와
+  # 구 그룹 6(collector-collection-gap-overseas-interest, 18d, overseas-shortsale-interest)를
+  # collector-collection-gap-expected-run(라벨 무관 단일 룰, REQ-XR-019)이 대체 — §8.1 확인
+  # 게이트(count(expected_run)==enrolled, ≥24h 연속) 충족 확인 후 제거. overseas-shortsale-daily/
+  # -interest는 §7 유일-안전망 4배치이므로 §8.2 순서(추가→검증→제거)를 준수해 제거함.
   # ---------------------------------------------------------------------------
-  # overseas-daily(OverseasDailyOhlcvScheduler, MON-FRI 16:30 ET) +
-  # overseas-shortsale-daily(ShortSaleOverseasScheduler, MON-FRI 10:00 ET)
-  # MON-FRI 잡이라 국내 market_open 억제가 주말 커버 불가 → 무억제.
-  # 100h = 정상 주말 갭(72h) + 미국 3일 연휴 최대 갭(96h) + 마진 4h.
-  # absent 시 `time()-absent`가 빈 벡터 → REQ-010 구조적 억제.
-  - name: collector-collection-gap-overseas
-    interval: 30s
-    rules:
-      - alert: CollectorBatchStale
-        expr: |
-          (time() - aaa_collector_batch_last_load_seconds{batch=~"overseas-daily|overseas-shortsale-daily"}) > 100 * 3600
-        for: 5m
-        labels:
-          severity: warning
-          component: collector
-          tier: TICKET
-        annotations:
-          summary: "해외 배치 신선도 갭 — {{ $labels.batch }} > 100h 미적재"
-          description: "해외(미국) MON-FRI 배치 {{ $labels.batch }} 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-007/008)."
-
-  # ---------------------------------------------------------------------------
-  # 그룹 6: 해외 공매도 잔고(반월) stale — 18d 무억제
-  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-009
-  # [SPEC-OBSV-WATERMARK-001 MI-01] short-sale-overseas-interest는 반월 주기라 워터마크 신선도 룰을
-  #   두지 않는다(§3) — 본 그룹이 유일한 감시망, 반드시 유지.
-  # ---------------------------------------------------------------------------
-  # overseas-shortsale-interest(ShortSaleOverseasScheduler Interest, 반월 미국장).
-  # FINRA Equity Short Interest 공시 주기 ~15~16일 + 공시 지연 마진 → 18d.
-  # absent 시 구조적 억제(REQ-010).
-  - name: collector-collection-gap-overseas-interest
-    interval: 30s
-    rules:
-      - alert: CollectorBatchStale
-        expr: |
-          (time() - aaa_collector_batch_last_load_seconds{batch="overseas-shortsale-interest"}) > 18 * 24 * 3600
-        for: 5m
-        labels:
-          severity: warning
-          component: collector
-          tier: TICKET
-        annotations:
-          summary: "해외 공매도 잔고 신선도 갭 — overseas-shortsale-interest > 18d 미적재"
-          description: "FINRA 반월 공매도 잔고 마지막 적재 후 18일 초과 경과(반월 주기 15~16일 + 공시 지연 마진). 게이트 억제 없음(REQ-009)."
 
   # ---------------------------------------------------------------------------
   # 그룹 7: 국내 주간 배치 stale — 8d + 장중 게이트
@@ -369,50 +333,14 @@ groups:
           description: "US 세션 중(us_market_open==1, holiday_count>=20) 해외 뉴스 배치 10분 주기 수집이 1h 이상 중단됨(REQ-WM-024)."
 
   # ---------------------------------------------------------------------------
-  # 그룹 9b: MON-FRI 무게이트 100h 배치 — overseas-rights + extended-hours(신규, REQ-WM-024)
+  # [REMOVED 2026-07-12, SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-022/§8.2] 구 그룹 9b
+  # (collector-collection-gap-nogate-100h, 100h, overseas-rights/extended-hours)와
+  # 구 그룹 9c(collector-collection-gap-nogate-28h, 28h, corp-code/dart-backfill)를
+  # collector-collection-gap-expected-run(라벨 무관 단일 룰, REQ-XR-019)이 대체. extended-hours-pre/
+  # -after는 REQ-XR-014로 레지스트리에 개별 편입되어 그룹9b의 공유 100h 블랭킷 임계보다 정밀한
+  # 배치별 마진(§9)으로 감시된다 — 기능 손실 없음. overseas-rights는 §7 유일-안전망 4배치이므로
+  # §8.2 순서(추가→검증→제거)를 준수해 제거함.
   # ---------------------------------------------------------------------------
-  # overseas-rights(OverseasRightsScheduler, ET 일1회 17:00 MON-FRI) — corporate_events 기록,
-  #   워터마크 대상 아님(이벤트성, Exclusion 1) — 본 룰이 유일한 감시망.
-  # extended-hours(ExtendedHoursScheduler pre+after 공유 라벨, ET 10:00/20:30 MON-FRI) — 실행 신선도
-  #   백스톱(REQ-WM-013). 데이터 신선도는 워터마크 시리즈 extended-hours-pre/after(즉시형 6h)가 별도 추적하며,
-  #   본 룰은 "스케줄러 자체가 실행됐는가"를 감시하는 독립 안전망(제거 불변식과 무관하게 유지, REQ-WM-013).
-  # MON-FRI 잡이라 국내 market_open 억제가 주말 커버 불가 → 무억제(그룹5 100h와 동일 클래스).
-  - name: collector-collection-gap-nogate-100h
-    interval: 30s
-    rules:
-      - alert: CollectorBatchStale
-        expr: |
-          (time() - aaa_collector_batch_last_load_seconds{batch=~"overseas-rights|extended-hours"}) > 100 * 3600
-        for: 5m
-        labels:
-          severity: warning
-          component: collector
-          tier: TICKET
-        annotations:
-          summary: "무게이트 배치 신선도 갭 — {{ $labels.batch }} > 100h 미적재"
-          description: "MON-FRI 배치 {{ $labels.batch }} 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-WM-024)."
-
-  # ---------------------------------------------------------------------------
-  # 그룹 9c: 매일 무게이트 28h 배치 — corp-code + dart-backfill(신규, REQ-WM-024)
-  # ---------------------------------------------------------------------------
-  # corp-code(CorpCodeUpdateScheduler, KST 매일 07:30) — DART corp_code 매핑, 시계열 아님(MI-07).
-  # dart-backfill(DartDisclosureBackfillScheduler, KST 매일 04:30) — disclosures 테이블에 과거 날짜만
-  #   기록(forward-only watermark라 dart-disclosure와 이중 writer 안전, REQ-WM-013 MA-03).
-  # 매일 잡이라 주말 갭 없음(watchlist-sync-us 그룹9 클래스와 동일) → 28h 무게이트.
-  - name: collector-collection-gap-nogate-28h
-    interval: 30s
-    rules:
-      - alert: CollectorBatchStale
-        expr: |
-          (time() - aaa_collector_batch_last_load_seconds{batch=~"corp-code|dart-backfill"}) > 28 * 3600
-        for: 5m
-        labels:
-          severity: warning
-          component: collector
-          tier: TICKET
-        annotations:
-          summary: "무게이트 배치 신선도 갭 — {{ $labels.batch }} > 28h 미적재"
-          description: "매일 배치 {{ $labels.batch }} 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
 
   # ---------------------------------------------------------------------------
   # 그룹 W1: 워터마크 데드맨 스위치 — REQ-WM-016

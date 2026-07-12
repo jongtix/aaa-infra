@@ -221,87 +221,18 @@ tests:
         alertname: CollectorBatchStale
         exp_alerts: []
 
-  # TI-WM-E-003. [발화] extended-hours stale>100h → 발화(게이트 무관).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="extended-hours"}'
-        values: '0+0x12130'
-    alert_rule_test:
-      - eval_time: 101h5m
-        groupname: collector-collection-gap-nogate-100h
-        alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: extended-hours
-              tier: TICKET
-            exp_annotations:
-              summary: "무게이트 배치 신선도 갭 — extended-hours > 100h 미적재"
-              description: "MON-FRI 배치 extended-hours 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-WM-024)."
-
-  # TI-WM-E-004. [발화] overseas-rights stale>100h → 발화(게이트 무관).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-rights"}'
-        values: '0+0x12130'
-    alert_rule_test:
-      - eval_time: 101h5m
-        groupname: collector-collection-gap-nogate-100h
-        alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: overseas-rights
-              tier: TICKET
-            exp_annotations:
-              summary: "무게이트 배치 신선도 갭 — overseas-rights > 100h 미적재"
-              description: "MON-FRI 배치 overseas-rights 마지막 적재 후 100h 초과 경과(정상 주말 72h·3일 연휴 96h + 마진 4h). 게이트 억제 없음(REQ-WM-024)."
-
-  # TI-WM-E-005. [발화] corp-code stale>28h → 발화(매일 잡, 게이트 무관).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="corp-code"}'
-        values: '0+0x3500'
-    alert_rule_test:
-      - eval_time: 29h
-        groupname: collector-collection-gap-nogate-28h
-        alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: corp-code
-              tier: TICKET
-            exp_annotations:
-              summary: "무게이트 배치 신선도 갭 — corp-code > 28h 미적재"
-              description: "매일 배치 corp-code 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
-
-  # TI-WM-E-006. [발화] dart-backfill stale>28h → 발화(매일 잡, 게이트 무관).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="dart-backfill"}'
-        values: '0+0x3500'
-    alert_rule_test:
-      - eval_time: 29h
-        groupname: collector-collection-gap-nogate-28h
-        alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: dart-backfill
-              tier: TICKET
-            exp_annotations:
-              summary: "무게이트 배치 신선도 갭 — dart-backfill > 28h 미적재"
-              description: "매일 배치 dart-backfill 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-WM-024)."
+  # ===========================================================================
+  # [REMOVED 2026-07-12, SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-022/027] TI-WM-E-003~006
+  # (collector-collection-gap-nogate-100h/-28h, extended-hours/overseas-rights/corp-code/
+  # dart-backfill)을 삭제 — 대상 배치는 collector-collection-gap-expected-run이 대체.
+  # ===========================================================================
 
   # ===========================================================================
   # 룰 XR-H: collector-collection-gap-expected-run — REQ-XR-019 (SPEC-COLLECTOR-EXPECTED-RUN-001 M2)
   # ===========================================================================
-  # [HARD ADD-only] 아래 케이스는 신규 그룹 전용이며 기존 그룹2/5/6/9b/9c 등 케이스를 대체하지 않는다.
-  # 조건은 (i) last_load < expected_run 와 (ii) time()-expected_run-run_margin > 0 를 동시에 요구한다.
+  # [2026-07-12 REQ-XR-022 컷오버 완료] 신규 그룹이 구 그룹5/6/9b/9c 및 그룹2의 게이트-레거시
+  # 3배치+watchlist-sync-krx 해당분을 대체 완료(§8.1/§8.2 확인). 조건은 (i) last_load < expected_run
+  # 와 (ii) time()-expected_run-run_margin > 0 를 동시에 요구한다.
 
   # TI-XR-H-001. [발화] last_load=0(미완료) + expected_run=1000 + margin=3600 → 6h 시점 (i)/(ii) 둘 다 참 → 발화.
   - interval: 30s
