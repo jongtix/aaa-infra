@@ -47,6 +47,7 @@ tests:
             exp_annotations:
               summary: "collector 스크랩 실패(다운) — 90s 연속"
               description: "VictoriaMetrics가 collector /actuator/prometheus 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
+              action: "ssh nas-ugreen \"docker ps -a | grep collector\" → 컨테이너 기동·재시작 상태와 collector 파일 로그 확인"
 
   # T2. up==1(정상) → 미발화.
   - interval: 30s
@@ -81,8 +82,9 @@ tests:
               batch: news
               tier: TICKET
             exp_annotations:
-              summary: "배치 신선도 갭 — news > 28h 미적재"
-              description: "장중(market_open==1) 배치 news 마지막 적재 후 28h 초과 경과. 휴장 시 억제됨."
+              summary: "일일 배치 수집 중단 — news 28시간 초과 미적재"
+              description: "일 1회 배치 news의 마지막 적재 후 28시간 초과 경과 — 새 데이터 유입 중단. 장중에만 판정하며 휴장 시 억제됨."
+              action: "collector 로그(news 실행 오류) → KIS 호출 실패·스케줄 누락 확인"
 
   # T7. 동일 갭이지만 market_open==0(휴장) → 억제(미발화).
   - interval: 30s
@@ -203,8 +205,9 @@ tests:
               batch: overseas-news
               tier: TICKET
             exp_annotations:
-              summary: "해외 뉴스 배치 신선도 갭 — overseas-news > 1h 미적재"
-              description: "US 세션 중(us_market_open==1, holiday_count>=20) 해외 뉴스 배치 10분 주기 수집이 1h 이상 중단됨(REQ-WM-024)."
+              summary: "해외 뉴스 수집 중단 — 1시간 초과"
+              description: "미국장 세션 중 10분 주기 해외 뉴스 수집이 1시간 이상 중단. 미장 마감 중엔 억제됨."
+              action: "collector 로그(overseas-news 오류) → KIS 해외 뉴스 API 응답·키 상태 확인"
 
   # TI-WM-E-002. [무발화] overseas-news stale>1h 이지만 us_market_open==0(장외) → 억제.
   - interval: 30s
@@ -254,8 +257,9 @@ tests:
               batch: overseas-daily
               tier: TICKET
             exp_annotations:
-              summary: "예상 실행 신선도 갭 — overseas-daily 직전 슬롯 미완료"
-              description: "배치 overseas-daily의 cron 예상 실행 슬롯 + 마진이 경과했으나 마지막 적재(last_load)가 그 슬롯 이전에 머묾. collector 배치 로그·CatchUpRunner 재실행 여부를 확인할 것(REQ-XR-019)."
+              summary: "배치 예정 실행 미완료 — overseas-daily"
+              description: "배치 overseas-daily의 예정 실행 시각 + 허용 마진이 경과했으나 완료 기록 없음 — 실행 실패 또는 스케줄 누락."
+              action: "collector 로그(overseas-daily 실행·오류) → CatchUpRunner 재실행 여부·KIS 호출 실패 확인"
 
   # TI-XR-H-002. [무발화] last_load(100000) >= expected_run(1000) → (i) 거짓 → 미발화(직전 슬롯 성공 완료).
   - interval: 30s
@@ -307,8 +311,9 @@ tests:
               component: collector
               tier: PAGE
             exp_annotations:
-              summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled"
-              description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
+              summary: "배치 실행 감시 지표 전체 소실"
+              description: "배치 예정 실행 감시 지표(expected_run/enrolled)가 10분 이상 전부 사라짐 — 이 동안 모든 배치의 실행 감시가 무력화됨."
+              action: "collector 컨테이너 기동 상태 → /actuator/prometheus에서 aaa_collector_batch_expected_run_seconds 노출 확인"
 
   # TI-XR-I-002. [무발화, 총-소실] 둘 다 존재 → 미발화.
   - interval: 30s
@@ -344,8 +349,9 @@ tests:
               component: collector
               tier: PAGE
             exp_annotations:
-              summary: "예상 실행 시계열 개수 부족 — 3 < enrolled"
-              description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
+              summary: "배치 실행 감시 지표 일부 누락 — 3개만 노출"
+              description: "감시에 등록된 배치 수(enrolled)보다 노출된 예정 실행 지표가 적은 상태가 10분 이상 지속 — 누락된 배치는 실행이 멈춰도 알림이 오지 않음."
+              action: "/actuator/prometheus에서 expected_run의 batch 라벨과 등록 목록 대조 → 누락 배치 식별"
 
   # TI-XR-I-004. [무발화, 부분-소실] expected_run 3개 시계열 == enrolled(3) → count==enrolled → 미발화.
   - interval: 30s
@@ -383,8 +389,9 @@ tests:
               batch: overseas-split
               tier: TICKET
             exp_annotations:
-              summary: "예상 실행-완료 짝 누락 — overseas-split last_load 무기록"
-              description: "배치 overseas-split가 레지스트리에 편입되어 expected_run은 있으나 last_load를 26시간 동안 한 번도 stamp하지 않음. 신규 편입 배치의 첫 실행 여부·스케줄러 배선을 확인할 것(REQ-XR-025)."
+              summary: "배치 첫 실행 기록 없음 — overseas-split"
+              description: "배치 overseas-split의 감시 등록 후 26시간 동안 완료 기록이 한 번도 없음 — 신규 배치의 스케줄 미배선 또는 첫 실행 실패."
+              action: "collector 로그(overseas-split 스케줄 등록·실행) → 스케줄러 배선·cron 확인"
 
   # TI-XR-I-006. [무발화, pair-missing] 동일 배치에 expected_run·last_load 둘 다 존재 → 미발화.
   - interval: 30s

@@ -87,6 +87,7 @@ groups:
         annotations:
           summary: "collector 스크랩 실패(다운) — 90s 연속"
           description: "VictoriaMetrics가 collector /actuator/prometheus 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
+          action: "ssh nas-ugreen \"docker ps -a | grep collector\" → 컨테이너 기동·재시작 상태와 collector 파일 로그 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 2: 수집 미달/정지 — 장중 게이트 ANDing(휴장 억제)
@@ -128,8 +129,9 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "배치 신선도 갭 — {{ $labels.batch }} > 28h 미적재"
-          description: "장중(market_open==1) 배치 {{ $labels.batch }} 마지막 적재 후 28h 초과 경과. 휴장 시 억제됨."
+          summary: "일일 배치 수집 중단 — {{ $labels.batch }} 28시간 초과 미적재"
+          description: "일 1회 배치 {{ $labels.batch }}의 마지막 적재 후 28시간 초과 경과 — 새 데이터 유입 중단. 장중에만 판정하며 휴장 시 억제됨."
+          action: "collector 로그({{ $labels.batch }} 실행 오류) → KIS 호출 실패·스케줄 누락 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 3: 국장 휴장일 캘린더 건강 — 억제·collector-down과 독립 발화(REQ-046)
@@ -257,8 +259,9 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "주간 배치 신선도 갭 — {{ $labels.batch }} > 8d 미적재"
-          description: "장중(market_open==1) 주간 배치 {{ $labels.batch }} 마지막 적재 후 8일(7일 주기 + 마진 1일) 초과 경과. 휴장 시 억제됨(REQ-005)."
+          summary: "주간 배치 수집 중단 — {{ $labels.batch }} 8일 초과 미적재"
+          description: "주 1회 배치 {{ $labels.batch }}의 마지막 적재 후 8일(주기 7일 + 마진 1일) 초과 경과 — 새 데이터 유입 중단. 휴장 시 억제됨."
+          action: "collector 로그(토·월 아침 주간 배치 실행분) → 실행 여부·KIS 오류 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 8: 국내 뉴스 배치 stale — 1h + 장중 게이트
@@ -283,8 +286,9 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "뉴스 배치 신선도 갭 — domestic-news > 1h 미적재"
-          description: "장중(market_open==1) 뉴스 배치 10분 주기 수집이 1h 이상 중단됨. 휴장 시 억제됨(REQ-006)."
+          summary: "국내 뉴스 수집 중단 — 1시간 초과"
+          description: "장중 10분 주기 국내 뉴스 수집이 1시간 이상 중단(연속 6회 실패 상당). 휴장 시 억제됨."
+          action: "collector 로그(domestic-news 오류) → KIS 뉴스 API 응답·키 상태 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 9: 미국 관심종목 동기화 stale — 28h 무억제(무게이트)
@@ -306,8 +310,9 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "미국 관심종목 동기화 신선도 갭 — watchlist-sync-us > 28h 미적재"
-          description: "미국 관심종목 동기화(매일 ET 08:50) 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-013)."
+          summary: "미국 관심종목 동기화 중단 — 28시간 초과"
+          description: "매일 ET 08:50 실행되는 미국 관심종목 동기화의 마지막 적재 후 28시간 초과 경과. 매일 잡이라 주말 갭 없음(휴장 억제 없음)."
+          action: "collector 로그(watchlist-sync-us 실행분) → 실행 여부·KIS 오류 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 9a: 해외 뉴스 실행 신선도 — 1h + US 세션 게이트(신규, REQ-WM-024)
@@ -329,8 +334,9 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "해외 뉴스 배치 신선도 갭 — overseas-news > 1h 미적재"
-          description: "US 세션 중(us_market_open==1, holiday_count>=20) 해외 뉴스 배치 10분 주기 수집이 1h 이상 중단됨(REQ-WM-024)."
+          summary: "해외 뉴스 수집 중단 — 1시간 초과"
+          description: "미국장 세션 중 10분 주기 해외 뉴스 수집이 1시간 이상 중단. 미장 마감 중엔 억제됨."
+          action: "collector 로그(overseas-news 오류) → KIS 해외 뉴스 API 응답·키 상태 확인"
 
   # ---------------------------------------------------------------------------
   # [REMOVED 2026-07-12, SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-022/§8.2] 구 그룹 9b
@@ -1100,8 +1106,9 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "예상 실행 신선도 갭 — {{ $labels.batch }} 직전 슬롯 미완료"
-          description: "배치 {{ $labels.batch }}의 cron 예상 실행 슬롯 + 마진이 경과했으나 마지막 적재(last_load)가 그 슬롯 이전에 머묾. collector 배치 로그·CatchUpRunner 재실행 여부를 확인할 것(REQ-XR-019)."
+          summary: "배치 예정 실행 미완료 — {{ $labels.batch }}"
+          description: "배치 {{ $labels.batch }}의 예정 실행 시각 + 허용 마진이 경과했으나 완료 기록 없음 — 실행 실패 또는 스케줄 누락."
+          action: "collector 로그({{ $labels.batch }} 실행·오류) → CatchUpRunner 재실행 여부·KIS 호출 실패 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 XR-I: 예상 실행 데드맨 3종(SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-023/024/025, Module I, DP-6)
@@ -1124,8 +1131,9 @@ groups:
           component: collector
           tier: PAGE
         annotations:
-          summary: "예상 실행 시계열 전체 소실 — expected_run/enrolled"
-          description: "aaa_collector_batch_expected_run_seconds 또는 aaa_collector_batch_enrolled 시계열이 10분 이상 전체 부재. collector 배포 상태·부팅 시 eager 등록(REQ-XR-031)을 즉시 확인할 것(REQ-XR-023)."
+          summary: "배치 실행 감시 지표 전체 소실"
+          description: "배치 예정 실행 감시 지표(expected_run/enrolled)가 10분 이상 전부 사라짐 — 이 동안 모든 배치의 실행 감시가 무력화됨."
+          action: "collector 컨테이너 기동 상태 → /actuator/prometheus에서 aaa_collector_batch_expected_run_seconds 노출 확인"
 
       # 부분-소실(REQ-XR-024): 관측 시계열 수 < 레지스트리 자기-보고 크기(enrolled).
       # [설계 개선] 워터마크 데드맨(그룹 W1)의 하드코딩 임계 17(MI-05 유지보수 함정)과 달리, 이 룰은
@@ -1140,8 +1148,9 @@ groups:
           component: collector
           tier: PAGE
         annotations:
-          summary: "예상 실행 시계열 개수 부족 — {{ $value }} < enrolled"
-          description: "aaa_collector_batch_expected_run_seconds 노출 시계열 수가 레지스트리 크기(enrolled) 미만으로 10분 이상 지속. 어떤 배치 라벨이 누락됐는지 즉시 대조할 것(REQ-XR-024)."
+          summary: "배치 실행 감시 지표 일부 누락 — {{ $value }}개만 노출"
+          description: "감시에 등록된 배치 수(enrolled)보다 노출된 예정 실행 지표가 적은 상태가 10분 이상 지속 — 누락된 배치는 실행이 멈춰도 알림이 오지 않음."
+          action: "/actuator/prometheus에서 expected_run의 batch 라벨과 등록 목록 대조 → 누락 배치 식별"
 
       # pair-missing(REQ-XR-025): 편입은 됐으나(expected_run 있음) last_load를 한 번도 stamp한 적 없는 배치.
       #   주 실행 신선도 룰(그룹 XR-H)은 이 경우 존재하지 않는 시계열 비교로 빈 벡터를 산출해 침묵하므로
@@ -1156,5 +1165,6 @@ groups:
           component: collector
           tier: TICKET
         annotations:
-          summary: "예상 실행-완료 짝 누락 — {{ $labels.batch }} last_load 무기록"
-          description: "배치 {{ $labels.batch }}가 레지스트리에 편입되어 expected_run은 있으나 last_load를 26시간 동안 한 번도 stamp하지 않음. 신규 편입 배치의 첫 실행 여부·스케줄러 배선을 확인할 것(REQ-XR-025)."
+          summary: "배치 첫 실행 기록 없음 — {{ $labels.batch }}"
+          description: "배치 {{ $labels.batch }}의 감시 등록 후 26시간 동안 완료 기록이 한 번도 없음 — 신규 배치의 스케줄 미배선 또는 첫 실행 실패."
+          action: "collector 로그({{ $labels.batch }} 스케줄 등록·실행) → 스케줄러 배선·cron 확인"

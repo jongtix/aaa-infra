@@ -45,8 +45,9 @@ tests:
               batch: domestic-financial-ratio
               tier: TICKET
             exp_annotations:
-              summary: "주간 배치 신선도 갭 — domestic-financial-ratio > 8d 미적재"
-              description: "장중(market_open==1) 주간 배치 domestic-financial-ratio 마지막 적재 후 8일(7일 주기 + 마진 1일) 초과 경과. 휴장 시 억제됨(REQ-005)."
+              summary: "주간 배치 수집 중단 — domestic-financial-ratio 8일 초과 미적재"
+              description: "주 1회 배치 domestic-financial-ratio의 마지막 적재 후 8일(주기 7일 + 마진 1일) 초과 경과 — 새 데이터 유입 중단. 휴장 시 억제됨."
+              action: "collector 로그(토·월 아침 주간 배치 실행분) → 실행 여부·KIS 오류 확인"
 
   # T24. [발화] domestic-etf-representative stale>8d AND market_open==1 → 발화.
   - interval: 30s
@@ -66,8 +67,9 @@ tests:
               batch: domestic-etf-representative
               tier: TICKET
             exp_annotations:
-              summary: "주간 배치 신선도 갭 — domestic-etf-representative > 8d 미적재"
-              description: "장중(market_open==1) 주간 배치 domestic-etf-representative 마지막 적재 후 8일(7일 주기 + 마진 1일) 초과 경과. 휴장 시 억제됨(REQ-005)."
+              summary: "주간 배치 수집 중단 — domestic-etf-representative 8일 초과 미적재"
+              description: "주 1회 배치 domestic-etf-representative의 마지막 적재 후 8일(주기 7일 + 마진 1일) 초과 경과 — 새 데이터 유입 중단. 휴장 시 억제됨."
+              action: "collector 로그(토·월 아침 주간 배치 실행분) → 실행 여부·KIS 오류 확인"
 
   # T25. [휴장 억제] domestic-financial-ratio stale>8d 이지만 market_open==0 → 억제(AC-3).
   - interval: 30s

@@ -122,8 +122,9 @@ tests:
               batch: domestic-news
               tier: TICKET
             exp_annotations:
-              summary: "뉴스 배치 신선도 갭 — domestic-news > 1h 미적재"
-              description: "장중(market_open==1) 뉴스 배치 10분 주기 수집이 1h 이상 중단됨. 휴장 시 억제됨(REQ-006)."
+              summary: "국내 뉴스 수집 중단 — 1시간 초과"
+              description: "장중 10분 주기 국내 뉴스 수집이 1시간 이상 중단(연속 6회 실패 상당). 휴장 시 억제됨."
+              action: "collector 로그(domestic-news 오류) → KIS 뉴스 API 응답·키 상태 확인"
 
   # T28. [휴장 억제] domestic-news stale>1h 이지만 market_open==0 → 억제(AC-3).
   - interval: 30s
@@ -171,8 +172,9 @@ tests:
               batch: watchlist-sync-us
               tier: TICKET
             exp_annotations:
-              summary: "미국 관심종목 동기화 신선도 갭 — watchlist-sync-us > 28h 미적재"
-              description: "미국 관심종목 동기화(매일 ET 08:50) 마지막 적재 후 28h 초과 경과. 매일 잡이라 주말 갭 없음. 게이트 억제 없음(REQ-013)."
+              summary: "미국 관심종목 동기화 중단 — 28시간 초과"
+              description: "매일 ET 08:50 실행되는 미국 관심종목 동기화의 마지막 적재 후 28시간 초과 경과. 매일 잡이라 주말 갭 없음(휴장 억제 없음)."
+              action: "collector 로그(watchlist-sync-us 실행분) → 실행 여부·KIS 오류 확인"
 
   # T31. [무발화] watchlist-sync-us stale<28h → 미발화(정상 24h 주기 허용).
   # 25h: eval_time=25h5m, 25h < 28h → 미발화
