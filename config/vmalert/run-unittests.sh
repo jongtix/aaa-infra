@@ -11,7 +11,7 @@
 #   ./run-unittests.sh              # 커버리지 대조 + 전체 샤드 병렬
 #   ./run-unittests.sh core ops     # 지정 샤드만(파일명의 rules_test_<이름>.yaml 부분)
 set -u
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 # vmalert-tool 버전을 하드코딩하지 않고 docker-compose.yml의 vmalert 이미지 태그에서
 # 파싱한다(vmalert-tool과 vmalert는 VictoriaMetrics 동일 릴리스로 버전을 공유).

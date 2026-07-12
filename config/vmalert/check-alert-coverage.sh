@@ -10,7 +10,7 @@
 #      "안 떴으니 통과"로 처리하므로, 오타/리네임 시 테스트가 조용히 무의미해진다.
 # 종료 코드: 죽은 참조 또는 허용 목록 밖 미커버 룰 발견 시 1.
 set -u
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 # 의도적 미커버(2026-07-11 기준): W2 신선도 자매 룰 — 동일 표현식 패턴을
 # StaleDomesticDaily/StaleInvestorTrend/StaleDisclosures/StaleVix 테스트가 대표 커버.
@@ -32,7 +32,7 @@ fail=0
 
 if [ -n "$deadrefs" ]; then
   echo "[FAIL] 존재하지 않는 룰을 참조하는 테스트(리네임/오타 의심):"
-  echo "$deadrefs" | sed 's/^/  - /'
+  while IFS= read -r ref; do echo "  - $ref"; done <<< "$deadrefs"
   fail=1
 fi
 
