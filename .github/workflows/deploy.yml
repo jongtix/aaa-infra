@@ -2,7 +2,8 @@
 # self-hosted job은 pull_request 트리거를 갖지 않는다(REQ-CD-001 부정절 — fork-PR 보호).
 #
 # T-003 골격: 가드 → 체크아웃(tarball fallback) → env 파싱 안전장치 → per-file diff → 백업.
-# 서비스별 반영(T-004)·헬스 검증/복원/통지(T-005)는 아래 TODO 스텁으로 남겨둔다.
+# T-004: 서비스별 최소 반영(.github/deploy/reflect.sh) 배선 완료.
+# 헬스 검증/복원/통지(T-005)는 아래 TODO 스텁으로 남겨둔다.
 name: Deploy
 
 on:
@@ -119,28 +120,41 @@ jobs:
           source .github/deploy/lib.sh
           prune_backup_retention "$AAA_SSD_BASE/backups/cicd" 10
 
-      # TODO: T-004 — 서비스별 최소 반영 로직(.github/deploy/reflect.sh 신설 예정).
-      # rules.yml/alertmanager.yml/vector.yaml → docker restart, scrape.yml → VM SIGHUP(재시작 금지),
-      # docker-compose.yml diff → 관측 서비스 목록 자기 블록 한정 `up -d --wait --no-deps` vs
-      # 공유 top-level/collector/analyzer 블록 → 스킵+통지(REQ-CD-013A). DB 무재시작 불변식
-      # (mysql/redis never recreate, config diff notify-only, users.acl 무접근)도 이 단계에서 구현.
-      # REQ-CD-009~017, REQ-CD-013A.
-      - name: "[TODO T-004] Reflect changes to NAS services"
+      - name: Reflect changes to NAS services
+        # T-004: 서비스별 최소 반영(.github/deploy/reflect.sh). rules.yml/alertmanager.yml/
+        # vector.yaml → docker restart, scrape.yml → VM SIGHUP(재시작 금지), docker-compose.yml
+        # diff → 관측 서비스 목록 자기 블록 한정 `up -d --wait --no-deps` vs 공유 top-level/
+        # collector/analyzer 블록 → 스킵+통지(REQ-CD-013A). DB 무재시작 불변식(mysql/redis
+        # never recreate, config diff notify-only, users.acl 무접근)도 reflect.sh가 구현.
+        # REQ-CD-009~017, REQ-CD-013A. wait-timeout=180은 DP-1 잠정값(collector 선례 flat
+        # 180s) — 관측 서비스 동시 재기동 NAS 실측 후 조정 예정(spec.md §8 DP-1).
+        id: reflect
         if: steps.diff.outputs.has_changes == 'true'
         run: |
-          echo "[TODO] T-004에서 구현 예정 — 서비스별 최소 반영(.github/deploy/reflect.sh)"
+          set -u
+          source .github/deploy/lib.sh
+          source .github/deploy/reflect.sh
+          result=$(reflect_deploy "${{ steps.diff.outputs.files }}" "$GITHUB_WORKSPACE" "$AAA_INFRA_DIR" "$AAA_SSD_BASE" 180)
+          echo "$result"
+          {
+            echo "result<<REFLECT_RESULT_EOF"
+            echo "$result"
+            echo "REFLECT_RESULT_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # TODO: T-005 — 배포 후 헬스 검증(.github/deploy/verify.sh)·실패 시 백업 복원
-      # (.github/deploy/rollback.sh)·통지. REQ-CD-018(compose --wait 게이팅)/018A(vmalert·
+      # (.github/deploy/rollback.sh)·통지. steps.reflect.outputs.result의 UP:/RESTART:/
+      # SIGHUP:/NOTIFY: 라인을 소비해 REQ-CD-018(compose --wait 게이팅)/018A(vmalert·
       # alertmanager health-status 폴링)/018B(vector running+grace period)/019(실패 시 복원+통지,
-      # "자동복원됨" vs "수동개입 필요" 구분)/020(성공+DB skip 시 대기 항목 통지).
+      # "자동복원됨" vs "수동개입 필요" 구분)/020(성공+DB skip 시 대기 항목 통지)을 구현한다.
       - name: "[TODO T-005] Post-deploy health verification"
         if: steps.diff.outputs.has_changes == 'true'
         run: |
           echo "[TODO] T-005에서 구현 예정 — 헬스 검증(.github/deploy/verify.sh)"
 
       - name: "[TODO T-005] Notify hook stub (success / DB notify-only pending items)"
-        # 실제 telegram_notify 호출 배선은 T-005 몫이다. 지금은 스텁만 남겨 훅 지점을 표시한다.
+        # 실제 telegram_notify 호출 배선(steps.reflect.outputs.result의 NOTIFY: 라인 소비)은
+        # T-005 몫이다. 지금은 스텁만 남겨 훅 지점을 표시한다.
         if: steps.diff.outputs.has_changes == 'true'
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
