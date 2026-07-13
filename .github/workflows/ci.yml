@@ -143,16 +143,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: shellcheck (scripts/*.sh, config/vmalert/*.sh, .github/deploy/*.sh)
+      - name: shellcheck (scripts/*.sh, config/vmalert/*.sh)
         # -S warning: error+warning 등급을 게이트(info/style은 제외). 기존 스크립트의
         # SC2164(cd 실패 미처리)·SC2001(style)은 선행 커밋에서 정리 완료.
-        # .github/deploy/*.sh는 T-002 산출물(존재 시에만 포함) — nullglob으로 없어도 실패하지 않음.
+        # 이 두 디렉토리는 파일 간 source 관계가 없어 -x(cross-file 추적) 불필요.
         run: |
           shopt -s nullglob
-          targets=(scripts/*.sh config/vmalert/*.sh .github/deploy/*.sh)
+          targets=(scripts/*.sh config/vmalert/*.sh)
           shopt -u nullglob
           if [ "${#targets[@]}" -eq 0 ]; then
             echo "[FAIL] shellcheck 대상 스크립트를 찾을 수 없음"
             exit 1
           fi
           docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -S warning "${targets[@]}"
+
+      - name: shellcheck (.github/deploy/*.sh)
+        # -x 필수: lib.sh를 여러 파일이 source하는 cross-file 구조라, 레포 루트에서
+        # 다중 파일 글롭으로 실행하면 -x를 줘도 cross-file 변수 추적이 안 되는
+        # shellcheck 한계가 있음(실측 확인, 2026-07-13) — 해당 디렉토리 안에서
+        # 단일 글롭으로 실행해야 -x가 올바르게 동작한다.
+        run: |
+          shopt -s nullglob
+          targets=(.github/deploy/*.sh)
+          shopt -u nullglob
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "[SKIP] .github/deploy/*.sh 없음"
+            exit 0
+          fi
+          cd .github/deploy
+          docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -S warning -x ./*.sh

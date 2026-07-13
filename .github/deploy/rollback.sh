@@ -33,10 +33,9 @@ restore_backup_files() {
   local backup_dir="$1" infra_dir="$2" ssd_base="$3"
   [ -d "$backup_dir" ] || return 1
 
-  local rel target failed=0 found=0
+  local rel target failed=0
   while IFS= read -r rel; do
     [ -z "$rel" ] && continue
-    found=1
     target=$(nas_target_path "$rel" "$infra_dir" "$ssd_base") || { failed=1; continue; }
     mkdir -p "$(dirname "$target")"
     if cp -p "$backup_dir/$rel" "$target" 2>/dev/null; then
