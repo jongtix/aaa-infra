@@ -1,5 +1,5 @@
 # =============================================================================
-# vmalert 룰 유닛테스트 — 수집 갭(단·중주기) — 28h 기본(룰7)·해외 100h(룰8)·뉴스 1h(룰11)·watchlist-us 28h(룰12)
+# vmalert 룰 유닛테스트 — 수집 갭(단·중주기) — 28h 기본(룰7)·뉴스 1h(룰11)·watchlist-us 28h(룰12)
 # SPEC-OBSV-BATCH-COVERAGE-001
 # =============================================================================
 # 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
@@ -8,8 +8,11 @@
 #     unittest --files=/rules/rules_test_gap_daily.yaml
 # rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
 #
-# [시간 모델] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
-#   "X시간 경과"는 last_update 계열을 0으로 두고 eval_time 을 X시간보다 크게 잡아 재현한다.
+# [시간 모델 — 음수 anchor] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
+#   룰이 `time() - last_load > 임계` 차이값 비교이므로, "X시간 경과"는 eval_time을 X까지
+#   감는 대신 last_load anchor를 -(임계+마진)으로 두고 eval_time은 for: 5m 충족에 필요한
+#   10m만 시뮬레이션한다(스텝 20개). t=0부터 조건이 이미 참이므로 eval_time=10m에 발화한다.
+#   경계 미발화 케이스는 anchor를 임계 미만 staleness로 잡아 재현한다(예: T31).
 #   `+0xN` = 동일값 N+1개(30s 간격). 시리즈 길이는 eval_time 이상이어야 한다.
 # [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다
 #   (누락 시 vmalert-tool이 라벨 불일치로 FAILED 처리).
@@ -24,8 +27,9 @@ tests:
   # ===========================================================================
   # SPEC-OBSV-BATCH-COVERAGE-001 — 신규 배치 모니터링 사각 해소
   # ===========================================================================
-  # 시간 모델: last_load_seconds=0 이면 time()-0=eval_time → "eval_time 만큼 경과"를 재현.
-  # 시리즈 길이: eval_time(초)/30(s 간격) + for:5m(=10 steps) 이상이어야 한다.
+  # anchor 계산: 28h 임계=100800s → 초과 anchor=-105000 / 미만(25h) anchor=-90000.
+  #              1h 임계=3600s → 초과 anchor=-4000.
+  # 시리즈 길이: eval_time 10m=600s → N=20, 여유분 포함 `+0x30`(31샘플=900s 커버).
 
   # ===========================================================================
   # 룰 7: collector-collection-gap — 기존 28h 룰 batch 필터 검증
@@ -37,11 +41,11 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-invest-opinion"}'
-        values: '0+0x3540'
+        values: '-105000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x3540'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -52,11 +56,11 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="watchlist-sync-krx"}'
-        values: '0+0x3500'
+        values: '-105000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x3500'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -67,11 +71,11 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '0+0x3500'
+        values: '-105000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x3500'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -81,14 +85,38 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="macro-external"}'
-        values: '0+0x3540'
+        values: '-105000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x3540'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
         exp_alerts: []
+
+  # T15a. [발화 양성 대조] 필터에 걸리지 않는 기본 28h 배치(domestic-financial)가
+  #       stale>28h + market_open==1 이면 발화 — 위 제외 케이스들이 "필터 때문"임을 보증하는
+  #       자기 검증 케이스(음수 anchor 모델 전환 시 추가).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-financial"}'
+        values: '-105000+0x30'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-collection-gap
+        alertname: CollectorBatchStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: domestic-financial
+              tier: TICKET
+            exp_annotations:
+              summary: "일일 배치 수집 중단 — domestic-financial 28시간 초과 미적재"
+              description: "일 1회 배치 domestic-financial의 마지막 적재 후 28시간 초과 경과 — 새 데이터 유입 중단. 장중에만 판정하며 휴장 시 억제됨."
+              action: "collector 로그(domestic-financial 실행 오류) → KIS 호출 실패·스케줄 누락 확인"
 
   # ===========================================================================
   # [REMOVED 2026-07-12, SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-022/027] 룰 8
@@ -100,19 +128,17 @@ tests:
   # 룰 11: collector-collection-gap-news — 1h + 장중 게이트
   # SPEC-OBSV-BATCH-COVERAGE-001 AC-2 / AC-3 / AC-6 / REQ-006
   # ===========================================================================
-  # 시리즈 길이: 1h5m = 3900s → N = 3900/30 = 130
 
   # T27. [발화] domestic-news stale>1h AND market_open==1 → 발화.
-  # eval_time = 1h6m: 조건이 t=3630s(1h30s)에 처음 TRUE → for:5m 후 t=3930s(1h5m30s) 충족.
-  # 1h6m=3960s → 시리즈 N=132. 충분한 여유.
+  # anchor=-4000 → t=0 staleness=4000s > 1h(3600s) → for:5m 후 eval_time=10m 발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-news"}'
-        values: '0+0x133'
+        values: '-4000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x133'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 1h6m
+      - eval_time: 10m
         groupname: collector-collection-gap-news
         alertname: CollectorBatchStale
         exp_alerts:
@@ -130,11 +156,11 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-news"}'
-        values: '0+0x133'
+        values: '-4000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '0+0x133'
+        values: '0+0x30'
     alert_rule_test:
-      - eval_time: 1h6m
+      - eval_time: 10m
         groupname: collector-collection-gap-news
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -143,9 +169,9 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_market_open'
-        values: '1+0x133'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 1h6m
+      - eval_time: 10m
         groupname: collector-collection-gap-news
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -154,15 +180,14 @@ tests:
   # 룰 12: collector-collection-gap-watchlist-us — 28h 무게이트(REQ-013)
   # SPEC-OBSV-BATCH-COVERAGE-001 AC-4 / AC-6
   # ===========================================================================
-  # 시리즈 길이: 29h = 104400s → N = 104400/30 = 3480 + margin 20 = 3500
 
   # T30. [발화] watchlist-sync-us stale>28h → 발화(게이트 무관, 매일 잡이라 무억제).
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="watchlist-sync-us"}'
-        values: '0+0x3500'
+        values: '-105000+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap-watchlist-us
         alertname: CollectorBatchStale
         exp_alerts:
@@ -177,14 +202,13 @@ tests:
               action: "collector 로그(watchlist-sync-us 실행분) → 실행 여부·KIS 오류 확인"
 
   # T31. [무발화] watchlist-sync-us stale<28h → 미발화(정상 24h 주기 허용).
-  # 25h: eval_time=25h5m, 25h < 28h → 미발화
-  # 25h5m = (25*3600+5*60)/30 = 3010 steps
+  # anchor=-90000(25h) → t=0~10m staleness=90000~90600s < 28h(100800s) → 미발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="watchlist-sync-us"}'
-        values: '0+0x3010'
+        values: '-90000+0x30'
     alert_rule_test:
-      - eval_time: 25h5m
+      - eval_time: 10m
         groupname: collector-collection-gap-watchlist-us
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -193,8 +217,7 @@ tests:
   - interval: 30s
     input_series: []
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap-watchlist-us
         alertname: CollectorBatchStale
         exp_alerts: []
-

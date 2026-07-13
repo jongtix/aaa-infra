@@ -1,0 +1,138 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — 코어 장주기 — 게이트 건강(GateStale/Unset)·pair-missing(for: 26h)
+# SPEC-COLLECTOR-OBSV-001 TI-004d / SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-025
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.145.0 \
+#     unittest --files=/rules/rules_test_core_slow.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [10m 그리드 전용 샤드 — 왜 별도 파일인가] (2026-07-13, rules_test_core.yaml에서 분리)
+#   이 파일의 케이스들은 음수 anchor 압축이 불가능하다:
+#   - GateStale: `> 0` 가드 때문에 anchor가 양수여야 하고, 양수 anchor면 staleness 상한이
+#     eval_time에 묶여 26h 이상을 실제로 감아야 한다.
+#   - GateUnset·PairMissing: for: 26h — pending 지속시간은 시뮬레이션 시간 그 자체라 압축 불가.
+#   대신 evaluation_interval을 30s→10m으로 굵게 잡아 스텝 수를 1/20로 줄인다(26h=157스텝).
+#   evaluation_interval은 파일 전역이며 per-test interval과 일치해야 한다(30s 평가 그리드에
+#   10m 간격 샘플을 주면 staleness lookback으로 시계열이 끊겨 for: 추적이 깨짐 — 실측 확인).
+#   30s 그리드가 필요한 세밀 케이스(CollectorDown for:90s 등)는 rules_test_core.yaml에 유지.
+# [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다.
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 10m
+
+tests:
+  # ===========================================================================
+  # 룰 4: CollectorGateStale — 26h 초과 미갱신(boot-unset 제외)
+  # ===========================================================================
+  # gate=1000(>0 가드 통과) → 조건 참 시점 t>26h+1000s. for:5m은 10m 그리드에서
+  # 다음 평가 시점에 자동 충족. eval_time=26h40m(그리드 정렬)로 여유 확보.
+  # 시리즈 길이: 26h40m=1600m → N=160, 여유 포함 `+0x165`.
+
+  # T8. gate=1000(>0) + 26h 초과 경과 → 발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_market_gate_last_update_seconds'
+        values: '1000+0x165'
+    alert_rule_test:
+      - eval_time: 26h40m
+        groupname: collector-gate-health
+        alertname: CollectorGateStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "국장 휴장일 캘린더 갱신 중단 — 26시간 초과"
+              description: "KIS 국장 휴장일 캘린더(매일 08:10 KST 갱신)가 26시간 이상 미갱신 — 직전 캘린더로 동작 중. 방치 시 휴장일을 개장일로 오판해 장중 알림(틱 침묵 등)이 휴장일에 오발 가능."
+              action: "collector 로그(08:10 \"시장 세션 게이트 갱신 실패\" 경고) → KIS CTCA0903R 호출 실패 원인(키·네트워크) 확인"
+
+  # T9. [핵심] gate=0(boot-unset) + 26h 초과 경과 → (time-0)>26h 이지만 `>0` 가드로 GateStale 미발화.
+  #     boot-unset 은 GateUnset 룰(26h)이 전담 — GateStale 오발 방지(분리 설계 입증).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_market_gate_last_update_seconds'
+        values: '0+0x165'
+    alert_rule_test:
+      - eval_time: 26h40m
+        groupname: collector-gate-health
+        alertname: CollectorGateStale
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 5: CollectorGateUnset — 부팅 후 26h 고착 (for: 26h)
+  # ===========================================================================
+
+  # T10. gate==0 지속 + eval 26h10m → for:26h 충족 → 발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_market_gate_last_update_seconds'
+        values: '0+0x165'
+    alert_rule_test:
+      - eval_time: 26h10m
+        groupname: collector-gate-health
+        alertname: CollectorGateUnset
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "국장 휴장일 캘린더 미설정 고착 — 부팅 후 26시간"
+              description: "부팅 직후 갱신과 다음 08:10 정기 갱신이 모두 실패 — 캘린더 없이 요일·시각만으로 장중 판정 중."
+              action: "collector 로그(부팅/08:10 갱신 실패 경고) → KIS CTCA0903R 호출 실패 원인 확인"
+
+  # T11. gate=1000(set) → 미발화(부팅 직후/정상 게이트는 오발하지 않음).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_market_gate_last_update_seconds'
+        values: '1000+0x165'
+    alert_rule_test:
+      - eval_time: 26h10m
+        groupname: collector-gate-health
+        alertname: CollectorGateUnset
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 XR-I(pair-missing): CollectorExpectedRunPairMissing — for: 26h (REQ-XR-025, DP-6)
+  # ===========================================================================
+
+  # TI-XR-I-005. [발화, pair-missing] overseas-split은 expected_run만 있고 last_load 무기록(다른 배치의
+  #   last_load만 존재해 unless on(batch) 라벨 조인이 올바름을 입증) → 26h 후 발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
+        values: '1000+0x165'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '999+0x165'
+    alert_rule_test:
+      - eval_time: 26h10m
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunPairMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              batch: overseas-split
+              tier: TICKET
+            exp_annotations:
+              summary: "배치 첫 실행 기록 없음 — overseas-split"
+              description: "배치 overseas-split의 감시 등록 후 26시간 동안 완료 기록이 한 번도 없음 — 신규 배치의 스케줄 미배선 또는 첫 실행 실패."
+              action: "collector 로그(overseas-split 스케줄 등록·실행) → 스케줄러 배선·cron 확인"
+
+  # TI-XR-I-006. [무발화, pair-missing] 동일 배치에 expected_run·last_load 둘 다 존재 → 미발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
+        values: '1000+0x165'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-split"}'
+        values: '999+0x165'
+    alert_rule_test:
+      - eval_time: 26h10m
+        groupname: collector-expected-run-deadman
+        alertname: CollectorExpectedRunPairMissing
+        exp_alerts: []

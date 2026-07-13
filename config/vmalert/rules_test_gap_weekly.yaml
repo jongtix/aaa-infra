@@ -1,5 +1,5 @@
 # =============================================================================
-# vmalert 룰 유닛테스트 — 수집 갭(장주기) — 주간 배치 8d + 장중 게이트(룰10). 시뮬레이션 시간 2위 샤드라 단독 분리.
+# vmalert 룰 유닛테스트 — 수집 갭(장주기) — 주간 배치 8d + 장중 게이트(룰10).
 # SPEC-OBSV-BATCH-COVERAGE-001
 # =============================================================================
 # 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
@@ -8,8 +8,11 @@
 #     unittest --files=/rules/rules_test_gap_weekly.yaml
 # rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
 #
-# [시간 모델] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
-#   "X시간 경과"는 last_update 계열을 0으로 두고 eval_time 을 X시간보다 크게 잡아 재현한다.
+# [시간 모델 — 음수 anchor] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
+#   룰이 `time() - last_load > 8d` 차이값 비교이므로, "8일 경과"는 eval_time을 8일까지
+#   감는 대신(스텝 23,650개 → 단독 21분 소요) last_load anchor를 -700000(8d=691200s보다
+#   충분히 과거)으로 두고 eval_time은 for: 5m 충족에 필요한 10m만 시뮬레이션한다(스텝 20개).
+#   t=0부터 조건이 이미 참이므로 eval_time=10m 시점에 for: 5m을 채우고 발화한다.
 #   `+0xN` = 동일값 N+1개(30s 간격). 시리즈 길이는 eval_time 이상이어야 한다.
 # [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다
 #   (누락 시 vmalert-tool이 라벨 불일치로 FAILED 처리).
@@ -25,17 +28,18 @@ tests:
   # 룰 10: collector-collection-gap-weekly — 8d + 장중 게이트
   # SPEC-OBSV-BATCH-COVERAGE-001 AC-2 / AC-3 / AC-6 / REQ-005
   # ===========================================================================
-  # 시리즈 길이: 8d5h5m ≈ 709500s → N = 709500/30 = 23650
+  # anchor=-700000 → t=0 시점 staleness=700000s > 8d(691200s). 시리즈 길이:
+  # eval_time 10m=600s → N=600/30=20, 여유분 포함 `+0x30`(31샘플=900s 커버).
 
   # T23. [발화] domestic-financial-ratio stale>8d AND market_open==1 → 발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-financial-ratio"}'
-        values: '0+0x23660'
+        values: '-700000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x23660'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 8d5h5m
+      - eval_time: 10m
         groupname: collector-collection-gap-weekly
         alertname: CollectorBatchStale
         exp_alerts:
@@ -53,11 +57,11 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-etf-representative"}'
-        values: '0+0x23660'
+        values: '-700000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x23660'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 8d5h5m
+      - eval_time: 10m
         groupname: collector-collection-gap-weekly
         alertname: CollectorBatchStale
         exp_alerts:
@@ -75,11 +79,11 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-financial-ratio"}'
-        values: '0+0x23660'
+        values: '-700000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '0+0x23660'
+        values: '0+0x30'
     alert_rule_test:
-      - eval_time: 8d5h5m
+      - eval_time: 10m
         groupname: collector-collection-gap-weekly
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -88,10 +92,24 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_market_open'
-        values: '1+0x23660'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 8d5h5m
+      - eval_time: 10m
         groupname: collector-collection-gap-weekly
         alertname: CollectorBatchStale
         exp_alerts: []
 
+  # T26a. [경계 미발화] anchor=-(8d-5m)=-690900 → t=0 staleness=690900s < 8d.
+  # eval_time=4m 시점엔 임계(8d) 자체를 아직 못 넘어 미발화 — 음수 anchor 모델이
+  # 임계 경계를 실제로 구분하는지 확인(시간 모델 전환 시 자기 검증 케이스).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-financial-ratio"}'
+        values: '-690900+0x30'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 4m
+        groupname: collector-collection-gap-weekly
+        alertname: CollectorBatchStale
+        exp_alerts: []

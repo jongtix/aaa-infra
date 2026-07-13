@@ -1,10 +1,13 @@
 # =============================================================================
-# vmalert 룰 유닛테스트 — 코어 — 프로세스 생존(CollectorDown)·게이트 건강(GateStale/Unset)·배치 신선도(BatchStale)
+# vmalert 룰 유닛테스트 — 코어 — 프로세스 생존(CollectorDown)·배치 신선도(BatchStale)
 #   + Module E 실행 신선도 라벨(REQ-WM-024) + 예상 실행 앵커(XR-H/XR-I, EXPECTED-RUN-001 M2)
 # SPEC-COLLECTOR-OBSV-001 TI-009(AC-7/8/13) / SPEC-OBSV-WATERMARK-001 / SPEC-COLLECTOR-EXPECTED-RUN-001
 #
 # [SPEC-OBSV-WATERMARK-001 AC-1] CollectorBatchCompletenessLow(그룹2)는 REQ-WM-023으로 rules.yml에서
 #   완전히 제거됐다. 제거된 룰의 무발화는 alert 블록의 물리적 부재로 구조적으로 보장된다(테스트 불가·불요).
+# [장주기 분리] GateStale/GateUnset(26h 임계·for)·PairMissing(for: 26h) 케이스(구 T8~T11,
+#   TI-XR-I-005/006)는 음수 anchor로 압축 불가(>0 가드·for 지속시간) — 10m 그리드 전용 샤드
+#   rules_test_core_slow.yaml로 이동(2026-07-13).
 # =============================================================================
 # 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
 #   또는: vmalert-tool unittest --files='/rules/rules_test_*.yaml'  (순차, CWD=config/vmalert 마운트)
@@ -12,8 +15,9 @@
 #     unittest --files=/rules/rules_test_core.yaml
 # rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
 #
-# [시간 모델] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
-#   "X시간 경과"는 last_update 계열을 0으로 두고 eval_time 을 X시간보다 크게 잡아 재현한다.
+# [시간 모델 — 음수 anchor] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일.
+#   `time() - x > 임계` 형태의 신선도 룰은 eval_time을 임계까지 감는 대신 anchor를
+#   -(임계+마진)으로 두고 for: 충족분(10m)만 시뮬레이션한다(스텝 20개).
 #   `+0xN` = 동일값 N+1개(30s 간격). 시리즈 길이는 eval_time 이상이어야 한다.
 # [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다
 #   (누락 시 vmalert-tool이 라벨 불일치로 FAILED 처리).
@@ -64,15 +68,17 @@ tests:
   # 룰 2: CollectorBatchStale(그룹2, 28h) — 장중 게이트 ANDing(휴장 억제)
   # [SPEC-OBSV-WATERMARK-001 REQ-WM-023] CollectorBatchCompletenessLow는 완전 제거됨(AC-1, 상단 주석).
   # ===========================================================================
-  # T6. last_load=0 + market_open==1 + eval 29h → (time-0)>28h 성립 → 발화.
+  # anchor=-105000 → t=0 staleness=105000s > 28h(100800s). for:5m → eval_time=10m 발화.
+
+  # T6. last_load=-105000(>28h stale) + market_open==1 → 발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="news"}'
-        values: '0+0x3540'
+        values: '-105000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x3540'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
         exp_alerts:
@@ -90,11 +96,11 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="news"}'
-        values: '0+0x3540'
+        values: '-105000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '0+0x3540'
+        values: '0+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -105,97 +111,37 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-supply-investor"}'
-        values: '0+0x3540'
+        values: '-105000+0x30'
       - series: 'aaa_collector_market_open'
-        values: '1+0x3540'
+        values: '1+0x30'
     alert_rule_test:
-      - eval_time: 29h
+      - eval_time: 10m
         groupname: collector-collection-gap
         alertname: CollectorBatchStale
         exp_alerts: []
 
   # ===========================================================================
-  # 룰 4: CollectorGateStale — 30h 초과 미갱신(boot-unset 제외)
+  # 룰 4/5: CollectorGateStale/CollectorGateUnset — rules_test_core_slow.yaml로 이동
+  # (구 T8~T11. GateStale은 `>0` 가드로 음수 anchor 불가, GateUnset은 for: 26h — 둘 다
+  #  26h+ 실시간 시뮬레이션이 필요해 10m 그리드 전용 샤드에서 검증)
   # ===========================================================================
-  # T8. gate=1000(>0) + eval 31h → (time-1000)>30h 성립 AND >0 가드 통과 → 발화.
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_market_gate_last_update_seconds'
-        values: '1000+0x3780'
-    alert_rule_test:
-      - eval_time: 31h
-        groupname: collector-gate-health
-        alertname: CollectorGateStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              tier: TICKET
-            exp_annotations:
-              summary: "국장 휴장일 캘린더 갱신 중단 — 26시간 초과"
-              description: "KIS 국장 휴장일 캘린더(매일 08:10 KST 갱신)가 26시간 이상 미갱신 — 직전 캘린더로 동작 중. 방치 시 휴장일을 개장일로 오판해 장중 알림(틱 침묵 등)이 휴장일에 오발 가능."
-              action: "collector 로그(08:10 \"시장 세션 게이트 갱신 실패\" 경고) → KIS CTCA0903R 호출 실패 원인(키·네트워크) 확인"
-
-  # T9. [핵심] gate=0(boot-unset) + eval 31h → (time-0)>30h 이지만 `>0` 가드로 GateStale 미발화.
-  #     boot-unset 은 GateUnset 룰(26h)이 전담 — GateStale 오발 방지(분리 설계 입증).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_market_gate_last_update_seconds'
-        values: '0+0x3780'
-    alert_rule_test:
-      - eval_time: 31h
-        groupname: collector-gate-health
-        alertname: CollectorGateStale
-        exp_alerts: []
-
-  # ===========================================================================
-  # 룰 5: CollectorGateUnset — 부팅 후 26h 고착
-  # ===========================================================================
-  # T10. gate==0 지속 + eval 26h5m → for:26h 충족 → 발화.
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_market_gate_last_update_seconds'
-        values: '0+0x3180'
-    alert_rule_test:
-      - eval_time: 26h5m
-        groupname: collector-gate-health
-        alertname: CollectorGateUnset
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              tier: TICKET
-            exp_annotations:
-              summary: "국장 휴장일 캘린더 미설정 고착 — 부팅 후 26시간"
-              description: "부팅 직후 갱신과 다음 08:10 정기 갱신이 모두 실패 — 캘린더 없이 요일·시각만으로 장중 판정 중."
-              action: "collector 로그(부팅/08:10 갱신 실패 경고) → KIS CTCA0903R 호출 실패 원인 확인"
-
-  # T11. gate=1000(set) → 미발화(부팅 직후/정상 게이트는 오발하지 않음).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_market_gate_last_update_seconds'
-        values: '1000+0x3180'
-    alert_rule_test:
-      - eval_time: 26h5m
-        groupname: collector-gate-health
-        alertname: CollectorGateUnset
-        exp_alerts: []
 
   # ===========================================================================
   # SPEC-OBSV-WATERMARK-001 REQ-WM-024 — 신규 Module E 실행 신선도 라벨 유닛테스트
   # ===========================================================================
+  # anchor=-4000 → t=0 staleness=4000s > 1h(3600s).
 
   # TI-WM-E-001. [발화] overseas-news stale>1h AND us_market_open==1 AND holiday_count>=20 → 발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-news"}'
-        values: '0+0x133'
+        values: '-4000+0x30'
       - series: 'aaa_collector_us_market_open'
-        values: '1+0x133'
+        values: '1+0x30'
       - series: 'aaa_collector_us_market_gate_holiday_count'
-        values: '25+0x133'
+        values: '25+0x30'
     alert_rule_test:
-      - eval_time: 1h6m
+      - eval_time: 10m
         groupname: collector-collection-gap-overseas-news
         alertname: CollectorBatchStale
         exp_alerts:
@@ -213,13 +159,13 @@ tests:
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-news"}'
-        values: '0+0x133'
+        values: '-4000+0x30'
       - series: 'aaa_collector_us_market_open'
-        values: '0+0x133'
+        values: '0+0x30'
       - series: 'aaa_collector_us_market_gate_holiday_count'
-        values: '25+0x133'
+        values: '25+0x30'
     alert_rule_test:
-      - eval_time: 1h6m
+      - eval_time: 10m
         groupname: collector-collection-gap-overseas-news
         alertname: CollectorBatchStale
         exp_alerts: []
@@ -236,18 +182,20 @@ tests:
   # [2026-07-12 REQ-XR-022 컷오버 완료] 신규 그룹이 구 그룹5/6/9b/9c 및 그룹2의 게이트-레거시
   # 3배치+watchlist-sync-krx 해당분을 대체 완료(§8.1/§8.2 확인). 조건은 (i) last_load < expected_run
   # 와 (ii) time()-expected_run-run_margin > 0 를 동시에 요구한다.
+  # 음수 anchor: expected_run=-10000, margin=3600 → (ii) t+10000-3600>0 이 t=0부터 참.
+  # (i)는 last_load와 expected_run의 대소 비교뿐이라 음수끼리로 재현.
 
-  # TI-XR-H-001. [발화] last_load=0(미완료) + expected_run=1000 + margin=3600 → 6h 시점 (i)/(ii) 둘 다 참 → 발화.
+  # TI-XR-H-001. [발화] last_load(-20000) < expected_run(-10000) + (ii) t=0부터 참 → for:5m 후 발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '0+0x730'
+        values: '-20000+0x30'
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
-        values: '1000+0x730'
+        values: '-10000+0x30'
       - series: 'aaa_collector_batch_run_margin_seconds{batch="overseas-daily"}'
-        values: '3600+0x730'
+        values: '3600+0x30'
     alert_rule_test:
-      - eval_time: 6h
+      - eval_time: 10m
         groupname: collector-collection-gap-expected-run
         alertname: CollectorBatchStaleExpectedRun
         exp_alerts:
@@ -261,39 +209,40 @@ tests:
               description: "배치 overseas-daily의 예정 실행 시각 + 허용 마진이 경과했으나 완료 기록 없음 — 실행 실패 또는 스케줄 누락."
               action: "collector 로그(overseas-daily 실행·오류) → CatchUpRunner 재실행 여부·KIS 호출 실패 확인"
 
-  # TI-XR-H-002. [무발화] last_load(100000) >= expected_run(1000) → (i) 거짓 → 미발화(직전 슬롯 성공 완료).
+  # TI-XR-H-002. [무발화] last_load(-5000) >= expected_run(-10000) → (i) 거짓 → 미발화(직전 슬롯 성공 완료).
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '100000+0x730'
+        values: '-5000+0x30'
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
-        values: '1000+0x730'
+        values: '-10000+0x30'
       - series: 'aaa_collector_batch_run_margin_seconds{batch="overseas-daily"}'
-        values: '3600+0x730'
+        values: '3600+0x30'
     alert_rule_test:
-      - eval_time: 6h
+      - eval_time: 10m
         groupname: collector-collection-gap-expected-run
         alertname: CollectorBatchStaleExpectedRun
         exp_alerts: []
 
-  # TI-XR-H-003. [무발화] last_load=0(미완료)이나 슬롯+마진 미경과(expected_run=20000, margin=3600,
-  #   eval 6h=21600s → 21600-20000-3600<0) → (ii) 거짓 → 미발화(마진 유예 구간).
+  # TI-XR-H-003. [무발화] last_load(-30000) < expected_run(20000)로 (i) 참이나, 슬롯+마진 미경과
+  #   (eval 10m=600s → 600-20000-3600<0) → (ii) 거짓 → 미발화(마진 유예 구간).
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '0+0x730'
+        values: '-30000+0x30'
       - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-daily"}'
-        values: '20000+0x730'
+        values: '20000+0x30'
       - series: 'aaa_collector_batch_run_margin_seconds{batch="overseas-daily"}'
-        values: '3600+0x730'
+        values: '3600+0x30'
     alert_rule_test:
-      - eval_time: 6h
+      - eval_time: 10m
         groupname: collector-collection-gap-expected-run
         alertname: CollectorBatchStaleExpectedRun
         exp_alerts: []
 
   # ===========================================================================
   # 룰 XR-I: collector-expected-run-deadman — REQ-XR-023/024/025 (Module I, DP-6)
+  # (pair-missing 2건(구 TI-XR-I-005/006)은 for: 26h — rules_test_core_slow.yaml로 이동)
   # ===========================================================================
 
   # TI-XR-I-001. [발화, 총-소실] expected_run 시계열 전체 부재(enrolled만 존재) → 10m 후 발화.
@@ -368,40 +317,4 @@ tests:
       - eval_time: 10m30s
         groupname: collector-expected-run-deadman
         alertname: CollectorExpectedRunSeriesCountLow
-        exp_alerts: []
-
-  # TI-XR-I-005. [발화, pair-missing] overseas-split은 expected_run만 있고 last_load 무기록(다른 배치의
-  #   last_load만 존재해 unless on(batch) 라벨 조인이 올바름을 입증) → 26h 후 발화.
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
-        values: '1000+0x3180'
-      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
-        values: '999+0x3180'
-    alert_rule_test:
-      - eval_time: 26h5m
-        groupname: collector-expected-run-deadman
-        alertname: CollectorExpectedRunPairMissing
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: overseas-split
-              tier: TICKET
-            exp_annotations:
-              summary: "배치 첫 실행 기록 없음 — overseas-split"
-              description: "배치 overseas-split의 감시 등록 후 26시간 동안 완료 기록이 한 번도 없음 — 신규 배치의 스케줄 미배선 또는 첫 실행 실패."
-              action: "collector 로그(overseas-split 스케줄 등록·실행) → 스케줄러 배선·cron 확인"
-
-  # TI-XR-I-006. [무발화, pair-missing] 동일 배치에 expected_run·last_load 둘 다 존재 → 미발화.
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_expected_run_seconds{batch="overseas-split"}'
-        values: '1000+0x3180'
-      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-split"}'
-        values: '999+0x3180'
-    alert_rule_test:
-      - eval_time: 26h5m
-        groupname: collector-expected-run-deadman
-        alertname: CollectorExpectedRunPairMissing
         exp_alerts: []

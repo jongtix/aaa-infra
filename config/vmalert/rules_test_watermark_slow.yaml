@@ -1,0 +1,429 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — 워터마크 장주기 — 신선도 즉시형(W2)·lag 허용형(W3)·백필 정체(BF-2)
+# SPEC-OBSV-WATERMARK-001 REQ-WM-017/020 / SPEC-OBSV-WATERMARK-002 REQ-WM2-009/010/012
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.145.0 \
+#     unittest --files=/rules/rules_test_watermark_slow.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [10m 그리드 전용 샤드 — 왜 별도 파일인가] (2026-07-13, rules_test_watermark.yaml에서 분리)
+#   W2/W3 신선도 룰은 expr에 time()이 없고 게이지 차(expected - data > 0)에 for: 4h~28h를
+#   거는 구조라 음수 anchor 압축이 불가능하다 — for: pending 지속시간은 시뮬레이션 시간 그 자체.
+#   BF-2(정체)도 increase(...[26h]) 윈도우가 26h 실측 창을 요구한다.
+#   대신 evaluation_interval을 30s→10m으로 굵게 잡아 스텝 수를 1/20로 줄인다(28h=169스텝).
+#   evaluation_interval은 파일 전역이며 per-test interval과 일치해야 한다(불일치 시 staleness
+#   lookback으로 시계열이 끊겨 for: 추적이 깨짐 — 실측 확인). 경계(for 미충족) 케이스의
+#   eval_time은 10m 그리드에 정렬해 for보다 한 스텝 이상 앞에 둔다(예: 4h → 3h50m).
+# [REQ-WM-025] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에 tier를 명시한다.
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 10m
+
+tests:
+  # ===========================================================================
+  # 룰 W2: collector-watermark-freshness-immediate — REQ-WM-017 즉시형 / AC-2 / AC-3
+  # ===========================================================================
+  # 시리즈 길이: for 4h(eval 4h10m=25스텝)→`+0x30` / 17h30m(eval 17h40m=106)→`+0x110` /
+  #              28h(eval 28h10m=169)→`+0x175`
+
+  # [2026-07-10 Family B 확정] 시리즈별 9룰로 분할 — alertname을 시리즈별로 rename.
+  # TI-WM-FR-001. [발화, PAGE, B-1] daily-ohlcv-krx: expected-watermark diff=10000(>0) 상시 → 4h 지속 후 발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '90000+0x30'
+    alert_rule_test:
+      - eval_time: 4h10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleDomesticDaily
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              series: daily-ohlcv-krx
+              market: domestic
+              tier: PAGE
+            exp_annotations:
+              summary: "국내 일봉 갱신 지연"
+              description: "장 마감 후 4시간이 지나도 최신 거래일까지 적재되지 않음 — 기대 대비 2h 46m 40s 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+              action: "domestic-daily 배치(평일 16:00) 로그 → daily_ohlcv 최근 거래일 조회"
+
+  # TI-WM-FR-002. [무발화, for 미충족] 동일 조건이나 eval_time=3h50m(< 4h) → 미발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '90000+0x30'
+    alert_rule_test:
+      - eval_time: 3h50m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleDomesticDaily
+        exp_alerts: []
+
+  # TI-WM-FR-003. [무발화, diff==0] expected==watermark(휴장일 등 정상 동기) → 4h10m 경과해도 미발화(AC-3).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx",market="domestic"}'
+        values: '100000+0x30'
+    alert_rule_test:
+      - eval_time: 4h10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleDomesticDaily
+        exp_alerts: []
+
+  # TI-WM-FR-004. [발화, TICKET 4h, B-4] investor-trend diff>0 상시 → 4h 지속 후 발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="investor-trend",market="domestic"}'
+        values: '90000+0x30'
+    alert_rule_test:
+      - eval_time: 4h10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleInvestorTrend
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: investor-trend
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "투자자별 매매동향 갱신 지연"
+              description: "장 마감 후 4시간이 지나도 당일 수급 데이터가 적재되지 않음 — 기대 대비 2h 46m 40s 뒤처짐(REQ-WM-017 즉시형)."
+              action: "domestic-supply-investor 배치(평일 16:00 일봉 체인 후속) 로그 → investor_trend 최근 일자 조회"
+
+  # TI-WM-FR-005. [발화, TICKET 17h30m, B-8] disclosures diff>0 상시 → for:17h30m 지속 후 발화(8h→17h30m 개정 검증).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x110'
+      - series: 'aaa_collector_data_watermark_seconds{series="disclosures",market="domestic"}'
+        values: '90000+0x110'
+    alert_rule_test:
+      - eval_time: 17h40m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleDisclosures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: disclosures
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "DART 공시 수집 지연"
+              description: "장 마감 후 다음 날 아침(09:00)까지 당일 공시가 적재되지 않음 — 기대 대비 2h 46m 40s 뒤처짐(REQ-WM-017 즉시형)."
+              action: "DART 폴링(평일 22:00) 로그 → disclosures 최근 접수일자 조회"
+
+  # TI-WM-FR-006. [무발화, for 미충족] disclosures 동일 조건 eval_time=17h20m(< 17h30m) → 미발화(8h 구식 임계였다면 발화했을 케이스).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '100000+0x110'
+      - series: 'aaa_collector_data_watermark_seconds{series="disclosures",market="domestic"}'
+        values: '90000+0x110'
+    alert_rule_test:
+      - eval_time: 17h20m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleDisclosures
+        exp_alerts: []
+
+  # TI-WM-FR-007. [발화, TICKET 28h, B-9] market-vix diff>0 상시 → for:28h 지속 후 발화(24h→28h 개정 검증).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="overseas"}'
+        values: '100000+0x175'
+      - series: 'aaa_collector_data_watermark_seconds{series="market-vix",market="overseas"}'
+        values: '90000+0x175'
+    alert_rule_test:
+      - eval_time: 28h10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleVix
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: market-vix
+              market: overseas
+              tier: TICKET
+            exp_annotations:
+              summary: "VIX 갱신 지연"
+              description: "미국 정규장 마감 후 다음 날 아침(09:00, 동절기 10:00)까지 VIX가 적재되지 않음 — 기대 대비 2h 46m 40s 뒤처짐(REQ-WM-017 즉시형)."
+              action: "market-indicators 배치(평일 17:00) 로그에서 CBOE→FRED→Yahoo 폴백 순서 확인 → market_indicators에서 VIX 최근 일자 조회"
+
+  # TI-WM-FR-008. [무발화, for 미충족] market-vix 동일 조건 eval_time=27h50m(< 28h) → 미발화(24h 구식 임계였다면 발화했을 케이스).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="overseas"}'
+        values: '100000+0x175'
+      - series: 'aaa_collector_data_watermark_seconds{series="market-vix",market="overseas"}'
+        values: '90000+0x175'
+    alert_rule_test:
+      - eval_time: 27h50m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleVix
+        exp_alerts: []
+
+  # [SPEC-OBSV-WATERMARK-002 REQ-WM2-009/010/012, 2026-07-12] B-2가 신규 일봉 전용 기대 게이지
+  #   aaa_collector_expected_watermark_daily_seconds{market="overseas"}로 재배선됨(D+2 적재 지연 정합).
+  #   TI-WM-FR-009~012.
+
+  # TI-WM-FR-009. [발화, PAGE, B-2] daily-ohlcv-us: 일봉 전용 기대 게이지 diff=10000(>0) 상시 → 4h 지속 후 발화(AC-3).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '90000+0x30'
+    alert_rule_test:
+      - eval_time: 4h10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleOverseasDaily
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: collector
+              series: daily-ohlcv-us
+              market: overseas
+              tier: PAGE
+            exp_annotations:
+              summary: "미국 일봉 갱신 지연"
+              description: "미국 장 마감 후 4시간이 지나도 최신 거래일까지 적재되지 않음 — 기대 대비 2h 46m 40s 뒤처짐(REQ-WM-017 즉시형, PAGE)."
+              action: "overseas-daily 배치(평일 16:30 ET) 로그 → daily_ohlcv 최근 거래일 조회"
+
+  # TI-WM-FR-010. [무발화, diff==0] 정상 D+2 타이밍 — 일봉 전용 기대 게이지 == 실적 워터마크(직전 개장일 봉
+  #   이미 05:30 KST 적재 완료) → 4h10m 경과해도 미발화(AC-1). 동일 값 관계로 주말/월요일 경계(AC-4/AC-5,
+  #   M1 UsMarketSessionGateTest에서 직전 개장일 계산 자체는 검증됨)도 diff==0으로 귀결되므로 별도 시나리오
+  #   불필요(AC-11c).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '100000+0x30'
+    alert_rule_test:
+      - eval_time: 4h10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleOverseasDaily
+        exp_alerts: []
+
+  # TI-WM-FR-011. [무발화, for 미충족] TI-WM-FR-009와 동일 조건이나 eval_time=3h50m(<4h) → 미발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="daily-ohlcv-us",market="overseas"}'
+        values: '90000+0x30'
+    alert_rule_test:
+      - eval_time: 3h50m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleOverseasDaily
+        exp_alerts: []
+
+  # TI-WM-FR-012. [회귀 없음, AC-8] 신규 일봉 기대 게이지와 기존 공유 해외 기대 게이지가 동시에 노출되고
+  #   값이 크게 어긋나도(daily=999999 vs shared=100000), B-2 이외의 해외 신선도 룰(B-6 extended-hours-pre)은
+  #   여전히 공유 게이지만 참조해 diff==0으로 미발화 — 신규 메트릭명 분리로 on(market) group_right 조인의
+  #   "one"측 유일성이 깨지지 않음을 검증(REQ-WM2-003/010, §3.1 회귀 표면적 0 근거).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="overseas"}'
+        values: '100000+0x30'
+      - series: 'aaa_collector_expected_watermark_daily_seconds{market="overseas"}'
+        values: '999999+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="extended-hours-pre",market="overseas"}'
+        values: '100000+0x30'
+    alert_rule_test:
+      - eval_time: 4h10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleExtendedHoursPre
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 W3: collector-watermark-freshness-lag — REQ-WM-017 lag 허용형
+  # [2026-07-10 Family C 확정] 시리즈별 4룰로 분할, for 09:00 정렬 조정(C-1/C-3/C-4 1h→17h30m,
+  #   C-2 1h→4h) — alertname을 시리즈별로 rename.
+  # ===========================================================================
+
+  # TI-WM-LAG-001. [발화, C-1] credit-balance diff=600000s(>6d=518400s) 상시 → for:17h30m 후 발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '700000+0x110'
+      - series: 'aaa_collector_data_watermark_seconds{series="credit-balance",market="domestic"}'
+        values: '100000+0x110'
+    alert_rule_test:
+      - eval_time: 17h40m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagCreditBalance
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: credit-balance
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "국내 신용잔고 수집 지연"
+              description: "지연 허용치(6일)를 넘어서도 적재되지 않음 — 기대 대비 6d 22h 40m 0s 뒤처짐 (정상 공표 지연 3영업일)(REQ-WM-017 lag 허용형)."
+              action: "domestic-supply-credit-balance 배치(평일 16:00 일봉 체인 후속) 로그 → credit_balance 최근 일자 조회"
+
+  # TI-WM-LAG-002. [무발화] credit-balance diff=500000s(<6d=518400s, 정당 지연 범위) → 미발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '600000+0x110'
+      - series: 'aaa_collector_data_watermark_seconds{series="credit-balance",market="domestic"}'
+        values: '100000+0x110'
+    alert_rule_test:
+      - eval_time: 17h40m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagCreditBalance
+        exp_alerts: []
+
+  # TI-WM-LAG-003. [무발화, for 미충족] credit-balance diff=600000s(>6d)이지만 eval_time=17h20m(<17h30m) → 미발화
+  #   (구식 1h 임계였다면 발화했을 케이스 — for 개정 검증).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '700000+0x110'
+      - series: 'aaa_collector_data_watermark_seconds{series="credit-balance",market="domestic"}'
+        values: '100000+0x110'
+    alert_rule_test:
+      - eval_time: 17h20m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagCreditBalance
+        exp_alerts: []
+
+  # TI-WM-LAG-004. [발화, C-2] macro-fred diff=600000s(>6d) 상시 → for:4h 후 발화(1h→4h 개정 검증).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="overseas"}'
+        values: '700000+0x30'
+      - series: 'aaa_collector_data_watermark_seconds{series="macro-fred",market="overseas"}'
+        values: '100000+0x30'
+    alert_rule_test:
+      - eval_time: 4h10m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagMacroFred
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: macro-fred
+              market: overseas
+              tier: TICKET
+            exp_annotations:
+              summary: "미국 거시지표(FRED) 수집 지연"
+              description: "지연 허용치(6일)를 넘어서도 적재되지 않음 — 기대 대비 6d 22h 40m 0s 뒤처짐 (정상 공표 지연 2영업일)(REQ-WM-017 lag 허용형)."
+              action: "macro-external 배치(평일 19:00) 로그에서 FRED 소스 확인 → macro_indicators에서 FRED 시리즈 최근 일자 조회"
+
+  # TI-WM-LAG-005. [발화, C-3] analyst-estimates diff>5d 상시 → for:17h30m 후 발화(1h→17h30m 개정 검증).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '600000+0x110'
+      - series: 'aaa_collector_data_watermark_seconds{series="analyst-estimates",market="domestic"}'
+        values: '100000+0x110'
+    alert_rule_test:
+      - eval_time: 17h40m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagAnalystEstimates
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: analyst-estimates
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "국내 투자의견 수집 지연"
+              description: "지연 허용치(5일)를 넘어서도 적재되지 않음 — 기대 대비 5d 18h 53m 20s 뒤처짐 (원래 갱신이 드문 데이터)(REQ-WM-017 lag 허용형)."
+              action: "domestic-invest-opinion 배치(평일 18:00) 로그 → analyst_estimates 최근 일자 조회"
+
+  # TI-WM-LAG-006. [발화, C-4] macro-ecos diff>4d 상시 → for:17h30m 후 발화(1h→17h30m 개정 검증).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_expected_watermark_seconds{market="domestic"}'
+        values: '500000+0x110'
+      - series: 'aaa_collector_data_watermark_seconds{series="macro-ecos",market="domestic"}'
+        values: '100000+0x110'
+    alert_rule_test:
+      - eval_time: 17h40m
+        groupname: collector-watermark-freshness-lag
+        alertname: CollectorWatermarkFreshnessLagMacroEcos
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              series: macro-ecos
+              market: domestic
+              tier: TICKET
+            exp_annotations:
+              summary: "국내 거시지표(ECOS) 수집 지연"
+              description: "지연 허용치(4일, 잠정)를 넘어서도 적재되지 않음 — 기대 대비 4d 15h 6m 40s 뒤처짐(REQ-WM-017 lag 허용형)."
+              action: "macro-external 배치(평일 19:00) 로그에서 ECOS 소스 확인 → macro_indicators에서 ECOS 시리즈 최근 일자 조회"
+
+  # ===========================================================================
+  # 룰 W5(BF-2): collector-backfill-anomaly 정체 — REQ-WM-020 / AC-8
+  # increase(windows_total[26h]) 윈도우가 26h 실측 창을 요구 — 10m 그리드로 26h 시뮬레이션.
+  # ===========================================================================
+  # 시리즈 길이: 26h10m = 157스텝 → `+0x165`
+
+  # TI-WM-BF-002. [발화] pending_slots>0 상시 + windows_total 26h 무증가 → 정체 발화.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_backfill_pending_slots'
+        values: '5+0x165'
+      - series: 'aaa_collector_backfill_windows_total'
+        values: '10+0x165'
+    alert_rule_test:
+      - eval_time: 26h10m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+            exp_annotations:
+              summary: "백필 정체 — 미완료 종목 26시간 무진행"
+              description: "미완료 백필 종목이 남아 있는데 26시간 동안 진행이 없음 — 백필 엔진·스케줄 이상 의심(REQ-WM-020). progress_ratio 절대값으로는 판단하지 않음(lazy 시딩 분모 증가 시 정당 하락)."
+              action: "collector 로그(백필 크론 실행 여부) → backfill_status에서 PENDING·IN_PROGRESS 잔존 조회"
+
+  # TI-WM-BF-003. [무발화] pending_slots==0(전량 종결) → 정체 판정 미실행(MI-09).
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_backfill_pending_slots'
+        values: '0+0x165'
+      - series: 'aaa_collector_backfill_windows_total'
+        values: '10+0x165'
+    alert_rule_test:
+      - eval_time: 26h10m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillStalled
+        exp_alerts: []
+
+  # TI-WM-BF-004. [무발화] pending_slots>0 이지만 windows_total이 26h 이내에 전진(increase>0) → 미발화.
+  # windows_total이 t=8h30m(샘플 51번째)에 10→11로 전진 — eval 26h10m 시점 lookback 26h 창에 포함.
+  - interval: 10m
+    input_series:
+      - series: 'aaa_collector_backfill_pending_slots'
+        values: '5+0x165'
+      - series: 'aaa_collector_backfill_windows_total'
+        values: '10+0x50 11+0x114'
+    alert_rule_test:
+      - eval_time: 26h10m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillStalled
+        exp_alerts: []
