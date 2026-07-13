@@ -3,7 +3,7 @@
 #
 # T-003 골격: 가드 → 체크아웃(tarball fallback) → env 파싱 안전장치 → per-file diff → 백업.
 # T-004: 서비스별 최소 반영(.github/deploy/reflect.sh) 배선 완료.
-# 헬스 검증/복원/통지(T-005)는 아래 TODO 스텁으로 남겨둔다.
+# T-005: 헬스 검증(.github/deploy/verify.sh)·실패 복원(.github/deploy/rollback.sh)·통지 배선 완료.
 name: Deploy
 
 on:
@@ -142,25 +142,67 @@ jobs:
             echo "REFLECT_RESULT_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      # TODO: T-005 — 배포 후 헬스 검증(.github/deploy/verify.sh)·실패 시 백업 복원
-      # (.github/deploy/rollback.sh)·통지. steps.reflect.outputs.result의 UP:/RESTART:/
-      # SIGHUP:/NOTIFY: 라인을 소비해 REQ-CD-018(compose --wait 게이팅)/018A(vmalert·
-      # alertmanager health-status 폴링)/018B(vector running+grace period)/019(실패 시 복원+통지,
-      # "자동복원됨" vs "수동개입 필요" 구분)/020(성공+DB skip 시 대기 항목 통지)을 구현한다.
-      - name: "[TODO T-005] Post-deploy health verification"
+      - name: Post-deploy health verification
+        # T-005: steps.reflect.outputs.result의 UP:/RESTART:/SIGHUP:/NOTIFY: 라인을 소비해
+        # REQ-CD-018(compose --wait 게이팅, UP: 라인은 별도 inspect 없음 — AC-CD-010)/
+        # 018A(vmalert·alertmanager health-status 폴링)/018B(vector running+grace period,
+        # 실패 시 REQ-CD-019 대칭 트리거)를 구현한다. wait_timeout=180(DP-1 잠정, reflect
+        # 스텝과 동일)·vector_grace=30(vector start_period 부재이므로 관측 서비스 공통
+        # start_period 30s를 잠정 grace로 채택 — DP-1과 함께 라이브 실측 후 조정 예정).
+        # 실패한 컨테이너 목록은 GITHUB_OUTPUT으로 넘겨 롤백 스텝이 소비한다.
+        id: verify
         if: steps.diff.outputs.has_changes == 'true'
         run: |
-          echo "[TODO] T-005에서 구현 예정 — 헬스 검증(.github/deploy/verify.sh)"
+          set -u
+          source .github/deploy/lib.sh
+          source .github/deploy/reflect.sh
+          source .github/deploy/verify.sh
 
-      - name: "[TODO T-005] Notify hook stub (success / DB notify-only pending items)"
-        # 실제 telegram_notify 호출 배선(steps.reflect.outputs.result의 NOTIFY: 라인 소비)은
-        # T-005 몫이다. 지금은 스텁만 남겨 훅 지점을 표시한다.
-        if: steps.diff.outputs.has_changes == 'true'
+          verify_ok=true
+          verify_reflect_result "${{ steps.reflect.outputs.result }}" 180 30 5 || verify_ok=false
+          echo "verify_ok=$verify_ok" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "failed_containers<<VERIFY_FAILED_EOF"
+            printf '%s\n' "${VERIFY_FAILED_CONTAINERS[@]:-}"
+            echo "VERIFY_FAILED_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Rollback on verification failure
+        # REQ-CD-019: 검증 실패 시 백업 복원 + 영향받은 서비스 원상 재시작 + Telegram
+        # 통지("자동 복원됨" vs "수동 개입 필요" 구분, .github/deploy/rollback.sh).
+        if: steps.diff.outputs.has_changes == 'true' && steps.verify.outputs.verify_ok == 'false'
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_OPERATOR_CHAT_ID }}
         run: |
-          echo "[TODO] T-005에서 telegram_notify(REQ-CD-019/020) 실제 호출로 교체 예정"
+          set -u
+          source .github/deploy/lib.sh
+          source .github/deploy/reflect.sh
+          source .github/deploy/rollback.sh
 
-      # TODO: T-005 — 실패 시 백업 복원 스텝(if: failure()). 현재는 T-004/T-005 미구현이라
-      # 실패 주입 시나리오(AC-CD-fail) 검증 대상 없음 — T-005에서 rollback.sh 호출 배선 추가.
+          mapfile -t failed_containers <<< "${{ steps.verify.outputs.failed_containers }}"
+          rollback_deploy "${{ steps.backup.outputs.backup_dir }}" "$AAA_INFRA_DIR" "$AAA_SSD_BASE" \
+            "$BOT_TOKEN" "$CHAT_ID" "${failed_containers[@]}"
+
+      - name: Fail workflow after rollback
+        # 검증 실패는 워크플로 자체도 실패로 마감한다(AC-CD-fail 관측 대상 — Actions
+        # 실행 결과에 실패가 정확히 기록되어야 한다). 복원 절차는 위 스텝에서 이미 수행됨.
+        if: steps.diff.outputs.has_changes == 'true' && steps.verify.outputs.verify_ok == 'false'
+        run: |
+          echo "[FATAL] 배포 후 헬스 검증 실패 — 백업 복원 절차 수행됨(REQ-CD-018A/018B, REQ-CD-019)"
+          exit 1
+
+      - name: Notify pending manual items (success path)
+        # REQ-CD-020: 검증 성공 시 reflect_deploy가 낸 NOTIFY: 라인(DB notify-only 스킵
+        # 등, REQ-CD-013A/015/017)을 전부 Telegram으로 통지한다(.github/deploy/rollback.sh
+        # notify_pending_items). NOTIFY: 라인이 없으면 호출 자체가 no-op이다.
+        if: steps.diff.outputs.has_changes == 'true' && steps.verify.outputs.verify_ok == 'true'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_OPERATOR_CHAT_ID }}
+        run: |
+          set -u
+          source .github/deploy/lib.sh
+          source .github/deploy/rollback.sh
+          notify_pending_items "${{ steps.reflect.outputs.result }}" "$BOT_TOKEN" "$CHAT_ID"
