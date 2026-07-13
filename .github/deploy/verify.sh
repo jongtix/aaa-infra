@@ -31,7 +31,7 @@
 #     재정의해 실시간 대기 없이 폴링 루프를 검증한다.
 #   - REFLECT_CALL_LOG(reflect.sh와 공유하는 파이프라인 호출 로그): 설정 시
 #     INSPECT: 이벤트가 순서대로 append된다(AC-CD-010: UP: 경로에 INSPECT: 부재 검증용).
-set -u
+set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh

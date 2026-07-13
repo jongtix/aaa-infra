@@ -17,7 +17,7 @@
 #   - restart_failed_containers: reflect.sh의 restart_container(→ _docker_cmd)를
 #     재사용한다 — 테스트는 reflect.sh와 동일하게 _docker_cmd를 오버라이드한다.
 #   - telegram_notify(lib.sh)를 통해 통지하며, 테스트는 TELEGRAM_CURL_CMD를 오버라이드한다.
-set -u
+set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh

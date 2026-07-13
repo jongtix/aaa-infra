@@ -20,7 +20,7 @@
 #   list_deploy_candidates <checkout_dir> — 배포대상 후보 파일 목록 (REQ-CD-006)
 #   compute_deploy_diff <checkout_dir> <infra_dir> <ssd_base> — per-file diff (REQ-CD-005~007)
 #   telegram_notify <bot_token> <chat_id> <text> — ::add-mask:: 적용 후 Telegram 통지 (REQ-SEC-003)
-set -u
+set -eu
 
 # -----------------------------------------------------------------------------
 # .env 파싱 (REQ-CD-004 — collector deploy.yml과 동일한 awk `_parse_env` 패턴)

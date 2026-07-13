@@ -26,7 +26,7 @@
 #   - _docker_cmd: 실제 docker를 호출하는 유일한 함수. 테스트는 source 이후 이 함수를
 #     재정의해 실제 docker 대신 REFLECT_CALL_LOG에 기록만 하도록 오버라이드한다.
 #   - REFLECT_CALL_LOG: 설정 시 SYNC:/DOCKER: 이벤트가 순서대로 append된다(V-5 순서 검증용).
-set -u
+set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
