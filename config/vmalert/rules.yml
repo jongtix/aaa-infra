@@ -919,23 +919,26 @@ groups:
   #      점프하므로 25h = 2회 연속 실패부터 발화(1회 실패는 예비 소스가 대체 수집해 결손 0 —
   #      TICKET 열화 알림 소음을 줄이려는 의도적 관용). 주말·공휴일 동결 면역이라 market_open
   #      게이트 제거(월요일 오탐 원천 소멸). 발화·해소 항상 17:05경(market-indicators 배치 직후).
-  #   ③ `> 0` 가드는 aaa-infra#88(warm-start 편입) 랜딩 전까지 임시 유지 — 재기동 시 게이지가
-  #      0으로 리셋되는 동안의 무장해제 구멍을 완전히 막지는 못하지만, 부재 상태 오발은 방지한다.
+  #   ③ [2026-07-14 SPEC-COLLECTOR-WARMSTART-REDIS-003 M2] `> 0` 가드를 제거했다. aaa-collector
+  #      M1이 `source_last_success` 게이지를 Redis에서 warm-start하므로 재기동 직후에도 게이지가
+  #      (한 번이라도 성공한 적 있으면) 비영이 되어 가드의 존재 이유가 사라졌다. 가드를 유지하면
+  #      "한 번도 성공한 적 없는 기본 소스"가 0에 영구 침묵하는 #88 결함이 그대로 남는다. 전면
+  #      Redis 유실 시엔 좌변 `batch_last_load{market-indicators}`도 동일 Redis에서 seed되므로
+  #      부재→빈 벡터로 구조적으로 침묵한다(오발 아님, spec.md §4.5 참조). #78 후속 원라인
+  #      가드-제거 후속을 본 변경이 흡수한다.
   # ---------------------------------------------------------------------------
   - name: collector-market-indicator
     interval: 30s
     rules:
       # MI-1 — 수집 기본 소스(KOREAEXIM/CBOE)가 batch_last_load 대비 25h(2회차) 이상 뒤처짐.
-      # `> 0` 가드: boot-unset(==0) 제외 — 초기값 0이면 항상 25h 초과라 오발 방지(#88 랜딩 전 임시).
+      # `> 0` 가드 제거(2026-07-14, SPEC-COLLECTOR-WARMSTART-REDIS-003 M2) — warm-start로 게이지가
+      # 재기동 직후부터 비영이므로 불필요. 두 게이지 모두 부재(전면 Redis 유실)면 뺄셈이 빈 벡터가
+      # 되어 구조적으로 미발화한다.
       - alert: MarketIndicatorPrimaryStale
         expr: >
-          (
-            (aaa_collector_batch_last_load_seconds{batch="market-indicators"}
-             - on() group_right() aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"}
-            ) > 25 * 3600
-          ) and (
-            aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"} > 0
-          )
+          (aaa_collector_batch_last_load_seconds{batch="market-indicators"}
+           - on() group_right() aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"}
+          ) > 25 * 3600
         for: 5m
         labels:
           severity: warning
