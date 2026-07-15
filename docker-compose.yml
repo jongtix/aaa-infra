@@ -156,6 +156,51 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # --- Notifier: Phase 3 알림 서비스 (SPEC-NOTIFIER-FOUNDATION-001, 스캐폴딩 단계) ---
+  notifier:
+    image: ${NOTIFIER_IMAGE:-ghcr.io/jongtix/aaa-notifier:latest}
+    container_name: aaa-notifier
+    restart: unless-stopped
+    stop_grace_period: 40s
+    # 스캐폴딩 단계(Redis 전용, DB 미접속), analyzer와 동일하게 보수적으로 낮게 설정. 실측 후 조정
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+          cpus: "0.5"
+    # REDIS_APPUSER_USERNAME/PASSWORD 등은 서비스 간 공유 시크릿 — .env.common만 사용(TECHSPEC.md "Secrets 파일 범위").
+    # .env.notifier는 이후 Phase의 DB 계정 + TELEGRAM_TRADE_BOT_TOKEN 전용(현 스캐폴딩 단계 미사용)
+    env_file:
+      - ${AAA_SSD_BASE}/secrets/.env.common
+    expose:
+      - "8080"
+    volumes:
+      - ${AAA_HDD_BASE}/logs/aaa-notifier:/var/log/aaa-notifier
+    logging: *default-logging
+    networks:
+      - aaa-network
+    healthcheck:
+      # CMD-SHELL (wget): 홈 NAS 환경(외부 인터넷 차단, Docker 내부 네트워크 격리)에서 wget/shell 공격 표면 위협이 낮아 현 방식 유지.
+      #   distroless 이미지로 마이그레이션 시 wget 의존성 제거 필요.
+      # --tries=1: wget 기본 재시도(3회)를 1회로 제한. docker compose --wait-timeout 180s를 wget 내부 재시도가 소진하는 것을 방지.
+      # /actuator/health/liveness(readiness 아님): Actuator health 그룹 분리(collector와 동일 이번 주 조치) — Redis 순단이
+      #   readiness만 실패시키고 liveness는 UP 유지하도록 해 Docker 헬스체크가 컨테이너를 불필요하게 재시작하지 않게 함.
+      test: ["CMD-SHELL", "wget -qO- --tries=1 http://localhost:8080/actuator/health/liveness | grep -q '\"status\":\"UP\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   # --- VictoriaMetrics: 수집 정상성 메트릭 스크랩/저장 (외부 판정 TSDB) ---
   victoriametrics:
     # [HARD] VM·vmalert 동일 버전 태그 고정. latest 금지(mysql 8.4·redis 8.8 선례).

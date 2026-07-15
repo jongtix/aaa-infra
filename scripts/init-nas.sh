@@ -126,6 +126,7 @@ dirs=(
     "${AAA_HDD_BASE}/logs/mysql"
     "${AAA_HDD_BASE}/logs/redis"
     "${AAA_HDD_BASE}/logs/aaa-collector"
+    "${AAA_HDD_BASE}/logs/aaa-notifier"
     # 관측성 스택(OBSV-001): 신규 bind-mount 소스 — 사전 생성 필요
     "${AAA_HDD_BASE}/data/victoriametrics"
     "${AAA_HDD_BASE}/data/alertmanager"
@@ -173,6 +174,20 @@ for dir in "${chown_app_dirs[@]}"; do
     chown $APP_UID:$APP_UID "$dir"
     chmod 750 "$dir"
     info "  chown $APP_UID:$APP_UID + chmod 750 $dir"
+done
+
+# notifier는 $APP_UID(1004, collector/vector 전용)를 공유하지 않고 SPEC-NOTIFIER-FOUNDATION-001에서
+# 정의한 자체 전용 UID 1006으로 실행된다(analyzer가 로그 볼륨을 가진다면 1005를 쓰는 것과 동일한 이유).
+# $APP_UID 상수는 collector/vector 소유권 기준이라 값을 변경하지 않고 별도 명시적 chown으로 처리한다.
+NOTIFIER_UID=1006
+chown_notifier_dirs=(
+    "${AAA_HDD_BASE}/logs/aaa-notifier"
+)
+
+for dir in "${chown_notifier_dirs[@]}"; do
+    chown $NOTIFIER_UID:$NOTIFIER_UID "$dir"
+    chmod 750 "$dir"
+    info "  chown $NOTIFIER_UID:$NOTIFIER_UID + chmod 750 $dir"
 done
 
 # 관측성(OBSV-001): Alertmanager는 nobody(65534)로 실행되며 nflog/silences를 /alertmanager에 기록.
