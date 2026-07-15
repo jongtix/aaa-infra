@@ -933,7 +933,8 @@ groups:
       # MI-1 — 수집 기본 소스(KOREAEXIM/CBOE)가 batch_last_load 대비 25h(2회차) 이상 뒤처짐.
       # `> 0` 가드 제거(2026-07-14, SPEC-COLLECTOR-WARMSTART-REDIS-003 M2) — warm-start로 게이지가
       # 재기동 직후부터 비영이므로 불필요. 두 게이지 모두 부재(전면 Redis 유실)면 뺄셈이 빈 벡터가
-      # 되어 구조적으로 미발화한다.
+      # 되어 구조적으로 미발화한다(오발 아님 — 우변 부재 시 뺄셈 자체가 성립하지 않아 규칙이 물리적으로
+      # 발화할 수 없는 것이지, 판정 로직이 억제하는 게 아니다).
       - alert: MarketIndicatorPrimaryStale
         expr: >
           (aaa_collector_batch_last_load_seconds{batch="market-indicators"}
