@@ -14,8 +14,8 @@
 #   - config/redis/users.acl 경로는 이 파일 어디에도 등장하지 않는다(읽기/쓰기/비교
 #     전부 없음). DB 런타임 config(my.cnf/redis.conf) 파일도 동기화하지 않고
 #     detect_db_config_diff로 감지해 통지만 한다(REQ-CD-015).
-#   - collector·analyzer 서비스명은 compose-up 호출 인자(_docker_cmd compose up ...)에
-#     절대 등장하지 않는다 — OBSERVED_SERVICES 화이트리스트 밖이고, 두 서비스 블록이
+#   - collector·analyzer·notifier 서비스명은 compose-up 호출 인자(_docker_cmd compose up ...)에
+#     절대 등장하지 않는다 — OBSERVED_SERVICES 화이트리스트 밖이고, 세 서비스 블록이
 #     변경되면 compose_classify가 전체를 NOTIFY-only로 조기 반환(blocking)한다.
 #
 # 실행 순서(V-5, spec.md §5): compose diff 분류(구 vs 신, 부작용 없음) →
@@ -33,13 +33,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 # 관측 서비스 목록(REQ-CD-013) — compose 자동 반영(`docker compose up`) 대상 화이트리스트.
-# mysql·redis·collector·analyzer는 절대 포함하지 않는다([HARD]).
+# mysql·redis·collector·analyzer·notifier는 절대 포함하지 않는다([HARD]).
 OBSERVED_SERVICES=(vmalert alertmanager victoriametrics victorialogs vector node-exporter)
 
 # docker-compose.yml 안에 정의된 전체 서비스 이름(블록 diff 분류용). mysql/redis/
-# collector/analyzer도 포함하지만, 이는 그 블록이 변경됐을 때 "관측 서비스가 아니므로
+# collector/analyzer/notifier도 포함하지만, 이는 그 블록이 변경됐을 때 "관측 서비스가 아니므로
 # up 대상에서 제외 + notify"로 올바르게 분류하기 위함이지 up 대상으로 삼기 위함이 아니다.
-_ALL_KNOWN_SERVICES=(mysql redis collector analyzer victoriametrics vmalert alertmanager victorialogs vector node-exporter)
+_ALL_KNOWN_SERVICES=(mysql redis collector analyzer notifier victoriametrics vmalert alertmanager victorialogs vector node-exporter)
 
 # -----------------------------------------------------------------------------
 # docker 명령 실행 간접화 — 이 파일에서 실제 `docker ...`를 호출하는 유일한 지점.
@@ -137,13 +137,13 @@ compose_classify() {
   if [ "${#changed_services[@]}" -gt 0 ]; then
     for svc in "${changed_services[@]}"; do
       case "$svc" in
-        collector|analyzer) blocking=1 ;;
+        collector|analyzer|notifier) blocking=1 ;;
       esac
     done
   fi
 
   if [ "$blocking" -eq 1 ]; then
-    printf 'NOTIFY:compose 변경 감지 — 수동 검토 필요(공유 top-level 또는 collector/analyzer)\n'
+    printf 'NOTIFY:compose 변경 감지 — 수동 검토 필요(공유 top-level 또는 collector/analyzer/notifier)\n'
     return 0
   fi
 

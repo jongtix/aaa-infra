@@ -7,12 +7,12 @@
 #
 # 검증 대상 (SPEC-INFRA-CICD-001 T-004, 최고위험 마일스톤):
 #   - compose_classify: 관측 서비스 자기 블록만 변경 → UP만 / 공유 top-level·
-#     collector·analyzer 변경 → 전체 NOTIFY-only(blocking) / mysql·redis 블록
+#     collector·analyzer·notifier 변경 → 전체 NOTIFY-only(blocking) / mysql·redis 블록
 #     변경 → 절대 UP 없이 NOTIFY-only
 #   - reflect_deploy: 단순 config→restart/SIGHUP, V-5 dedup(동일 서비스 restart+
 #     compose-up 동시 대상이면 restart 드롭), config 동기화가 compose-up보다 항상
 #     먼저 실행됨(순서), DB runtime config는 절대 동기화되지 않고 통지만 발생
-#   - [HARD] 어떤 시나리오에서도 mysql/redis/users.acl/collector/analyzer가
+#   - [HARD] 어떤 시나리오에서도 mysql/redis/users.acl/collector/analyzer/notifier가
 #     DOCKER: 호출 로그에 등장하지 않음(가장 중요한 테스트 그룹)
 #
 # _docker_cmd를 재정의해 실제 docker 대신 REFLECT_CALL_LOG에만 기록한다 —
@@ -88,8 +88,8 @@ run_test() {
 
 _write_base_compose() {
   # $1=path $2=vmalert_image_tag(변형 포인트) $3=collector_image_tag $4=mysql_image_tag
-  # $5=x_logging_max_size(변형 포인트)
-  local path="$1" vmalert_tag="${2:-v1}" collector_tag="${3:-latest}" mysql_tag="${4:-8.4}" max_size="${5:-10m}"
+  # $5=x_logging_max_size(변형 포인트) $6=notifier_image_tag(변형 포인트)
+  local path="$1" vmalert_tag="${2:-v1}" collector_tag="${3:-latest}" mysql_tag="${4:-8.4}" max_size="${5:-10m}" notifier_tag="${6:-latest}"
   cat > "$path" <<EOF
 x-logging: &default-logging
   driver: json-file
@@ -120,6 +120,10 @@ services:
 
   analyzer:
     image: ghcr.io/jongtix/aaa-analyzer:latest
+    restart: unless-stopped
+
+  notifier:
+    image: ghcr.io/jongtix/aaa-notifier:${notifier_tag}
     restart: unless-stopped
 
   victoriametrics:
@@ -191,6 +195,20 @@ test_compose_classify_collector_block_change_blocks_and_never_emits_collector() 
   out=$(compose_classify "$old" "$new")
   assert_contains "$out" "NOTIFY:"
   assert_not_contains "$out" "UP:collector" "collector가 UP: 대상으로 등장하면 안 됨"
+  assert_not_contains "$out" "UP:"
+  rm -f "$old" "$new"
+}
+
+test_compose_classify_notifier_block_change_blocks_and_never_emits_notifier() {
+  local old new
+  old=$(mktemp) new=$(mktemp)
+  _write_base_compose "$old" "v1" "latest" "8.4" "10m" "1.0.0"
+  _write_base_compose "$new" "v1" "latest" "8.4" "10m" "1.1.0"   # notifier 블록만 변경
+
+  local out
+  out=$(compose_classify "$old" "$new")
+  assert_contains "$out" "NOTIFY:"
+  assert_not_contains "$out" "UP:notifier" "notifier가 UP: 대상으로 등장하면 안 됨"
   assert_not_contains "$out" "UP:"
   rm -f "$old" "$new"
 }
@@ -334,6 +352,28 @@ test_reflect_deploy_collector_block_change_never_names_collector_in_compose_up_a
   local log_content
   log_content=$(cat "$log")
   assert_not_contains "$log_content" "collector" "[HARD] collector가 compose-up 호출 인자에 절대 등장하면 안 됨"
+  assert_not_contains "$log_content" "DOCKER:compose up"
+
+  rm -f /tmp/reflect_out.$$ "$log"
+  rm -rf "$checkout" "$infra" "$ssd"
+}
+
+test_reflect_deploy_notifier_block_change_never_names_notifier_in_compose_up_args() {
+  local checkout infra ssd log
+  checkout=$(mktemp -d) infra=$(mktemp -d) ssd=$(mktemp -d)
+  log=$(mktemp)
+
+  _write_base_compose "$infra/docker-compose.yml" "v1" "latest" "8.4" "10m" "1.0.0"
+  _write_base_compose "$checkout/docker-compose.yml" "v1" "latest" "8.4" "10m" "1.1.0"   # notifier 블록만 변경
+
+  REFLECT_CALL_LOG="$log" reflect_deploy "docker-compose.yml" "$checkout" "$infra" "$ssd" > /tmp/reflect_out.$$
+  local out
+  out=$(cat /tmp/reflect_out.$$)
+  assert_contains "$out" "NOTIFY:"
+
+  local log_content
+  log_content=$(cat "$log")
+  assert_not_contains "$log_content" "notifier" "[HARD] notifier가 compose-up 호출 인자에 절대 등장하면 안 됨"
   assert_not_contains "$log_content" "DOCKER:compose up"
 
   rm -f /tmp/reflect_out.$$ "$log"
@@ -513,6 +553,7 @@ test_reflect_deploy_scrape_yml_sends_sighup_not_restart() {
 run_test test_compose_classify_vmalert_block_only_emits_up_vmalert_only
 run_test test_compose_classify_shared_anchor_change_blocks_everything
 run_test test_compose_classify_collector_block_change_blocks_and_never_emits_collector
+run_test test_compose_classify_notifier_block_change_blocks_and_never_emits_notifier
 run_test test_compose_classify_mysql_block_change_never_emits_up_mysql
 run_test test_compose_classify_vmalert_and_mysql_both_changed_ups_vmalert_excludes_mysql
 run_test test_compose_classify_unchanged_file_emits_nothing
@@ -521,6 +562,7 @@ run_test test_reflect_deploy_rules_yml_only_restarts_vmalert_only
 run_test test_reflect_deploy_compose_vmalert_block_only_ups_vmalert_only
 run_test test_reflect_deploy_shared_anchor_change_skips_all_compose_up_and_notifies
 run_test test_reflect_deploy_collector_block_change_never_names_collector_in_compose_up_args
+run_test test_reflect_deploy_notifier_block_change_never_names_notifier_in_compose_up_args
 run_test test_reflect_deploy_mysql_block_change_never_names_mysql_in_any_docker_call
 run_test test_reflect_deploy_mysql_config_change_does_not_sync_file_and_notifies
 run_test test_reflect_deploy_never_touches_users_acl
