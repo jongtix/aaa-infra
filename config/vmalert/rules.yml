@@ -130,6 +130,7 @@ groups:
           ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours|corp-code|dart-backfill|domestic-daily|market-indicators|dart-disclosure|watchlist-sync-krx"}) > 28 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -158,6 +159,7 @@ groups:
           ((time() - aaa_collector_market_gate_last_update_seconds) > 26 * 3600)
           and (aaa_collector_market_gate_last_update_seconds > 0)
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -174,6 +176,7 @@ groups:
       - alert: CollectorGateUnset
         expr: aaa_collector_market_gate_last_update_seconds == 0
         for: 26h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -204,6 +207,7 @@ groups:
             or (aaa_collector_us_market_open == 1 and on() aaa_collector_us_market_gate_holiday_count >= 20)
           )
         for: 3m
+        keep_firing_for: 10m
         labels:
           severity: critical
           component: collector
@@ -224,6 +228,7 @@ groups:
             or (aaa_collector_us_market_open == 1 and on() aaa_collector_us_market_gate_holiday_count >= 20)
           )
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -260,6 +265,7 @@ groups:
           ((time() - aaa_collector_batch_last_load_seconds{batch=~"domestic-financial-ratio|domestic-etf-representative"}) > 8 * 24 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -287,6 +293,7 @@ groups:
           ((time() - aaa_collector_batch_last_load_seconds{batch="domestic-news"}) > 1 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -311,6 +318,7 @@ groups:
         expr: |
           (time() - aaa_collector_batch_last_load_seconds{batch="watchlist-sync-us"}) > 28 * 3600
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -335,6 +343,7 @@ groups:
           and on() (aaa_collector_us_market_open == 1)
           and on() (aaa_collector_us_market_gate_holiday_count >= 20)
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -382,6 +391,7 @@ groups:
       - alert: CollectorWatermarkSeriesCountLow
         expr: count(aaa_collector_data_watermark_seconds) < 17
         for: 10m
+        keep_firing_for: 10m
         labels:
           severity: critical
           component: collector
@@ -411,6 +421,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="daily-ohlcv-krx"}
           ) > 0
         for: 4h
+        keep_firing_for: 10m
         labels:
           severity: critical
           component: collector
@@ -430,6 +441,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="daily-ohlcv-us"}
           ) > 0
         for: 4h
+        keep_firing_for: 10m
         labels:
           severity: critical
           component: collector
@@ -446,6 +458,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="market-usdkrw"}
           ) > 0
         for: 4h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -462,6 +475,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="investor-trend"}
           ) > 0
         for: 4h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -478,6 +492,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="short-sale-domestic"}
           ) > 0
         for: 4h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -494,6 +509,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="extended-hours-pre"}
           ) > 0
         for: 6h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -510,6 +526,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="extended-hours-after"}
           ) > 0
         for: 6h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -527,6 +544,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="disclosures"}
           ) > 0
         for: 17h30m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -544,6 +562,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="market-vix"}
           ) > 0
         for: 28h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -571,6 +590,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="credit-balance"}
           ) > 6 * 24 * 3600
         for: 17h30m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -587,6 +607,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="macro-fred"}
           ) > 6 * 24 * 3600
         for: 4h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -603,6 +624,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="analyst-estimates"}
           ) > 5 * 24 * 3600
         for: 17h30m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -619,6 +641,7 @@ groups:
            - on(market) group_right aaa_collector_data_watermark_seconds{series="macro-ecos"}
           ) > 4 * 24 * 3600
         for: 17h30m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -642,6 +665,7 @@ groups:
       - alert: CollectorWatermarkCoverageLowDomestic
         expr: aaa_collector_data_coverage_ratio{series="daily-ohlcv-krx"} < 0.95
         for: 1h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -655,6 +679,7 @@ groups:
       - alert: CollectorWatermarkCoverageLowOverseas
         expr: aaa_collector_data_coverage_ratio{series="daily-ohlcv-us"} < 0.95
         for: 1h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -698,6 +723,7 @@ groups:
           (aaa_collector_backfill_pending_slots > 0)
           and (increase(aaa_collector_backfill_windows_total[26h]) == 0)
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -745,6 +771,7 @@ groups:
       - alert: CollectorBackfillBelowFloor
         expr: aaa_collector_backfill_below_floor_stocks > 0
         for: 1h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -759,6 +786,7 @@ groups:
       - alert: CollectorBackfillInternalGap
         expr: aaa_collector_backfill_internal_gap_stocks > 0
         for: 1h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -800,6 +828,7 @@ groups:
             or (time() - max(aaa_collector_tick_last_seen_seconds{market="domestic"}) > 300)
           )
         for: 0m
+        keep_firing_for: 10m
         labels:
           severity: critical
           component: collector
@@ -821,6 +850,7 @@ groups:
             or (time() - max(aaa_collector_tick_last_seen_seconds{market="overseas"}) > 300)
           )
         for: 0m
+        keep_firing_for: 10m
         labels:
           severity: critical
           component: collector
@@ -941,6 +971,7 @@ groups:
            - on() group_right() aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"}
           ) > 25 * 3600
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -1114,6 +1145,7 @@ groups:
           and
           ((time() - aaa_collector_batch_expected_run_seconds - aaa_collector_batch_run_margin_seconds) > 0)
         for: 5m
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
@@ -1156,6 +1188,7 @@ groups:
       - alert: CollectorExpectedRunSeriesCountLow
         expr: count(aaa_collector_batch_expected_run_seconds) < scalar(aaa_collector_batch_enrolled)
         for: 10m
+        keep_firing_for: 10m
         labels:
           severity: critical
           component: collector
@@ -1173,6 +1206,7 @@ groups:
       - alert: CollectorExpectedRunPairMissing
         expr: aaa_collector_batch_expected_run_seconds unless on(batch) aaa_collector_batch_last_load_seconds
         for: 26h
+        keep_firing_for: 10m
         labels:
           severity: warning
           component: collector
