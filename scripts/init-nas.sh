@@ -126,6 +126,7 @@ dirs=(
     "${AAA_HDD_BASE}/logs/mysql"
     "${AAA_HDD_BASE}/logs/redis"
     "${AAA_HDD_BASE}/logs/aaa-collector"
+    "${AAA_HDD_BASE}/logs/aaa-analyzer"
     "${AAA_HDD_BASE}/logs/aaa-notifier"
     # 관측성 스택(OBSV-001): 신규 bind-mount 소스 — 사전 생성 필요
     "${AAA_HDD_BASE}/data/victoriametrics"
@@ -174,6 +175,19 @@ for dir in "${chown_app_dirs[@]}"; do
     chown $APP_UID:$APP_UID "$dir"
     chmod 750 "$dir"
     info "  chown $APP_UID:$APP_UID + chmod 750 $dir"
+done
+
+# analyzer는 SPEC-ANALYZER-FOUNDATION-001에서 정의한 자체 전용 UID 1005로 실행된다(SPEC-OBSV-LOGS-002).
+# $APP_UID(1004, collector/vector 전용) 상수를 재사용하지 않고 별도 명시적 chown으로 처리한다(notifier와 동일 패턴).
+ANALYZER_UID=1005
+chown_analyzer_dirs=(
+    "${AAA_HDD_BASE}/logs/aaa-analyzer"
+)
+
+for dir in "${chown_analyzer_dirs[@]}"; do
+    chown $ANALYZER_UID:$ANALYZER_UID "$dir"
+    chmod 750 "$dir"
+    info "  chown $ANALYZER_UID:$ANALYZER_UID + chmod 750 $dir"
 done
 
 # notifier는 $APP_UID(1004, collector/vector 전용)를 공유하지 않고 SPEC-NOTIFIER-FOUNDATION-001에서
