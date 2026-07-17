@@ -913,7 +913,6 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | Key 패턴 | 용도 | 리셋 주기 |
 |----------|------|-----------|
 | `metric:collect:miss:{날짜}` | 수집 누락 건수 | 일별 |
-| `metric:collect:latency:{날짜}` | 수집 지연 p95 누적 | 일별 |
 | `metric:fallback:{소스}:{날짜}` | Fallback 전환 횟수 | 일별 |
 | `metric:recovery:{서비스}:{날짜}` | 자동 복구 횟수 | 일별 |
 
@@ -1643,7 +1642,6 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 
 **일일 리포트 포함 항목 (Phase 1~2)**:
 - 수집 누락률 (Redis 카운터 기반)
-- 수집 지연 p95
 - Fallback 전환 내역 및 횟수
 - 자동 복구 횟수 요약
 - ML 신호 생성 건수 및 등급 분포
