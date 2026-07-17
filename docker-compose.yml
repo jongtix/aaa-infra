@@ -382,12 +382,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:9428/health | grep -q OK"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # --- Vector: collector 로그 tail → VictoriaLogs 적재 (SPEC-OBSV-LOGS-001) ---
   vector:
@@ -414,7 +408,7 @@ services:
       - aaa-network
     depends_on:
       victorialogs:
-        condition: service_healthy
+        condition: service_started
     cap_drop:
       - ALL
     security_opt:
