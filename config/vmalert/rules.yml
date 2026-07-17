@@ -1215,3 +1215,24 @@ groups:
           summary: "배치 첫 실행 기록 없음 — {{ $labels.batch }}"
           description: "배치 {{ $labels.batch }}의 감시 등록 후 26시간 동안 완료 기록이 한 번도 없음 — 신규 배치의 스케줄 미배선 또는 첫 실행 실패."
           action: "collector 로그({{ $labels.batch }} 스케줄 등록·실행) → 스케줄러 배선·cron 확인"
+
+  # ---------------------------------------------------------------------------
+  # 그룹: victorialogs 생존 — 게이트 무관 (SPEC-OBSV-VLOGS-HEALTH-001)
+  # ---------------------------------------------------------------------------
+  - name: victorialogs-liveness
+    # 평가 주기: 스크랩 30s와 정합
+    interval: 30s
+    rules:
+      # VictorialogsDown: 연속 스크랩 실패(30s×3=90s). job="victorialogs"는
+      # scrape.yml의 job_name: victorialogs와 일치 필수.
+      - alert: VictorialogsDown
+        expr: up{job="victorialogs"} == 0
+        for: 90s
+        labels:
+          severity: critical
+          component: victorialogs
+          tier: TICKET
+        annotations:
+          summary: "victorialogs 스크랩 실패(다운) — 90s 연속"
+          description: "VictoriaMetrics가 victorialogs /metrics 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
+          action: "ssh nas-ugreen \"docker ps -a | grep victorialogs\" → 컨테이너 기동·재시작 상태와 vector 적재 공백 확인"

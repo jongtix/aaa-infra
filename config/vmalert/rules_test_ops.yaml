@@ -541,3 +541,36 @@ tests:
               description: "/volume1 사용률이 70% 초과 지속."
               action: "ssh nas-ugreen \"df -h /volume1 /volume2\" → docker system df·로그·백업 순으로 대용량 정리"
 
+  # ===========================================================================
+  # SPEC-OBSV-VLOGS-HEALTH-001: victorialogs-liveness 룰 유닛테스트
+  # ===========================================================================
+  # T1. up==0 지속 → 90s for 충족 후 발화. 게이트 무관 발화(collector CollectorDown 준용).
+  - interval: 30s
+    input_series:
+      - series: 'up{job="victorialogs"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 120s
+        groupname: victorialogs-liveness
+        alertname: VictorialogsDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: victorialogs
+              job: victorialogs
+              tier: TICKET
+            exp_annotations:
+              summary: "victorialogs 스크랩 실패(다운) — 90s 연속"
+              description: "VictoriaMetrics가 victorialogs /metrics 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
+              action: "ssh nas-ugreen \"docker ps -a | grep victorialogs\" → 컨테이너 기동·재시작 상태와 vector 적재 공백 확인"
+
+  # T2. up==1(정상) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="victorialogs"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 120s
+        groupname: victorialogs-liveness
+        alertname: VictorialogsDown
+        exp_alerts: []
