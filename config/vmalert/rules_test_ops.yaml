@@ -562,7 +562,7 @@ tests:
             exp_annotations:
               summary: "victorialogs 스크랩 실패(다운) — 90s 연속"
               description: "VictoriaMetrics가 victorialogs /metrics 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
-              action: "ssh nas-ugreen \"docker ps -a | grep victorialogs\" → 컨테이너 기동·재시작 상태와 vector 적재 공백 확인"
+              action: "ssh nas-ugreen \"docker ps -a | grep victorialogs\" → 컨테이너 기동·재시작 상태 확인. 이상 시 \"docker logs aaa-vector\"로 적재 공백(victorialogs 연결 실패 에러) 확인"
 
   # T2. up==1(정상) → 미발화.
   - interval: 30s
