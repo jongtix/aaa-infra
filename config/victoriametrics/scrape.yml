@@ -26,3 +26,13 @@ scrape_configs:
     static_configs:
       # aaa-network 내부 DNS. node-exporter는 expose 9100(호스트 미공개).
       - targets: ["aaa-node-exporter:9100"]
+
+  # [SPEC-OBSV-VLOGS-HEALTH-001·HARD] job_name 은 반드시 `victorialogs` — vmalert
+  # VictorialogsDown 룰의 `up{job="victorialogs"}==0` 과 일치해야 한다. 불일치 시
+  # VictorialogsDown 알림 영구 미발화. 전역 scrape_interval: 30s 상속, 기본
+  # metrics_path=/metrics 생략.
+  - job_name: victorialogs
+    scheme: http
+    static_configs:
+      # aaa-network 내부 DNS. victorialogs는 expose 9428(호스트 미공개).
+      - targets: ["aaa-victorialogs:9428"]
