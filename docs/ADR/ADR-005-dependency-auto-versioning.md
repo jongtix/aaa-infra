@@ -23,7 +23,7 @@ AAA는 5개 독립 레포로 구성된 MSA 시스템이며, 각 레포가 서로
 레포별 `.github/dependabot.yml` 개별 설정으로 의존성 업데이트 PR을 자동 생성한다.
 
 - 에코시스템: `docker-compose`(aaa-infra), `gradle`(Java 서비스)[^1], `uv`(aaa-analyzer), `github-actions`(전체)
-- 스케줄: `weekly`, 레포별 요일 분산으로 PR 집중 방지
+- 스케줄: `weekly`, 전 레포 매주 월요일 16:00 KST 통일 — 1인 프로젝트 특성상 요일 분산보다 일괄 검토가 유리 (2026-07-17 개정, 기존: 레포별 요일 분산)
 - Security Updates: 즉시 활성화 (CVE 감지 시 자동 PR)
 
 ### 2. semantic-release — 커밋 기반 자동 버저닝

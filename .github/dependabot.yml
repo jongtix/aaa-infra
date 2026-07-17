@@ -7,7 +7,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "15:00"
+      time: "16:00"
       timezone: "Asia/Seoul"
     ignore:
       # MySQL은 8.4 LTS를 고정 사용. 메이저/마이너 업그레이드는 스키마 호환성과
@@ -28,5 +28,5 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "15:00"
+      time: "16:00"
       timezone: "Asia/Seoul"

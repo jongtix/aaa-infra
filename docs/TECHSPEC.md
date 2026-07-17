@@ -1546,7 +1546,7 @@ GitHub Actions UI — 성공/실패 즉시 확인
 **의존성 자동 업데이트 (Dependabot)**:
 - 레포별 `.github/dependabot.yml` 개별 설정 (5개 독립 레포)
 - 에코시스템: aaa-infra(`docker-compose` + `github-actions`), Java 서비스(`gradle`), aaa-analyzer(`uv`)
-- 스케줄: `weekly`, 레포별 요일 분산으로 PR 집중 방지
+- 스케줄: `weekly`, 전 레포 매주 월요일 16:00 KST 통일 (일괄 검토, ADR-005 2026-07-17 개정)
 - Dependabot Security Updates: 즉시 활성화 (CVE 감지 시 자동 PR)
 - 역할 분담: GitHub Actions Deploy = GHCR 빌드 앱 서비스 자동 배포, Dependabot = 인프라 이미지 + 라이브러리 의존성 PR 관리
 - ignore 정책 (`docker-compose` 에코시스템):
