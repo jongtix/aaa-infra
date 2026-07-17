@@ -128,12 +128,19 @@ groups:
       # [SPEC-COLLECTOR-MARKETIND-004 후속, 2026-07-17] 추가 제외: market-usdkrw(화~토 10:30 전용 배치) —
       #   주말 갭(토 10:30 → 월 게이트 on ≈45.7h)이 28h 임계와 구조적으로 불합치해 매주 월요일 오발.
       #   실행 감시는 expected-run 모델(collector BatchRunRegistry 편입)이 담당.
+      # [2026-07-17 제외 무효 정정] 구 항목 `extended-hours`는 실제 라벨(extended-hours-pre/-after)과
+      #   전체 일치하지 않아 제외가 무효였다 — MetricsQL 라벨 정규식은 전체 앵커링되므로 접두 부분일치가
+      #   성립하지 않는다(vmalert-tool 프로브 실측). 그 결과 두 라벨이 매주 월요일 장중 이 룰을 오발해
+      #   왔다(2026-07-13 월 09:30~15:30 KST firing, ALERTS 이력 실측). 접미사 라벨 2종을 명시 나열로
+      #   정정한다. 실행 감시는 expected-run 모델(레지스트리 18·19번)이 이미 전담 중이라 감시 공백 없음.
+      #   [유지보수 — 앵커링 주의] 이 정규식의 각 항목은 라벨 값과 "전체 일치"해야 제외된다. 접두어만
+      #   쓰면 조용히 무효가 되므로, 신규 배치 라벨 추가 시 정확한 전체 라벨을 나열할 것.
       # [유지보수] aaa-collector에 신규 스케줄러 추가 시:
       #   기본 28h+gate 임계 → 이 필터 변경 불필요.
       #   커스텀 임계(100h/18d/8d/1h 등) → 이 정규식에 추가 AND 별도 그룹 생성. 누락 시 오발.
       - alert: CollectorBatchStale
         expr: |
-          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours|corp-code|dart-backfill|domestic-daily|market-indicators|dart-disclosure|watchlist-sync-krx|market-usdkrw"}) > 28 * 3600)
+          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours-pre|extended-hours-after|corp-code|dart-backfill|domestic-daily|market-indicators|dart-disclosure|watchlist-sync-krx|market-usdkrw"}) > 28 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
         keep_firing_for: 10m

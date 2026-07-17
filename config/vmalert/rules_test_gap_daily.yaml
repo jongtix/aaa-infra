@@ -65,6 +65,24 @@ tests:
         alertname: CollectorBatchStale
         exp_alerts: []
 
+  # T13b. [2026-07-17 제외 무효 정정] extended-hours-pre/-after — 구 정규식 항목 `extended-hours`는
+  #      전체 앵커링 때문에 접미사 라벨과 미일치해 제외가 무효였고, 두 라벨이 매주 월요일 장중 오발해
+  #      왔다(2026-07-13 실측). 접미사 라벨 명시 나열로 정정 후 두 라벨 모두 미발화를 고정한다.
+  #      한쪽이라도 제외에서 빠지면 이 케이스가 발화를 감지해 실패한다.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="extended-hours-pre"}'
+        values: '-165000+0x30'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="extended-hours-after"}'
+        values: '-165000+0x30'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-collection-gap
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
   # T13a. [SPEC-COLLECTOR-MARKETIND-004 후속, 2026-07-17] market-usdkrw(화~토 10:30 전용 배치)는
   #      그룹2 필터에서 제외 — 주말 갭(토 10:30→월 게이트 on ≈45.7h)이 28h 임계와 구조 불합치라
   #      제외하지 않으면 매주 월요일 오발. 실행 감시는 expected-run 모델(레지스트리 편입)이 전담.
