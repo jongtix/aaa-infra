@@ -144,6 +144,8 @@ services:
     # ADR-016: DB 미접속 단계라 env_file/depends_on 없음(DB 연결은 INFER-001에서 추가)
     expose:
       - "8000"
+    volumes:
+      - ${AAA_HDD_BASE}/logs/aaa-analyzer:/var/log/aaa-analyzer
     logging: *default-logging
     networks:
       - aaa-network
