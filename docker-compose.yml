@@ -425,7 +425,7 @@ services:
 
   # --- node-exporter: NAS 호스트 자원(디스크·RAM·CPU) 메트릭 노출 (SPEC-INFRA-NODE-001) ---
   node-exporter:
-    image: prom/node-exporter:v1.12.0
+    image: prom/node-exporter:v1.12.1
     container_name: aaa-node-exporter
     restart: unless-stopped
     deploy:
