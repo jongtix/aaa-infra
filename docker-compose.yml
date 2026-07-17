@@ -355,7 +355,8 @@ services:
 
   # --- VictoriaLogs: collector JSON ECS 로그 수집·저장·조회 (SPEC-OBSV-LOGS-001) ---
   victorialogs:
-    # VictoriaLogs는 VictoriaMetrics 제품군이나 별도 버전 체계. v1.51.0 핀 고정.
+    # VictoriaLogs는 VictoriaMetrics 제품군이나 별도 버전 체계.
+    # v1.52.0 distroless 버전 고정 (SPEC-OBSV-VLOGS-HEALTH-001 — healthcheck 제거로 대응).
     image: victoriametrics/victoria-logs:v1.52.0
     container_name: aaa-victorialogs
     restart: unless-stopped
