@@ -65,6 +65,22 @@ tests:
         alertname: CollectorBatchStale
         exp_alerts: []
 
+  # T13a. [SPEC-COLLECTOR-MARKETIND-004 후속, 2026-07-17] market-usdkrw(화~토 10:30 전용 배치)는
+  #      그룹2 필터에서 제외 — 주말 갭(토 10:30→월 게이트 on ≈45.7h)이 28h 임계와 구조 불합치라
+  #      제외하지 않으면 매주 월요일 오발. 실행 감시는 expected-run 모델(레지스트리 편입)이 전담.
+  #      stale>28h + market_open==1이어도 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}'
+        values: '-165000+0x30'
+      - series: 'aaa_collector_market_open'
+        values: '1+0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-collection-gap
+        alertname: CollectorBatchStale
+        exp_alerts: []
+
   # T14. [배치 필터 검증] overseas-daily stale>28h + market_open==1 이지만
   #      batch 필터(batch!~"overseas-.*") 로 collector-collection-gap에서 미발화.
   #      overseas-daily는 예상-실행 모델(collector-collection-gap-expected-run)이 전담 — 28h 룰은 오발하지 않아야 함.

@@ -118,14 +118,20 @@ tests:
   # [2026-07-14 SPEC-COLLECTOR-WARMSTART-REDIS-003 M2] `> 0` 가드 제거에 맞춰 케이스 갱신:
   #   TI-WM-MI-002는 "가드 억제"(무발화)에서 "가드 제거 후 정상 발화"로 반전. TI-WM-MI-004(warm-start
   #   복원 후 정상 발화)·TI-WM-MI-005(전면 Redis 유실 시 구조적 침묵)를 신규 추가(REQ-WSR-026~028).
+  # [2026-07-17 SPEC-COLLECTOR-MARKETIND-004 후속] 소스별 2룰 분할 반영: KOREAEXIM 룰 좌변이
+  #   batch="market-usdkrw"(화~토 10:30 전용 배치)로 재배선 — KOREAEXIM 케이스(MI-001/-004)의 좌변
+  #   시리즈 라벨 교체. CBOE 케이스(MI-002/-003)는 기존 market-indicators 좌변 유지. 신규:
+  #   TI-WM-MI-006(KOREAEXIM 1회 실패 24h 관용 무발화)·TI-WM-MI-007(좌변 market-usdkrw 부재 시
+  #   구조적 침묵).
   # ===========================================================================
   # 시간 모델: batch_last_load_seconds − source_last_success_seconds > 25h(90000s), for:5m.
   # 두 게이지 모두 상수(시간 경과와 무관) — diff는 값 자체로 고정, for:5m 안정성만 검증하면 됨.
 
   # TI-WM-MI-001. [발화] 기본 소스(KOREAEXIM) 2회차 실패 — diff=100000s(≈27.8h>25h) 상시 → for:5m 후 발화.
+  # 좌변은 2026-07-17 분할로 market-usdkrw(전용 배치) 기준.
   - interval: 30s
     input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="market-indicators"}'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}'
         values: '200000+0x15'
       - series: 'aaa_collector_market_indicator_source_last_success_seconds{indicator="USDKRW",source="KOREAEXIM"}'
         values: '100000+0x15'
@@ -143,7 +149,7 @@ tests:
             exp_annotations:
               summary: "시장지표 수집 기본 소스 중단 — USDKRW (KOREAEXIM)"
               description: "USDKRW의 수집 기본 소스 KOREAEXIM가 2회차 이상 연속 실패 — 예비 소스가 대체 수집 중(데이터 결손 없음), 기본 소스 복구 필요(예비 상시화 방지)."
-              action: "collector 로그(KOREAEXIM 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
+              action: "collector 로그(usdkrw 전용 배치 화~토 10:30, KOREAEXIM 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
 
   # TI-WM-MI-002. [발화, `>0` 가드 제거 검증] source_last_success=0(한 번도 성공한 적 없는 기본 소스) →
   # diff가 25h 초과이면 가드 제거 후 정상 발화한다(#88 결함 해소 — 이전엔 가드가 이 케이스를 영구 침묵시켰음).
@@ -167,7 +173,7 @@ tests:
             exp_annotations:
               summary: "시장지표 수집 기본 소스 중단 — VIX (CBOE)"
               description: "VIX의 수집 기본 소스 CBOE가 2회차 이상 연속 실패 — 예비 소스가 대체 수집 중(데이터 결손 없음), 기본 소스 복구 필요(예비 상시화 방지)."
-              action: "collector 로그(CBOE 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
+              action: "collector 로그(market-indicators 배치 평일 17:05, CBOE 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
 
   # TI-WM-MI-003. [무발화, 1회 실패 용인] diff=86400s(24h, 정확히 1회차 계단) → 25h 미초과로 미발화(월요일 오탐 소멸 검증 — 이전 24h 벽시계 임계였다면 발화했을 케이스).
   - interval: 30s
@@ -185,10 +191,10 @@ tests:
   # TI-WM-MI-004. [발화, warm-start 복원 시나리오] 게이지가 재기동 시 Redis 값(비영)으로 warm-start된
   # 상태를 재현 — source_last_success가 과거의 non-zero 값으로 유지되고 기본 소스가 25h 초과 지연되면
   # 가드 제거와 무관하게 정상 발화한다(REQ-WSR-021/026, AC-3/AC-7 — 정상 케이스가 가드 제거로 영향받지
-  # 않음을 검증).
+  # 않음을 검증). 좌변은 2026-07-17 분할로 market-usdkrw 기준.
   - interval: 30s
     input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="market-indicators"}'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}'
         values: '250000+0x15'
       - series: 'aaa_collector_market_indicator_source_last_success_seconds{indicator="USDKRW",source="KOREAEXIM"}'
         values: '150000+0x15'
@@ -206,13 +212,42 @@ tests:
             exp_annotations:
               summary: "시장지표 수집 기본 소스 중단 — USDKRW (KOREAEXIM)"
               description: "USDKRW의 수집 기본 소스 KOREAEXIM가 2회차 이상 연속 실패 — 예비 소스가 대체 수집 중(데이터 결손 없음), 기본 소스 복구 필요(예비 상시화 방지)."
-              action: "collector 로그(KOREAEXIM 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
+              action: "collector 로그(usdkrw 전용 배치 화~토 10:30, KOREAEXIM 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
 
   # TI-WM-MI-005. [무발화, 전면 Redis 유실 — 구조적 침묵] 좌변(batch_last_load)·우변(source_last_success)
   # 모두 부재(시리즈 자체가 없음, 값 0이 아님) → 뺄셈이 빈 벡터가 되어 규칙이 발화할 수 없다(REQ-WSR-027,
-  # AC-8). `> 0` 가드 제거 후에도 전면 유실 시 오발하지 않음을 검증하는 핵심 안전망 케이스.
+  # AC-8). `> 0` 가드 제거 후에도 전면 유실 시 오발하지 않음을 검증하는 핵심 안전망 케이스(분할된 2룰
+  # 모두 좌변 부재로 침묵).
   - interval: 30s
     input_series: []
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-market-indicator
+        alertname: MarketIndicatorPrimaryStale
+        exp_alerts: []
+
+  # TI-WM-MI-006. [무발화, KOREAEXIM 1회 실패 관용] diff=86400s(24h, 정확히 1회차 계단) → 25h 미초과로
+  # 미발화 — 좌변 market-usdkrw 재배선으로 24h 계단이 복원됐음을 검증(재배선 전에는 스케줄 skew 6.6h가
+  # 더해져 1회 실패에 30.6h>25h로 즉시 발화했음, 2026-07-17 분할의 핵심 목적).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}'
+        values: '186400+0x15'
+      - series: 'aaa_collector_market_indicator_source_last_success_seconds{indicator="USDKRW",source="KOREAEXIM"}'
+        values: '100000+0x15'
+    alert_rule_test:
+      - eval_time: 5m30s
+        groupname: collector-market-indicator
+        alertname: MarketIndicatorPrimaryStale
+        exp_alerts: []
+
+  # TI-WM-MI-007. [무발화, 좌변 단독 부재 — 구조적 침묵] market-usdkrw 좌변 시리즈 부재 + KOREAEXIM
+  # 우변 존재 → KOREAEXIM 룰의 뺄셈이 빈 벡터가 되어 침묵. CBOE 룰도 좌변(market-indicators) 부재로
+  # 침묵. (배포 전이 구간·Redis 부분 유실에서 오발하지 않음을 고정)
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_market_indicator_source_last_success_seconds{indicator="USDKRW",source="KOREAEXIM"}'
+        values: '100000+0x15'
     alert_rule_test:
       - eval_time: 5m30s
         groupname: collector-market-indicator

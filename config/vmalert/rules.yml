@@ -67,9 +67,12 @@
 #   series(워터마크 사전) ≠ batch(실행완료 라벨). 예: series=investor-trend → batch=domestic-supply-investor,
 #   series=credit-balance → batch=domestic-supply-credit-balance, series=short-sale-domestic →
 #   batch=domestic-supply-short-sale, series=analyst-estimates → batch=domestic-invest-opinion,
-#   series=macro-ecos/macro-fred → 단일 batch=macro-external(공유 스케줄러). series=market-vix/market-usdkrw는
-#   전용 batch 라벨이 없음(market-indicators 7종 묶음 + group11 source-chain으로만 감시, Exclusion 4) —
+#   series=macro-ecos/macro-fred → 단일 batch=macro-external(공유 스케줄러). series=market-vix는
+#   전용 batch 라벨이 없음(market-indicators 6종 묶음 + group11 source-chain으로만 감시, Exclusion 4) —
 #   REQ-WM-024 제거 대상에 market-vix가 명시되어 있으나 대응하는 batch 실행 룰 자체가 없어 조치 불필요.
+#   series=market-usdkrw는 SPEC-COLLECTOR-MARKETIND-004(2026-07-17)로 전용 batch=market-usdkrw
+#   (화~토 10:30 KST, D−1 확정값)를 획득 — 실행 감시는 그룹 2 제외 + expected-run 레지스트리 편입으로
+#   이관, group11 KOREAEXIM 룰의 좌변 앵커로도 사용한다.
 #   series=daily-ohlcv-krx/us(batch=domestic-daily/overseas-daily)는 REQ-WM-024 제거 목록에 없으므로
 #   기존 실행 신선도(그룹 2 28h·그룹 5 100h)를 워터마크 PAGE 룰과 이중 안전망으로 그대로 유지한다.
 
@@ -122,12 +125,15 @@ groups:
       #   그룹에서 별도 처리).
       # [SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-020/021] 추가 제외: domestic-daily/market-indicators/
       #   dart-disclosure(게이트-레거시, 실행 감시 제거)·watchlist-sync-krx(예상-실행 모델로 재분류).
+      # [SPEC-COLLECTOR-MARKETIND-004 후속, 2026-07-17] 추가 제외: market-usdkrw(화~토 10:30 전용 배치) —
+      #   주말 갭(토 10:30 → 월 게이트 on ≈45.7h)이 28h 임계와 구조적으로 불합치해 매주 월요일 오발.
+      #   실행 감시는 expected-run 모델(collector BatchRunRegistry 편입)이 담당.
       # [유지보수] aaa-collector에 신규 스케줄러 추가 시:
       #   기본 28h+gate 임계 → 이 필터 변경 불필요.
       #   커스텀 임계(100h/18d/8d/1h 등) → 이 정규식에 추가 AND 별도 그룹 생성. 누락 시 오발.
       - alert: CollectorBatchStale
         expr: |
-          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours|corp-code|dart-backfill|domestic-daily|market-indicators|dart-disclosure|watchlist-sync-krx"}) > 28 * 3600)
+          ((time() - aaa_collector_batch_last_load_seconds{batch!~"overseas-.*|domestic-financial-ratio|domestic-etf-representative|domestic-news|watchlist-sync-us|domestic-supply-investor|domestic-supply-credit-balance|domestic-supply-short-sale|domestic-invest-opinion|macro-external|extended-hours|corp-code|dart-backfill|domestic-daily|market-indicators|dart-disclosure|watchlist-sync-krx|market-usdkrw"}) > 28 * 3600)
           and on() (aaa_collector_market_open == 1)
         for: 5m
         keep_firing_for: 10m
@@ -465,8 +471,8 @@ groups:
           tier: TICKET
         annotations:
           summary: "원/달러 환율 갱신 지연"
-          description: "장 마감 후 4시간이 지나도 당일 환율이 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형)."
-          action: "market-indicators 배치(평일 17:00) 로그에서 KOREAEXIM→Yahoo 폴백 동작 확인 → market_indicators에서 USDKRW 최근 일자 조회"
+          description: "직전 영업일 환율(D−1)이 적재되지 않은 상태가 4시간 이상 지속 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형, SPEC-COLLECTOR-MARKETIND-004 D−1 전환 반영)."
+          action: "usdkrw 전용 배치(화~토 10:30 KST, D−1 확정값)·02:00 백필 갭워크 로그에서 KOREAEXIM→Yahoo 폴백 동작 확인 → market_indicators에서 USDKRW 최근 일자 조회"
 
       # B-4 투자자별 매매동향 — TICKET, 4h. domestic-supply-investor는 독립 크론 없이 일봉 체인 후속.
       - alert: CollectorWatermarkFreshnessStaleInvestorTrend
@@ -949,6 +955,7 @@ groups:
   #      점프하므로 25h = 2회 연속 실패부터 발화(1회 실패는 예비 소스가 대체 수집해 결손 0 —
   #      TICKET 열화 알림 소음을 줄이려는 의도적 관용). 주말·공휴일 동결 면역이라 market_open
   #      게이트 제거(월요일 오탐 원천 소멸). 발화·해소 항상 17:05경(market-indicators 배치 직후).
+  #      [→ ④가 소스별 앵커·시각을 개정 — KOREAEXIM은 10:30경, CBOE는 17:05경]
   #   ③ [2026-07-14 SPEC-COLLECTOR-WARMSTART-REDIS-003 M2] `> 0` 가드를 제거했다. aaa-collector
   #      M1이 `source_last_success` 게이지를 Redis에서 warm-start하므로 재기동 직후에도 게이지가
   #      (한 번이라도 성공한 적 있으면) 비영이 되어 가드의 존재 이유가 사라졌다. 가드를 유지하면
@@ -956,19 +963,31 @@ groups:
   #      Redis 유실 시엔 좌변 `batch_last_load{market-indicators}`도 동일 Redis에서 seed되므로
   #      부재→빈 벡터로 구조적으로 침묵한다(오발 아님, spec.md §4.5 참조). #78 후속 원라인
   #      가드-제거 후속을 본 변경이 흡수한다.
+  #   ④ [2026-07-17 SPEC-COLLECTOR-MARKETIND-004 후속] USDKRW 전용 배치 분리(batch=market-usdkrw,
+  #      화~토 10:30 KST, D−1 확정값)에 맞춰 소스별 2룰로 분할. KOREAEXIM 룰의 좌변을
+  #      market-indicators(17:05)에서 market-usdkrw로 재배선 — 좌·우변이 같은 배치에서 stamp되어
+  #      정상 diff=0, 실패마다 24h 계단이 복원된다. 재배선 없이는 (i) 스케줄 skew 6.6h(17:05−10:30)로
+  #      1회 실패에 30.6h>25h 즉시 발화(1회 관용 소실), (ii) 월요일은 좌변(market-indicators 월
+  #      17:05)만 전진하고 우변은 최신 KOREAEXIM 성공(토 02:00 갭워크 또는 금 10:30)에 머물러
+  #      63h+>25h로 매주 월요일 오발. cron이 화~토(D−1=항상 영업일)라 월요일은 양변 모두 정지(diff
+  #      불변)로 면역. CBOE는 기존식(market-indicators 좌변) 그대로 — 공유 임계 +24h 조정안은 CBOE
+  #      2연속 실패(48h)가 49h 미달로 미발화하게 되어 기각. 발화·해소: KOREAEXIM 10:30경, CBOE 17:05경.
   # ---------------------------------------------------------------------------
   - name: collector-market-indicator
     interval: 30s
     rules:
-      # MI-1 — 수집 기본 소스(KOREAEXIM/CBOE)가 batch_last_load 대비 25h(2회차) 이상 뒤처짐.
-      # `> 0` 가드 제거(2026-07-14, SPEC-COLLECTOR-WARMSTART-REDIS-003 M2) — warm-start로 게이지가
+      # 공통: `> 0` 가드 제거(2026-07-14, SPEC-COLLECTOR-WARMSTART-REDIS-003 M2) — warm-start로 게이지가
       # 재기동 직후부터 비영이므로 불필요. 두 게이지 모두 부재(전면 Redis 유실)면 뺄셈이 빈 벡터가
       # 되어 구조적으로 미발화한다(오발 아님 — 우변 부재 시 뺄셈 자체가 성립하지 않아 규칙이 물리적으로
-      # 발화할 수 없는 것이지, 판정 로직이 억제하는 게 아니다).
+      # 발화할 수 없는 것이지, 판정 로직이 억제하는 게 아니다). 좌변 단독 부재(예: market-usdkrw 라벨
+      # 미노출)도 동일하게 빈 벡터 침묵.
+
+      # MI-1a — USDKRW 기본 소스(KOREAEXIM)가 전용 배치(market-usdkrw, 화~토 10:30 KST) 대비
+      # 25h(2회차) 이상 뒤처짐. 좌변 재배선 근거는 그룹 헤더 ④ 참조.
       - alert: MarketIndicatorPrimaryStale
         expr: >
-          (aaa_collector_batch_last_load_seconds{batch="market-indicators"}
-           - on() group_right() aaa_collector_market_indicator_source_last_success_seconds{source=~"KOREAEXIM|CBOE"}
+          (aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}
+           - on() group_right() aaa_collector_market_indicator_source_last_success_seconds{source="KOREAEXIM"}
           ) > 25 * 3600
         for: 5m
         keep_firing_for: 10m
@@ -979,7 +998,26 @@ groups:
         annotations:
           summary: "시장지표 수집 기본 소스 중단 — {{ $labels.indicator }} ({{ $labels.source }})"
           description: "{{ $labels.indicator }}의 수집 기본 소스 {{ $labels.source }}가 2회차 이상 연속 실패 — 예비 소스가 대체 수집 중(데이터 결손 없음), 기본 소스 복구 필요(예비 상시화 방지)."
-          action: "collector 로그({{ $labels.source }} 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
+          action: "collector 로그(usdkrw 전용 배치 화~토 10:30, {{ $labels.source }} 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
+
+      # MI-1b — VIX 기본 소스(CBOE)가 market-indicators 배치(평일 17:05) 대비 25h(2회차) 이상 뒤처짐.
+      # 기존 MI-1 단일 룰에서 소스만 CBOE로 한정(식·임계 무변경) — KOREAEXIM 좌변 재배선(MI-1a)과
+      # 분리해 CBOE의 "2회 연속 실패부터 발화" 의미를 그대로 보존한다.
+      - alert: MarketIndicatorPrimaryStale
+        expr: >
+          (aaa_collector_batch_last_load_seconds{batch="market-indicators"}
+           - on() group_right() aaa_collector_market_indicator_source_last_success_seconds{source="CBOE"}
+          ) > 25 * 3600
+        for: 5m
+        keep_firing_for: 10m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+        annotations:
+          summary: "시장지표 수집 기본 소스 중단 — {{ $labels.indicator }} ({{ $labels.source }})"
+          description: "{{ $labels.indicator }}의 수집 기본 소스 {{ $labels.source }}가 2회차 이상 연속 실패 — 예비 소스가 대체 수집 중(데이터 결손 없음), 기본 소스 복구 필요(예비 상시화 방지)."
+          action: "collector 로그(market-indicators 배치 평일 17:05, {{ $labels.source }} 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 12: NAS 호스트 자원 — 디스크·RAM·CPU 3단계 (SPEC-INFRA-NODE-001)
