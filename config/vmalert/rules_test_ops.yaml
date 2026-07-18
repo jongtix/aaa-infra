@@ -353,39 +353,41 @@ tests:
         alertname: NodeDiskWarning1
         exp_alerts: []
 
-  # TI-NODE-006. [RAM] NodeMemoryWarning1 발화 — 85%(MemAvailable=15) > 80%, 11m (AC-4a / REQ-NE-008, 2026-07-05 임계 상향)
-  - interval: 60s
-    input_series:
-      - series: 'node_memory_MemAvailable_bytes'
-        values: '15+0x12'
-      - series: 'node_memory_MemTotal_bytes'
-        values: '100+0x12'
-    alert_rule_test:
-      - eval_time: 11m
-        groupname: node-resource
-        alertname: NodeMemoryWarning1
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: node
-              tier: TICKET
-            exp_annotations:
-              summary: "NAS 메모리 사용률 1단계 — 85%"
-              description: "호스트 메모리 사용률이 80% 초과 지속."
-              action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
+  # TI-NODE-006/007 비활성화 2026-07-18: NodeMemoryWarning1 룰 자체를 rules.yml에서 주석 처리.
+  # TODO: 16GB RAM 업그레이드 후 임계값 재산정하여 룰과 함께 복원.
+  # # TI-NODE-006. [RAM] NodeMemoryWarning1 발화 — 85%(MemAvailable=15) > 80%, 11m (AC-4a / REQ-NE-008, 2026-07-05 임계 상향)
+  # - interval: 60s
+  #   input_series:
+  #     - series: 'node_memory_MemAvailable_bytes'
+  #       values: '15+0x12'
+  #     - series: 'node_memory_MemTotal_bytes'
+  #       values: '100+0x12'
+  #   alert_rule_test:
+  #     - eval_time: 11m
+  #       groupname: node-resource
+  #       alertname: NodeMemoryWarning1
+  #       exp_alerts:
+  #         - exp_labels:
+  #             severity: warning
+  #             component: node
+  #             tier: TICKET
+  #           exp_annotations:
+  #             summary: "NAS 메모리 사용률 1단계 — 85%"
+  #             description: "호스트 메모리 사용률이 80% 초과 지속."
+  #             action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
 
-  # TI-NODE-007. [RAM] NodeMemoryWarning1 미발화 — 75%(MemAvailable=25) < 80%, 11m (AC-4b / REQ-NE-008, 2026-07-05 임계 상향)
-  - interval: 60s
-    input_series:
-      - series: 'node_memory_MemAvailable_bytes'
-        values: '25+0x12'
-      - series: 'node_memory_MemTotal_bytes'
-        values: '100+0x12'
-    alert_rule_test:
-      - eval_time: 11m
-        groupname: node-resource
-        alertname: NodeMemoryWarning1
-        exp_alerts: []
+  # # TI-NODE-007. [RAM] NodeMemoryWarning1 미발화 — 75%(MemAvailable=25) < 80%, 11m (AC-4b / REQ-NE-008, 2026-07-05 임계 상향)
+  # - interval: 60s
+  #   input_series:
+  #     - series: 'node_memory_MemAvailable_bytes'
+  #       values: '25+0x12'
+  #     - series: 'node_memory_MemTotal_bytes'
+  #       values: '100+0x12'
+  #   alert_rule_test:
+  #     - eval_time: 11m
+  #       groupname: node-resource
+  #       alertname: NodeMemoryWarning1
+  #       exp_alerts: []
 
   # TI-NODE-008. [RAM] NodeMemoryWarning2 발화 — 92%(MemAvailable=8) > 90%, 11m (AC-4a / REQ-NE-009, 2026-07-05 임계 상향)
   - interval: 60s
