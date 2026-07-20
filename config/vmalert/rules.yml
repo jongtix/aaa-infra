@@ -896,60 +896,49 @@ groups:
           action: "collector 로그(침묵 드롭 WARN — 테이블·에러코드·행) → 해당 테이블·원본 대조. 로그 미발견 시 VM 카운터 증가 시각으로 배치 식별"
 
   # ---------------------------------------------------------------------------
-  # 그룹 10: 안전 모드 진입/해제 — SPEC-OBSV-SYSALERT-001
-  # [2026-07-10 Family SM 확정] Entered를 module(token/ws)별 2룰로 분할 — token(TTL 백오프
-  #   1~4h 자동 재시도)과 ws(TTL 없음, 수동 삭제가 유일한 해제 수단)는 원인·대응이 정반대라
-  #   한 룰로 못 담김. 전부 이벤트형(카운터 증분) → `notify: fire_only`(resolved 통지 억제).
-  #   해제 관측 사각(exit_total은 token 발급 성공 경로만 증가, ws는 exit() 호출 자체가 없음)은
-  #   aaa-infra#85(상태형 게이지 safe_mode_active 신설)로 근본 해소 예정 — SM-2 문구에 한계 명시.
+  # 그룹 10: 안전 모드 진입/해제 — SPEC-OBSV-SYSALERT-001 / SPEC-COLLECTOR-SAFEMODEGAUGE-001
+  # [2026-07-20 상태형 게이지 전환, aaa-infra#85 해소] 이벤트형(카운터 증분) 관측을 상태형 게이지
+  #   aaa_collector_safe_mode_active{module,alias}(0/1)로 교체했다. 해제가 어느 경로로 일어나든
+  #   (TTL 자연 만료·수동 삭제·명시적 exit) 게이지 1→0 하강을 firing→resolved 전이로 포착한다.
+  #   이로써 exit_total이 token 발급 성공 경로만 증가하고 ws는 exit() 호출 자체가 없어 TTL 만료·
+  #   수동 삭제 해제를 놓치던 관측 사각(구 SM-2 CollectorSafeModeExited)이 근본 해소됐다.
+  #   진입 알림(SM-1a/SM-1b)은 notify:fire_only를 제거해 resolved(✅ 해소) 통지를 받는다.
   # ---------------------------------------------------------------------------
-  # collector가 KIS 토큰·WebSocket 안전 모드에 진입/해제할 때 즉시 경보.
-  # 메트릭: SafeModeManager.enter()/exit()가 Micrometer counter를 증가시킨다.
+  # 게이지: SafeModeGaugeBinder가 SafeModeManager.isActive(alias)를 스크레이프 시점에 직접 조회해 노출.
   # for: 0m — 안전 모드는 즉시 알림이 필요하며 지속 시간 조건 불필요.
+  # keep_firing_for: 2m — interval 30s 기준 4주기 완충. Redis 순간 예외·TTL 만료 직후 재진입 gap으로
+  #   게이지가 한두 주기 순간 0으로 관측돼도 즉시 거짓 resolved가 나가지 않도록 firing 유지(REQ-SMG-017).
   - name: collector-safemode
     interval: 30s
     rules:
-      # SM-1a — module="token": TTL 백오프 1h→2h→4h로 자동 재시도.
+      # SM-1a — module="token": 상태형 게이지 active==1 동안 firing. TTL 백오프 1h→2h→4h 자동 재시도.
       - alert: CollectorSafeModeEntered
-        expr: increase(aaa_collector_safe_mode_enter_total{module="token"}[5m]) > 0
+        expr: aaa_collector_safe_mode_active{module="token"} == 1
         for: 0m
+        keep_firing_for: 2m
         labels:
           severity: critical
           component: collector
           tier: PAGE
-          notify: fire_only
         annotations:
           summary: "안전 모드 진입 — KIS 토큰 (계좌 {{ $labels.alias }})"
           description: "토큰 발급 실패로 계좌 {{ $labels.alias }}의 KIS 호출 차단 중. 1~4시간 백오프 후 자동 재시도 — 짧은 간격 반복 진입이면 앱키 문제 의심."
           action: "collector 로그(진입 원인 예외) → 재발급 성공 로그 또는 redis 키 safe_mode:collector:token:{alias} 소멸 확인"
 
-      # SM-1b — module="ws": TTL 없이 영구 저장, 수동 삭제 전까지 자동 복구 없음.
+      # SM-1b — module="ws": 상태형 게이지 active==1 동안 firing. WS-RESILIENCE-001로 TTL 백오프
+      #   1h→2h→4h 자동 복구 활성화됨(구 "수동 삭제 전까지 자동 복구 없음" 전제는 stale — 정정).
       - alert: CollectorSafeModeEntered
-        expr: increase(aaa_collector_safe_mode_enter_total{module="ws"}[5m]) > 0
+        expr: aaa_collector_safe_mode_active{module="ws"} == 1
         for: 0m
+        keep_firing_for: 2m
         labels:
           severity: critical
           component: collector
           tier: PAGE
-          notify: fire_only
         annotations:
           summary: "안전 모드 진입 — WebSocket (계좌 {{ $labels.alias }})"
-          description: "WebSocket 연결 오류 반복으로 계좌 {{ $labels.alias }}의 재연결 차단 중. 자동 복구 없음 — 수동 해제 전까지 유지."
-          action: "collector 로그(진입 원인 예외) → 원인 해소 후 redis 키 safe_mode:collector:ws:{alias} 수동 삭제(TECHSPEC §1.3)"
-
-      # SM-2 — 실질 발화는 token뿐(exit_total 증가 경로가 token 발급 성공 하나) → 분할 불요.
-      - alert: CollectorSafeModeExited
-        expr: increase(aaa_collector_safe_mode_exit_total[5m]) > 0
-        for: 0m
-        labels:
-          severity: info
-          component: collector
-          tier: TICKET
-          notify: fire_only
-        annotations:
-          summary: "안전 모드 해제 — 토큰 (계좌 {{ $labels.alias }})"
-          description: "계좌 {{ $labels.alias }} 안전 모드 해제(토큰 발급 성공). 참고: TTL 자연 만료·수동 삭제로 풀린 경우엔 이 알림이 오지 않음(aaa-infra#85)."
-          action: "이후 배치·WS 정상 수집 재개 여부 확인"
+          description: "WebSocket 연결 오류 반복으로 계좌 {{ $labels.alias }}의 재연결 차단 중. WS-RESILIENCE-001 TTL 백오프(1h→2h→4h)로 자동 복구 — 수동 삭제도 가능."
+          action: "collector 로그(진입 원인 예외) → 원인 해소 후 TTL 백오프 자동 복구 대기 또는 redis 키 safe_mode:collector:ws:{alias} 수동 삭제(TECHSPEC §1.3)"
 
   # ---------------------------------------------------------------------------
   # 그룹 11: 시장지표 소스 체인 Fallback 가시성 — SPEC-COLLECTOR-MARKETIND-002
