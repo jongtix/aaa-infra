@@ -648,11 +648,11 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 종목 마스터. 국내/해외 주식, ETF, 업종지수를 통합 관리한다. 수집 대상 종목의 기준 정보를 담으며, 다른 시계열 테이블이 FK로 참조하는 중심 테이블이다. 지수는 watchlist sync가 `asset_type=INDEX`로 자동 등록한다 — 국내 종합지수는 `market=KRX`(코스피 `0001`, 코스닥 `1001`), 해외 지수는 `market=US`(SPX/COMP/.DJI 등). (SPEC-COLLECTOR-BATCH-003 실측 2026-06-14)
 
-- **주요 컬럼**: `symbol`(종목코드), `market`(시장, Java ENUM → VARCHAR 저장), `asset_type`(자산유형, Java ENUM → VARCHAR 저장), `active`(수집 활성 여부), `watchlist_removed_at`(관심목록 제거 시각, NULL=현재 수집 중)
+- **주요 컬럼**: `symbol`(종목코드), `market`(시장, Java ENUM → VARCHAR 저장), `asset_type`(자산유형, Java ENUM → VARCHAR 저장), `active`(수집 활성 여부·시장 유효성 축), `watchlist_removed_at`(관심목록 제거 시각, NULL=현재 수집 중), `delisted_at`(상장폐지일자, NULL=상폐 아님, set-only 비가역), `delisting_reason`(상폐 사유, Java ENUM → VARCHAR 저장: BANKRUPTCY/MERGER/VOLUNTARY/ETF_TERMINATION/UNKNOWN)
 - **유니크 키**: `(symbol, market)` — 동일 종목코드가 시장별로 존재 가능 (예: 삼성전자 KRX vs OTC)
-- **인덱스**: `(market, asset_type)` — 시장별·자산유형별 수집 대상 필터링 최적화
-- **설계 결정**: `active` 필드로 상장폐지·거래정지 종목을 논리 삭제 처리. 물리 삭제 시 FK 참조 무결성 파괴 방지. 종목 메타데이터(상장 여부, 종목명 등) 변경 시 UPDATE 사용 — 종목당 현재 상태 1건만 유지하는 마스터 테이블이므로 시계열 테이블의 INSERT IGNORE 원칙 비적용. `watchlist_removed_at`은 관심목록 이탈 시각 추적 전용 — `active`(상장폐지·거래정지)와 역할 분리 ([ADR-022](ADR/ADR-022-watchlist-sync-stocks-update-strategy.md) 결정 5)
-- **DDL**: `V1__collector_create_stocks.sql`
+- **인덱스**: `(market, asset_type)` — 시장별·자산유형별 수집 대상 필터링 최적화. `(active, watchlist_removed_at)` — `findAllActive*` 2축 필터 쿼리 최적화 (SPEC-COLLECTOR-WLSYNC-008)
+- **설계 결정**: `active` 필드로 상장폐지·거래정지 종목을 논리 삭제 처리. 물리 삭제 시 FK 참조 무결성 파괴 방지. 종목 메타데이터(상장 여부, 종목명 등) 변경 시 UPDATE 사용 — 종목당 현재 상태 1건만 유지하는 마스터 테이블이므로 시계열 테이블의 INSERT IGNORE 원칙 비적용. `watchlist_removed_at`은 관심목록 이탈 시각 추적 전용 — `active`(상장폐지·거래정지)와 역할 분리 ([ADR-022](ADR/ADR-022-watchlist-sync-stocks-update-strategy.md) 결정 5). `delisted_at`/`delisting_reason`은 `active=false`의 사유 메타데이터이며 쿼리 필터 축이 아니다(3축 금지) — KIS 종목 기본정보 응답(CTPF1002R/CTPF1702R, 이미 호출 중)에서 상폐/거래정지 판정 필드를 파싱해 반영하며 신규 API 호출은 없다. 상폐는 `delisted_at` set-only(비가역), 거래정지만은 `active` 가역 (SPEC-COLLECTOR-WLSYNC-008, 실측 2026-07-20)
+- **DDL**: `V1__collector_create_stocks.sql`, `V37__collector_add_delisted_at_to_stocks.sql`, `V38__collector_add_active_watchlist_removed_at_index_to_stocks.sql`
 
 #### daily_ohlcv
 
