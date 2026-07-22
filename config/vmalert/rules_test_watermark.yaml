@@ -381,6 +381,72 @@ tests:
         alertname: CollectorBackfillCapSaturated
         exp_alerts: []
 
+  # TI-WM-BF-015. [발화, BF-8 신설, notify=fire_only] covered_walk_anomaly_total{kind=front_gap} 5분 내
+  #   증가 → CollectorBackfillCoveredWalkFrontGap 발화(SPEC-COLLECTOR-BACKFILL-011).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_covered_walk_anomaly_total{kind="front_gap"}'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillCoveredWalkFrontGap
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+              notify: fire_only
+              kind: front_gap
+            exp_annotations:
+              summary: "정방향 갭 walk 앞단 미도달 — 실제 hole 여부 확인 필요"
+              description: "정방향 갭 walk 스텝에서 API가 반환한 최소 거래일자가 스텝 시작 커서에 도달하지 못함(REQ-CVR-076 심층 방어) — status는 FAILED로 전환되지 않고 covered_until_date 전진도 억제되지 않음. 비거래일(주말·공휴일) 커서 오판일 수 있음(REQ-CVR-076 검증식 정정은 별도 후속 SPEC 소관)."
+              action: "collector 로그(covered-range 앞단 미도달 WARN — cursor·oldest·대상) 확인 → 해당 구간 거래일 여부 확인 → 진짜 hole이면 covered_until_date 리셋+재-walk"
+
+  # TI-WM-BF-016. [무발화] covered_walk_anomaly_total{kind=front_gap} 무증가 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_covered_walk_anomaly_total{kind="front_gap"}'
+        values: '0+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillCoveredWalkFrontGap
+        exp_alerts: []
+
+  # TI-WM-BF-017. [발화, BF-9 신설, notify=fire_only] covered_walk_anomaly_total{kind=all_rejected} 5분 내
+  #   증가 → CollectorBackfillCoveredWalkAllRejected 발화(SPEC-COLLECTOR-BACKFILL-011).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_covered_walk_anomaly_total{kind="all_rejected"}'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillCoveredWalkAllRejected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+              notify: fire_only
+              kind: all_rejected
+            exp_annotations:
+              summary: "정방향 갭 walk 검증 전량 실패"
+              description: "정방향 갭 walk 스텝에서 원본 응답은 있으나 검증을 통과해 저장된 행이 없음(REQ-CVR-031) — status는 FAILED로 전환되지 않고 구간 확장만 중단됨."
+              action: "collector 로그(covered-range 검증 전량 실패 WARN) 확인 → 파서·검증 로직 점검"
+
+  # TI-WM-BF-018. [무발화] covered_walk_anomaly_total{kind=all_rejected} 무증가 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_backfill_covered_walk_anomaly_total{kind="all_rejected"}'
+        values: '0+0x131'
+    alert_rule_test:
+      - eval_time: 1h5m
+        groupname: collector-backfill-anomaly
+        alertname: CollectorBackfillCoveredWalkAllRejected
+        exp_alerts: []
+
   # ===========================================================================
   # 룰 W7: collector-silent-drops — REQ-WM-022
   # ===========================================================================
