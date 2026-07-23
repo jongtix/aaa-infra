@@ -686,7 +686,7 @@ groups:
           tier: TICKET
         annotations:
           summary: "국내 일봉 일부 종목 누락"
-          description: "감시 대상 국내 종목(주식+ETF) 중 최신 거래일 일봉이 적재된 비율이 {{ $value | humanizePercentage }} — 기준 95% 미달 (하루 1회 19:35 계산이라 복구 후에도 다음 계산까지 알림이 남을 수 있음)(REQ-WM-018)."
+          description: "감시 대상 국내 종목(주식+ETF+ETN+금현물, SPEC-COLLECTOR-ASSETSCOPE-001 REQ-ASSETSCOPE-008 편입) 중 최신 거래일 일봉이 적재된 비율이 {{ $value | humanizePercentage }} — 기준 95% 미달 (하루 1회 19:35 계산이라 복구 후에도 다음 계산까지 알림이 남을 수 있음)(REQ-WM-018)."
           action: "domestic-daily 배치(평일 16:00) 로그에서 종목별 실패 확인 → daily_ohlcv에서 최신 거래일 빠진 국내 종목 조회"
 
       # D-2 미국 — 게이지 계산 매일 10:00 KST(데드라인 20:00 ET의 DST 안전 상수).
