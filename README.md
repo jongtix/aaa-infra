@@ -64,13 +64,15 @@ docker compose down
 ```
 aaa-infra/
 ├── docs/
-│   ├── PRD.md          — 제품 요구사항 (무엇을, 왜)
-│   ├── TECHSPEC.md     — 기술 사양서 (어떻게)
-│   ├── MILESTONE.md    — Phase별 마일스톤
-│   ├── TODO.md         — 현재 진행 중인 작업 목록
-│   └── ADR/            — 아키텍처 결정 기록
+│   ├── PRD.md               — 제품 요구사항 (무엇을, 왜)
+│   ├── TECHSPEC.md          — 기술 사양서 (어떻게)
+│   ├── MILESTONE.md         — Phase별 마일스톤
+│   ├── TODO.md              — 현재 진행 중인 작업 목록
+│   ├── UGOS-ACL-RESET.md    — UGOS ACL 리셋 절차 (aaa-infra#118)
+│   └── ADR/                 — 아키텍처 결정 기록
 ├── scripts/
-│   └── init-nas.sh     — NAS 최초 배포 전 호스트 환경 초기화
+│   ├── init-nas.sh           — NAS 최초 배포 전 호스트 환경 초기화 (--reset-acl 모드 포함)
+│   └── aaa-reset-acl.service — 부팅 시 ACL 자동 리셋 systemd 유닛
 └── README.md
 ```
 

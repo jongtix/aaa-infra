@@ -6,7 +6,8 @@
 # 멱등성 보장: 반복 실행해도 기존 데이터를 손상하지 않는다.
 #
 # 사용법:
-#   sudo bash scripts/init-nas.sh
+#   sudo bash scripts/init-nas.sh              # 최초 배포 전체 초기화
+#   sudo bash scripts/init-nas.sh --reset-acl   # ACL 리셋만 (아래 참고)
 #
 # 사전 조건:
 #   1. 프로젝트 루트 .env 파일에 AAA_SSD_BASE, AAA_HDD_BASE 설정 완료
@@ -17,6 +18,19 @@
 #   2. 시크릿 파일 배치 — .env.mysql, .env.redis, .env.common → secrets 디렉토리
 #   3. chmod 600 ${AAA_SSD_BASE}/secrets/.env.*
 #   4. docker compose up -d
+#
+# --reset-acl 모드 (aaa-infra#118):
+#   UGOS 소프트웨어 업데이트가 공유폴더(SSD_1/HDD_1)에 UGOS 전용 ACL을
+#   재적용하면, NAS에 등록되지 않은 컨테이너 uid(999/1004/1005/1006/65534)의
+#   파일 open이 커널 레벨에서 거부되어 mysql/redis/alertmanager/vector가
+#   크래시루프에 빠진다. Step 3와 달리 로그/상태 디렉토리 하위 "기존 파일"까지
+#   재귀로 chown/chmod해 리셋한다(Step 3는 비재귀라 디렉토리만 리셋되고
+#   기존 파일의 ACL은 남는다 — 2026-07-25 장애 실측으로 확인).
+#   데이터 디렉토리(data/mysql, data/redis)는 대상에서 제외한다: 라이브 DB
+#   파일의 불필요한 재귀 chown을 피하고, 실측상 이 두 디렉토리는 ACL
+#   재적용 대상이 아니었다.
+#   부팅마다 자동 실행하려면 scripts/aaa-reset-acl.service를 systemd에
+#   등록한다 (docs/UGOS-ACL-RESET.md 참고).
 # =============================================================================
 
 set -euo pipefail
@@ -38,6 +52,18 @@ DB_UID=999
 # 앱 서비스: Dockerfile에서 adduser -u 로 고정한 비루트 유저
 # 확인: grep 'adduser' aaa-collector/Dockerfile
 APP_UID=1004
+# analyzer 전용 UID(SPEC-ANALYZER-FOUNDATION-001) — APP_UID(collector/vector)와 공유하지 않는다
+ANALYZER_UID=1005
+# notifier 전용 UID(SPEC-NOTIFIER-FOUNDATION-001) — APP_UID(collector/vector)와 공유하지 않는다
+NOTIFIER_UID=1006
+# Alertmanager 공식 이미지 실행 유저(nobody)
+AM_UID=65534
+
+# --- 모드 파싱 ---
+RESET_ACL_ONLY=false
+if [[ "${1:-}" == "--reset-acl" ]]; then
+    RESET_ACL_ONLY=true
+fi
 
 # =============================================================================
 # Step 1. 사전 검증
@@ -91,23 +117,68 @@ if [[ ! -d "$AAA_HDD_BASE" ]]; then
 fi
 
 # sudo 실행자 감지 (config/secrets 소유권 설정용)
-HOST_USER="${SUDO_USER:-}"
-if [[ -z "$HOST_USER" ]]; then
-    error "SUDO_USER를 감지할 수 없습니다. 'sudo bash scripts/init-nas.sh'로 실행하세요."
-    exit 1
-fi
-HOST_GROUP="$(id -gn "$HOST_USER")"
-info "호스트 사용자: $HOST_USER:$HOST_GROUP"
+# --reset-acl 모드는 config/secrets를 건드리지 않고 부팅 시 root로(비-sudo) 실행되므로
+# SUDO_USER 요구를 건너뛴다.
+if [[ "$RESET_ACL_ONLY" == false ]]; then
+    HOST_USER="${SUDO_USER:-}"
+    if [[ -z "$HOST_USER" ]]; then
+        error "SUDO_USER를 감지할 수 없습니다. 'sudo bash scripts/init-nas.sh'로 실행하세요."
+        exit 1
+    fi
+    HOST_GROUP="$(id -gn "$HOST_USER")"
+    info "호스트 사용자: $HOST_USER:$HOST_GROUP"
 
-# UID 충돌 확인
-if id $DB_UID &>/dev/null; then
-    EXISTING_USER="$(id -nu $DB_UID 2>/dev/null || echo 'unknown')"
-    warn "UID $DB_UID가 이미 사용 중입니다 (user: $EXISTING_USER)."
-    warn "MySQL/Redis 컨테이너가 이 UID를 사용합니다. 충돌 여부를 확인하세요."
+    # UID 충돌 확인
+    if id $DB_UID &>/dev/null; then
+        EXISTING_USER="$(id -nu $DB_UID 2>/dev/null || echo 'unknown')"
+        warn "UID $DB_UID가 이미 사용 중입니다 (user: $EXISTING_USER)."
+        warn "MySQL/Redis 컨테이너가 이 UID를 사용합니다. 충돌 여부를 확인하세요."
+    fi
 fi
 
 info "사전 검증 완료"
 echo ""
+
+# =============================================================================
+# --reset-acl 모드: ACL 리셋만 수행하고 종료 (aaa-infra#118)
+# =============================================================================
+if [[ "$RESET_ACL_ONLY" == true ]]; then
+    info "ACL 리셋 모드 — 로그/상태 디렉토리를 재귀로 리셋합니다..."
+    echo ""
+
+    # uid:gid → 대상 디렉토리 매핑. 디렉토리 자체 + 하위 전체(기존 파일 포함)를 재귀 리셋한다.
+    # data/mysql, data/redis는 라이브 DB 파일이라 제외 — Step 3와 동일 정책, 재귀 불필요(실측상 ACL 미적용 대상).
+    reset_targets=(
+        "${DB_UID}:${DB_UID}:${AAA_HDD_BASE}/logs/mysql"
+        "${DB_UID}:${DB_UID}:${AAA_HDD_BASE}/logs/redis"
+        "${APP_UID}:${APP_UID}:${AAA_HDD_BASE}/logs/aaa-collector"
+        "${APP_UID}:${APP_UID}:${AAA_HDD_BASE}/data/vector"
+        "${ANALYZER_UID}:${ANALYZER_UID}:${AAA_HDD_BASE}/logs/aaa-analyzer"
+        "${NOTIFIER_UID}:${NOTIFIER_UID}:${AAA_HDD_BASE}/logs/aaa-notifier"
+        "${AM_UID}:${AM_UID}:${AAA_HDD_BASE}/data/alertmanager"
+    )
+
+    for target in "${reset_targets[@]}"; do
+        owner="${target%%:*}"
+        rest="${target#*:}"
+        group="${rest%%:*}"
+        dir="${rest#*:}"
+
+        if [[ ! -d "$dir" ]]; then
+            warn "  대상 디렉토리가 없어 건너뜁니다: $dir"
+            continue
+        fi
+
+        chown -R "${owner}:${group}" "$dir"
+        find "$dir" -type d -exec chmod 750 {} +
+        find "$dir" -type f -exec chmod 640 {} +
+        info "  재귀 리셋 완료: $dir (uid:gid=${owner}:${group})"
+    done
+
+    echo ""
+    info "ACL 리셋 완료. 'docker compose up -d'로 컨테이너를 (재)기동하세요."
+    exit 0
+fi
 
 # =============================================================================
 # Step 2. 디렉토리 생성
@@ -177,9 +248,8 @@ for dir in "${chown_app_dirs[@]}"; do
     info "  chown $APP_UID:$APP_UID + chmod 750 $dir"
 done
 
-# analyzer는 SPEC-ANALYZER-FOUNDATION-001에서 정의한 자체 전용 UID 1005로 실행된다(SPEC-OBSV-LOGS-002).
-# $APP_UID(1004, collector/vector 전용) 상수를 재사용하지 않고 별도 명시적 chown으로 처리한다(notifier와 동일 패턴).
-ANALYZER_UID=1005
+# analyzer는 ANALYZER_UID(1005, 상단 정의)로 실행된다(SPEC-ANALYZER-FOUNDATION-001, SPEC-OBSV-LOGS-002).
+# $APP_UID(1004, collector/vector 전용)를 재사용하지 않고 별도 명시적 chown으로 처리한다(notifier와 동일 패턴).
 chown_analyzer_dirs=(
     "${AAA_HDD_BASE}/logs/aaa-analyzer"
 )
@@ -190,10 +260,8 @@ for dir in "${chown_analyzer_dirs[@]}"; do
     info "  chown $ANALYZER_UID:$ANALYZER_UID + chmod 750 $dir"
 done
 
-# notifier는 $APP_UID(1004, collector/vector 전용)를 공유하지 않고 SPEC-NOTIFIER-FOUNDATION-001에서
-# 정의한 자체 전용 UID 1006으로 실행된다(analyzer가 로그 볼륨을 가진다면 1005를 쓰는 것과 동일한 이유).
-# $APP_UID 상수는 collector/vector 소유권 기준이라 값을 변경하지 않고 별도 명시적 chown으로 처리한다.
-NOTIFIER_UID=1006
+# notifier는 $APP_UID(1004, collector/vector 전용)를 공유하지 않고 NOTIFIER_UID(1006, 상단 정의)로
+# 실행된다(SPEC-NOTIFIER-FOUNDATION-001, analyzer가 로그 볼륨을 가진다면 1005를 쓰는 것과 동일한 이유).
 chown_notifier_dirs=(
     "${AAA_HDD_BASE}/logs/aaa-notifier"
 )
@@ -204,11 +272,10 @@ for dir in "${chown_notifier_dirs[@]}"; do
     info "  chown $NOTIFIER_UID:$NOTIFIER_UID + chmod 750 $dir"
 done
 
-# 관측성(OBSV-001): Alertmanager는 nobody(65534)로 실행되며 nflog/silences를 /alertmanager에 기록.
+# 관측성(OBSV-001): Alertmanager는 nobody(AM_UID=65534, 상단 정의)로 실행되며 nflog/silences를 /alertmanager에 기록.
 # VictoriaMetrics는 root 실행이라 데이터 디렉토리 chown 불필요.
 # 로그 스택(SPEC-OBSV-LOGS-001): VictoriaLogs는 root 실행이라 data/victorialogs chown 불필요(DP2).
 # data/vector는 APP_UID(1004) 소유 필수 — chown_app_dirs에 포함.
-AM_UID=65534
 chown_am_dirs=(
     "${AAA_HDD_BASE}/data/alertmanager"
 )

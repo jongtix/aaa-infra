@@ -1,0 +1,42 @@
+# =============================================================================
+# aaa-reset-acl.service — 부팅 시 UGOS ACL 리셋 (aaa-infra#118)
+# =============================================================================
+# UGOS 업데이트/재부팅으로 공유폴더(SSD_1/HDD_1)에 UGOS 전용 ACL이 재적용되면
+# mysql/redis/alertmanager/vector(비루트 uid 실행) 컨테이너가 로그·상태 파일을
+# open하지 못해 크래시루프에 빠진다. docker 기동 전에 init-nas.sh --reset-acl을
+# 실행해 ACL을 선제 리셋한다.
+#
+# 설치 (NAS, root):
+#   cp scripts/aaa-reset-acl.service /etc/systemd/system/
+#   # ExecStart 경로를 실제 배포 경로로 수정했는지 확인
+#   systemctl daemon-reload
+#   systemctl enable aaa-reset-acl.service
+#
+# 검증:
+#   systemctl status aaa-reset-acl.service
+#   journalctl -u aaa-reset-acl.service -b
+#
+# 주의: docker.service 자체가 UGOS 업데이트로 깨지는 경우(예: runner systemd
+# 유닛 손상 전례, project_nas_runner_autorestart 참고)는 이 유닛으로 해결되지
+# 않는다. 독립 감지 경로(호스트 cron 하트비트)를 반드시 병행한다.
+# =============================================================================
+[Unit]
+Description=AAA NAS UGOS ACL Reset (aaa-infra#118)
+DefaultDependencies=no
+Before=docker.service
+Requires=local-fs.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# 실제 배포 경로로 수정할 것 (예: /volume1/SSD_1/Development/aaa/aaa-infra)
+WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra
+ExecStart=/bin/bash /volume1/SSD_1/Development/aaa/aaa-infra/scripts/init-nas.sh --reset-acl
+RemainAfterExit=no
+# ACL 미해제 등 예상 밖 실패로 부팅 자체가 막히지 않도록 실패해도 부팅을 계속한다.
+# 실패 시 journalctl로 원인을 확인하고 수동으로 재실행한다.
+SuccessExitStatus=0
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
