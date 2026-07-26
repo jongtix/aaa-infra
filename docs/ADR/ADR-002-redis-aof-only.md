@@ -81,3 +81,11 @@ AOF만 활성화하고 RDB를 비활성화(`save ""`).
 - Consumer Group PEL이 보존되므로 서비스 재시작 후 미확인 메시지를 `XPENDING`으로 복구할 수 있다.
 - `auto-aof-rewrite-percentage 100` + `auto-aof-rewrite-min-size 64mb` 설정으로 AOF 파일 크기를 자동 관리한다.
 - 틱 스트림의 AOF 기록 부담은 `MAXLEN` 상한으로 허용 범위 내 통제한다 ([TECHSPEC 5.1절](../TECHSPEC.md#51-redis-streams-서비스-간-이벤트-버스) 참조).
+
+## Update (2026-07-26): RAM 32GB 업그레이드
+
+NAS RAM이 8GB → 32GB로 업그레이드되었다(관련: aaa-infra#119). AOF 전용 선택 자체(RDB `fork()` 순간
+메모리 2배 회피, 1인 운영 단순화)는 RAM 여유와 무관한 이유로 채택된 것이라 영향받지 않는다. 다만
+"NAS(Intel N100, 8GB RAM), maxmemory 128MB" 문맥에서 이 값이 빠듯했던 사정은 완화되었다 — 2026-07-26
+실측 Redis 사용량은 18MB(컨테이너 limit 256MB 대비 7%)로, 32GB 기준에서는 `maxmemory`/컨테이너 limit
+모두 조정할 실익이 없다고 판단해 값은 그대로 유지한다(`config/redis/redis.conf` 참조).

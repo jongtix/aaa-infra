@@ -47,3 +47,12 @@ collector가 JSON ECS 구조화 로그를 호스트 파일(`${AAA_HDD_BASE}/logs
 - 디스크 크기 상한 플래그(`-retention.maxDiskSpaceUsageBytes`, DP6): 90일 시간 retention으로 운영 후 실측 기반 도입 검토.
 - Grafana Loki 통합 대시보드: 본 SPEC 범위 외.
 - mysql/redis 등 타 서비스 로그 수집(결정 C): 별도 SPEC.
+
+## Update (2026-07-26): RAM 32GB 업그레이드
+
+NAS RAM이 8GB → 32GB로 업그레이드되었다(관련: aaa-infra#119). VictoriaLogs vs Loki 비교에서 "저자원
+환경 적합성"(VictoriaLogs ~128M vs Loki 최소 ~300M+)을 근거로 VictoriaLogs를 선택한 결정 자체는
+유효하다 — RAM 여유가 늘었다고 해서 기능적으로 더 무거운 Loki가 유리해지는 것은 아니다. 다만 당시
+근거였던 "RAM 70% 임계(5.6GB) 대비 여유" 수치는 8GB 제약 하의 것으로, 32GB 기준에서는 메모리 압박이
+크게 완화되어 이 판단 자체의 긴급성은 낮아졌다. VictoriaLogs 컨테이너 memory limit(128M)은 변경하지
+않는다(#119 범위에서 실측 피크 35.5MiB로 충분한 여유 확인).

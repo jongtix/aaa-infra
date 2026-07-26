@@ -55,7 +55,7 @@ docker compose down
 
 ## 배포 환경
 
-- **프로덕션**: UGREEN DXP2800 NAS (Intel N100, 8GB RAM)
+- **프로덕션**: UGREEN DXP2800 NAS (Intel N100, 32GB RAM)
 - **ML 학습**: MacBook (SSH 접속, 학습 결과 NFS/SMB로 NAS 전송)
 - **배포 흐름**: GitHub Push → GitHub Actions 빌드 → GHCR → self-hosted runner에서 docker compose up
 

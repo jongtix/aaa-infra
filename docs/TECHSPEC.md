@@ -711,7 +711,7 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 - **주요 컬럼**: `stock_id`(FK → stocks), `trade_date`, `short_sell_qty`, `short_sell_vol_rate`, `short_sell_amt`, `short_sell_amt_rate`, 누적 수량/금액 및 비중 4종
 - **유니크 키**: `(stock_id, trade_date)` — 종목당 일별 1건 보장
-- **설계 결정**: 국내(`short_sale_domestic`)와 해외(`short_sale_overseas`)를 분리 — 수집 소스가 달라(국내: KIS API, 해외: FINRA Daily Short Volume + Short Interest 두 소스 병합) 컬럼 구조가 상이하므로 단일 테이블로 통합 불가. 비율 컬럼 `DECIMAL(7,4)` — KIS API 응답 정밀도 유지. `trade_date` 단독 인덱스 추가 — 국내 전체 종목 수집 시 예상 규모(~2,700종목 × 250일 × 5년 ≈ 3.5M 행)가 NAS 환경(8GB RAM) 버퍼풀 상시 상주 불가 수준이므로 날짜 범위 쿼리 최적화 필요
+- **설계 결정**: 국내(`short_sale_domestic`)와 해외(`short_sale_overseas`)를 분리 — 수집 소스가 달라(국내: KIS API, 해외: FINRA Daily Short Volume + Short Interest 두 소스 병합) 컬럼 구조가 상이하므로 단일 테이블로 통합 불가. 비율 컬럼 `DECIMAL(7,4)` — KIS API 응답 정밀도 유지. `trade_date` 단독 인덱스 추가 — 국내 전체 종목 수집 시 예상 규모(~2,700종목 × 250일 × 5년 ≈ 3.5M 행)는 애초 NAS 환경(8GB RAM 당시) 버퍼풀 상시 상주가 어려울 것으로 우려되어 날짜 범위 쿼리 최적화가 필요했던 설계다. NAS RAM 32GB 업그레이드(#119, 2026-07-25) 이후 InnoDB 버퍼풀을 1G로 상향했고, DB 전체 크기가 534MB(2026-07-26 실측)로 버퍼풀이 전체 DB를 여유 있게 상회하므로 이 우려는 해소되었다 — 다만 인덱스 자체는 유효한 설계이므로 유지
 - **DDL**: `V6__collector_create_short_sale_domestic.sql`
 
 #### short_sale_overseas
@@ -1011,14 +1011,16 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 - 개별 모델 점수는 `trading_signals.lgbm_score`/`xgb_score`(DECIMAL)에 보존 — 앙상블 규칙 사후 튜닝·분석용. 종전 `lgbm_signal`/`xgb_signal`(ENUM)을 대체하며 정보량 상위 호환(점수에서 등급은 언제든 재파생 가능)
 - confidence 산출은 앙상블 규칙과 분리 — 8.5절(분위수 예측구간 기반) 참조
 
-NAS RAM 16GB 확장 시 CatBoost 추가를 검토한다 (8GB에서 전체 Phase 운영 가능하므로 확장은 선택 사항).
+NAS RAM은 2026-07-25 8GB→32GB로 실제 업그레이드 완료(aaa-infra#119) — 당초 검토하던 "16GB 확장 시 CatBoost 추가 검토"는
+확장 규모가 예상보다 커진 것으로 대체되었다. CatBoost 추가는 이제 32GB 예산 내에서 재평가 가능한 상태이며,
+8GB에서도 전체 Phase 운영이 가능했던 점(선택 사항 성격)은 유효하다.
 
 ### 6.2 학습 인프라
 
 | 역할 | 장비 | 사양 |
 |------|------|------|
 | 학습 (Training) | MacBook M5 Pro | 18코어, 48GB RAM |
-| 추론 (Inference) | UGREEN DXP2800 NAS | Intel N100, 8GB RAM |
+| 추론 (Inference) | UGREEN DXP2800 NAS | Intel N100, 32GB RAM |
 
 **학습 자동화 흐름**
 
@@ -1484,7 +1486,7 @@ confidence = Φ(|score_ens| / σ)    # P(실현 수익률의 부호 == score의 
 
 | 구성 요소 | 장비 | 용도 |
 |-----------|------|------|
-| 운영 서버 (추론 + 서비스) | UGREEN DXP2800 NAS (Intel N100, 8GB RAM) | 전체 서비스 운영 |
+| 운영 서버 (추론 + 서비스) | UGREEN DXP2800 NAS (Intel N100, 32GB RAM) | 전체 서비스 운영 |
 | ML 학습 | MacBook M5 Pro (18코어, 48GB RAM) | 주말 재학습 전용 |
 | 모델 공유 스토리지 | NAS NFS/SMB | 학습 결과 → 추론 전달 |
 
@@ -1591,28 +1593,37 @@ Repository Secrets:
   3. 재시작 후에도 서브넷 불변이므로 호스트 방화벽(iptables) 규칙이 깨지지 않음
   - `/24` 선택: 현재 ~6개 컨테이너 대비 254 호스트로 충분. 향후 스택 추가 시 `172.21.0.0/24` 이후 대역 사용
 
-**서비스별 JVM 메모리 제한 (8GB 기준)**
+**서비스별 JVM 메모리 제한 (32GB 기준)**
 
 | 서비스 | `-Xms` | `-Xmx` | `MaxMetaspaceSize` | `MaxDirectMemorySize` | 컨테이너 limit | 비고 |
 |--------|--------|--------|--------------------|-----------------------|----------------|------|
-| aaa-collector | 128m | 384m | 160m | 64m | 800MB | WebSocket 5세션 + REST 배치 + 백필, 힙 압력 중~높 |
+| aaa-collector | 128m | 512m | 192m | 64m | 1G | WebSocket 5세션 + REST 배치 + 백필, 힙 압력 중~높. RAM 32GB 업그레이드(#119, 2026-07-25)로 30일 실측 JVM 총사용 피크(~560MiB) + 성장 마진 반영해 상향 |
 | aaa-analyzer | - | - | - | - | 500MB | Python 프로세스, JVM 없음. ML 모델 8개 상시 적재. **⚠️ Phase 2 착수 전 실측 필요**: LightGBM/XGBoost 모델 로드 + 추론 시 peak RSS 미검증. tracemalloc/memory_profiler로 측정 후 재검토 |
-| aaa-notifier | 64m | 192m | 128m | 64m | 600MB | 틱 구독 + 6단계 필터, 재처리 급증 대비 |
+| aaa-notifier | 64m | 192m | 128m | 64m | 400MB[^notifier-limit] | 틱 구독 + 6단계 필터, 재처리 급증 대비 |
 | aaa-trader | 64m | 128m | 128m | 32m | 450MB | I/O 위주 극저부하, 동시 주문 사실상 1건 |
 
-**메모리 예산 (Phase 4 전체 운영 기준)**
+[^notifier-limit]: 실제 `docker-compose.yml` 값은 이전부터 항상 400MB였다(과거 이 표의 600MB 기재가 오기 — 이번 #119 정리 시 정합화). notifier는 Phase 3 스캐폴딩 단계(DB 미접속, 실 워크로드 없음)라 JVM 플래그·컨테이너 limit 모두 실제 Phase 3 배포 시 실측 후 재조정 예정(`docker-compose.yml`의 "실측 후 조정" 주석과 동일 기조) — RAM 32GB 업그레이드와 무관하게 현 단계에서는 값을 변경하지 않는다.
 
-| 구성 요소 | 예상 RSS |
+**메모리 예산 (실제 운영 스택 기준, `docker-compose.yml` 전 서비스 합산, 2026-07-26 #119 재산정)**
+
+| 구성 요소 | 컨테이너 limit |
 |-----------|---------|
-| OS + Docker 오버헤드 | ~660MB |
-| MySQL 8.4 (`innodb_buffer_pool_size=512M`) | ~650MB |
-| Redis 8.6 (`maxmemory 128mb`, 컨테이너 limit 256M) | ~256MB |
-| aaa-collector | ~800MB |
-| aaa-analyzer | ~500MB |
-| aaa-notifier | ~600MB |
-| aaa-trader | ~450MB |
-| **합계** | **~3,916MB (48%)** |
-| **여유** | **~4,276MB (52%)** |
+| mysql | 1,536MB (1.5G) |
+| redis | 256MB |
+| collector | 1,024MB (1G) |
+| analyzer | 400MB |
+| notifier | 400MB |
+| victoriametrics | 512MB |
+| vmalert | 96MB |
+| alertmanager | 96MB |
+| victorialogs | 128MB |
+| vector | 128MB |
+| node-exporter | 48MB |
+| cadvisor | 128MB |
+| **합계** | **4,752MB (14.5%, 32,768MB 기준)** |
+| **여유** | **28,016MB (85.5%)** |
+
+위 표는 각 컨테이너의 `deploy.resources.limits.memory` 설정값(상한)의 합산이며 실측 RSS 합이 아니다 — 실제 사용량은 대부분 limit 대비 크게 낮다(2026-07-26 `docker stats` 실측: collector 681Mi/800M 등, RAM 32GB 업그레이드 근거 자료 참조). trader는 아직 `docker-compose.yml`에 없어 이 합산에서 제외했다(위 JVM 표의 trader 행은 향후 설계값).
 
 Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-on-Write로 최악의 경우 데이터 메모리의 2배 소비. fragmentation, output buffer 오버헤드 포함.
 
