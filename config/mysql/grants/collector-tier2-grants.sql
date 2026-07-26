@@ -10,6 +10,8 @@
 --   etf_metadata         메타 upsert (EtfMetadataWriter.upsert)
 --   backfill_status      상태 — 백필 진행점 전진(UPDATE). 시딩은 INSERT IGNORE(Tier-1)이나
 --                        진행점(last_collected_date/attempt_count) 전진은 UPDATE (SPEC-COLLECTOR-BACKFILL-001)
+--   market_calendar      상태 — 일일 갱신 배치가 소스 우선순위 판정 후 기존 행을 in-place UPDATE
+--                        (SPEC-COLLECTOR-CALENDAR-001 REQ-CAL-004/-020/-021, aaa-infra#120)
 --
 -- [WHY 별도 파일] initdb.d(01-init-collector.sh)는 MySQL 최초 init 시점,
 --   즉 Flyway가 스키마를 만들기 전에 실행된다. MySQL 8.4는 존재하지 않는
@@ -32,4 +34,5 @@ GRANT UPDATE ON aaa.stock_grades TO 'collector'@'%';
 GRANT UPDATE ON aaa.short_sale_overseas TO 'collector'@'%';
 GRANT UPDATE ON aaa.etf_metadata TO 'collector'@'%';
 GRANT UPDATE ON aaa.backfill_status TO 'collector'@'%';
+GRANT UPDATE ON aaa.market_calendar TO 'collector'@'%';
 FLUSH PRIVILEGES;
