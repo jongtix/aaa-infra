@@ -34,8 +34,8 @@ docker compose up -d
 
 ## 재발 방지 — 부팅 시 자동 실행
 
-`scripts/aaa-reset-acl.service`를 systemd에 등록하면 `docker.service` 기동
-전에 매 부팅마다 자동으로 리셋을 수행한다.
+`scripts/aaa-reset-acl.service`를 systemd에 등록하면 도커 기동 전에
+매 부팅마다 자동으로 리셋을 수행한다.
 
 ```bash
 sudo cp scripts/aaa-reset-acl.service /etc/systemd/system/
@@ -51,18 +51,34 @@ sudo systemctl status aaa-reset-acl.service
 sudo journalctl -u aaa-reset-acl.service -b
 ```
 
-**주의**: UGOS가 `docker.service`라는 유닛명으로 Docker를 관리하는지 최초
-설치 시 `systemctl list-units | grep docker`로 확인할 것. 유닛명이 다르면
-`Before=`/`After=` 대상을 실제 유닛명으로 수정해야 순서 보장이 성립한다.
+**순서 지정 실측 (UGREEN DXP2800, 2026-07-26)**: `docker.service`는
+`UnitFileState=disabled`이고 `docker.socket` 소켓 활성화로만 뜬다 — 부팅
+체인에 정적으로 편입되지 않으므로 `Before=docker.service` 단독으로는 순서가
+보장되지 않는다. 실제 부팅 체인은
+`multi-user.target → docker_serv.service(enabled, WantedBy=multi-user.target)
+→ docker.socket(WantedBy=docker_serv.service) → docker.service`이며,
+`docker_serv.service`(UGOS 자체 도커 관리자)의 시작 시각이 2026-07-25 장애
+당시 재부팅 시각(19:18:40 KST)과 정확히 일치해 실제 진입점으로 확인됐다.
+유닛은 이를 반영해 `Before=docker_serv.service docker.socket docker.service`,
+`After=local-fs.target storage_serv.service filemgr_serv.service`로 지정돼
+있다. **다른 NAS 모델·UGOS 버전에 설치할 때는 반드시 재확인**:
+
+```bash
+systemctl list-units --type=service --all | grep -i docker
+systemctl show docker_serv.service -p WantedBy,After   # (또는 실제 도커 관리 유닛명)
+```
+
+유닛명이 다르면 `aaa-reset-acl.service`의 `Before=`/`After=`를 그에 맞게
+수정해야 순서 보장이 성립한다.
 
 ## 이 유닛으로 해결되지 않는 경우
 
-`docker.service` 자체 또는 systemd가 UGOS 업데이트로 손상되는 경우(예:
-GitHub Actions self-hosted runner 유닛이 `203/EXEC`로 죽은 전례)는 이
-훅 자체가 실행되지 않는다. 이 훅은 "ACL만 재적용되고 나머지는 정상"인
-케이스를 자동 복구하는 것이 목적이며, 컨테이너 스택 전체가 죽는 상황을
-외부에서 감지하는 별도 경로(호스트 cron 하트비트 등)는 이 훅과 무관하게
-갖춰야 한다.
+`docker_serv.service`(또는 대상 NAS의 실제 도커 관리 유닛) 자체나 systemd가
+UGOS 업데이트로 손상되는 경우(예: GitHub Actions self-hosted runner 유닛이
+`203/EXEC`로 죽은 전례)는 이 훅 자체가 실행되지 않는다. 이 훅은 "ACL만
+재적용되고 나머지는 정상"인 케이스를 자동 복구하는 것이 목적이며,
+컨테이너 스택 전체가 죽는 상황을 외부에서 감지하는 별도 경로(호스트 cron
+하트비트 등)는 이 훅과 무관하게 갖춰야 한다.
 
 ## 부팅 후 수동 점검 체크리스트
 

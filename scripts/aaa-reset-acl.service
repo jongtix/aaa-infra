@@ -16,16 +16,29 @@
 #   systemctl status aaa-reset-acl.service
 #   journalctl -u aaa-reset-acl.service -b
 #
-# 주의: docker.service 자체가 UGOS 업데이트로 깨지는 경우(예: runner systemd
+# 순서 지정 실측 (UGREEN DXP2800, 2026-07-26 `systemctl show` 확인):
+#   docker.service는 UnitFileState=disabled이고 docker.socket 활성화로만 뜬다 —
+#   부팅 체인에 정적으로 편입되지 않으므로 Before=docker.service 단독으로는
+#   순서 보장이 안 된다. 실제 부팅 체인은
+#     multi-user.target → docker_serv.service(WantedBy=multi-user.target, enabled)
+#       → docker.socket(WantedBy=docker_serv.service) → docker.service(소켓 활성화)
+#   이다. docker_serv.service(UGOS 자체 도커 관리자, 재부팅 시 실제 시작 지점)를
+#   1차 대상으로 Before=에 명시하고, docker.socket/docker.service는 방어적으로 병기한다.
+#   docker_serv.service 자체가 storage_serv.service·filemgr_serv.service 이후에
+#   시작하므로(스토리지·ACL 계층), 이 유닛도 동일하게 그 뒤에 실행되도록 After=에 병기한다.
+#   NAS 모델·UGOS 버전이 다르면 `systemctl show docker_serv.service -p WantedBy,After`로
+#   재확인할 것 — 유닛명이 다르면 아래 Before=/After=를 그에 맞게 수정해야 한다.
+#
+# 주의: docker_serv.service 자체가 UGOS 업데이트로 깨지는 경우(예: runner systemd
 # 유닛 손상 전례, project_nas_runner_autorestart 참고)는 이 유닛으로 해결되지
 # 않는다. 독립 감지 경로(호스트 cron 하트비트)를 반드시 병행한다.
 # =============================================================================
 [Unit]
 Description=AAA NAS UGOS ACL Reset (aaa-infra#118)
 DefaultDependencies=no
-Before=docker.service
 Requires=local-fs.target
-After=local-fs.target
+After=local-fs.target storage_serv.service filemgr_serv.service
+Before=docker_serv.service docker.socket docker.service
 
 [Service]
 Type=oneshot
