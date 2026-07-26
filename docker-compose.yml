@@ -469,6 +469,54 @@ services:
       retries: 3
       start_period: 30s
 
+  # --- cAdvisor: 컨테이너별 메모리·CPU 시계열 수집 (#119 §3 용량계획 검증) ---
+  cadvisor:
+    # [HARD] latest 금지(mysql 8.4·redis 8.8·VM/vmalert 선례). v0.53.0부터 registry가 ghcr.io/google/cadvisor로
+    #   이전되어 gcr.io/cadvisor/cadvisor에는 더 이상 신규 태그가 없다 — gcr.io 기준 최종 안정 태그 v0.52.1 고정.
+    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    container_name: aaa-cadvisor
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          # alertmanager/vmalert(96M)와 동급의 경량 모니터링 사이드카 기준. cAdvisor 자체 RSS는
+          # 단일 호스트 ~11개 컨테이너 스크랩 대상 기준 통상 50~150MB대(실측 기반 문서/커뮤니티 사례).
+          memory: 128M
+          cpus: "0.25"
+    # [하드닝, B안 — 사용자 확정] 공식 예시(docs/running.md)는 /:/rootfs:ro + /var/lib/docker/:ro까지 마운트하나,
+    #   본 배포는 호스트 루트 파일시스템 전체 read 권한을 컨테이너에 부여하지 않기 위해 두 마운트를 의도적으로 제외한다.
+    #   대가: container_fs_* (디스크 사용량) 지표는 수집되지 않는다(google/cadvisor#3252가 문서화한 rootfs 미마운트 시
+    #   graceful degradation 경로). 메모리·CPU per-container 지표는 /sys(cgroup) 단독으로 완전히 수집 가능 —
+    #   2026-07-26 로컬 검증(cap_drop ALL·--privileged 없이 gcr.io/cadvisor/cadvisor:v0.52.1 기동, /healthz=ok,
+    #   container_memory_usage_bytes·container_spec_memory_limit_bytes 컨테이너별 정상 노출, container_fs_usage_bytes만
+    #   0 또는 결측 확인)로 이 설계가 실제로 동작함을 확인했다.
+    volumes:
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+    logging: *default-logging
+    networks:
+      - aaa-network
+    expose:
+      # 8080 내부 전용 — VictoriaMetrics가 aaa-network 경유로만 스크랩. 호스트 포트 미공개(사용자 명시 확정).
+      - "8080"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # [검증 완료] --privileged 없이, cap_add 추가 없이(기본 캡셋 그대로) /var/run:rw + /sys:ro만으로 기동·정상 스크랩
+    #   확인(2026-07-26 로컬 재현). rootfs·/var/lib/docker 미마운트 상태에서도 housekeeping이 hard-fail하지 않음 —
+    #   SYS_PTRACE/DAC_READ_SEARCH 등 추가 capability 불필요.
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      # cAdvisor는 /healthz에서 "ok" 반환(실측 확인, 2026-07-26).
+      test: ["CMD-SHELL", "wget -qO- --tries=1 http://127.0.0.1:8080/healthz | grep -q ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 # --- Secrets: Alertmanager Telegram 토큰 (값-전용 파일, 미커밋 NAS 런타임 시크릿) ---
 # 각 파일 내용은 값만(KEY= 없음, 후행 개행 없이). 기존 시스템봇 TELEGRAM_SYSTEM_BOT_TOKEN/TELEGRAM_OPERATOR_CHAT_ID 값 재사용
 # (신규 봇 발급 없음). 배포 전 NAS에 직접 배치 — scripts/init-nas.sh 안내 참조.

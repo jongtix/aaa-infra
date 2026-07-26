@@ -36,3 +36,11 @@ scrape_configs:
     static_configs:
       # aaa-network 내부 DNS. victorialogs는 expose 9428(호스트 미공개).
       - targets: ["aaa-victorialogs:9428"]
+
+  # [#119] cAdvisor 컨테이너별 메모리·CPU 시계열 수집(용량계획 검증). 전역 scrape_interval: 30s 상속,
+  # 기본 metrics_path=/metrics 생략.
+  - job_name: cadvisor
+    scheme: http
+    static_configs:
+      # aaa-network 내부 DNS. cadvisor는 expose 8080(호스트 미공개).
+      - targets: ["aaa-cadvisor:8080"]
