@@ -25,7 +25,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 1.5G
           cpus: "1.0"
     env_file:
       - ${AAA_SSD_BASE}/secrets/.env.mysql
@@ -91,11 +91,12 @@ services:
     container_name: aaa-collector
     restart: unless-stopped
     stop_grace_period: 40s
-    # N100 4코어 기준 초기값, 실측 후 조정
+    # N100 4코어 기준(cpus 불변). memory는 30일 VM 실측 JVM 총사용 피크 ~560MiB(#119) + 성장 마진 반영해 1G로 1회 조정 완료
+    # (더 이상 "초기값" 아님 — 실측 기반 튜닝값. cpus는 CPU 코어 수 무관 항목이라 RAM 증설과 별개로 유지).
     deploy:
       resources:
         limits:
-          memory: 800M
+          memory: 1G
           cpus: "1.5"
     env_file:
       - ${AAA_SSD_BASE}/secrets/.env.common
@@ -209,11 +210,12 @@ services:
     image: victoriametrics/victoria-metrics:v1.147.0
     container_name: aaa-victoriametrics
     restart: unless-stopped
-    # [D2] VM 256M: 단노드 통상 RSS 100~200M+에 TSDB merge/쿼리 스파이크·OOM 크래시루프 마진.
+    # [D2 개정, #119] VM 512M: 단노드 통상 RSS 100~200M+에 TSDB merge/쿼리 스파이크·OOM 크래시루프 마진을
+    #   RAM 32GB 기준으로 재산정(구 256M은 8GB 제약하 최소치). 30일 실측 피크 대비 여유 확대.
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 512M
           cpus: "0.5"
     expose:
       # 8428 내부 전용(vmui/스크랩/쿼리). 호스트 미공개 — mysql/redis/collector와 동일 격리.
@@ -257,7 +259,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 64M
+          memory: 96M
           cpus: "0.25"
     expose:
       # 8880 vmalert 웹 UI(내부 전용).
@@ -303,7 +305,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 64M
+          memory: 96M
           cpus: "0.25"
     environment:
       # 텔레그램 메시지 템플릿의 {{ .StartsAt.Local }} KST 렌더링용(이미지에 zoneinfo 포함 실측 2026-07-08).
@@ -402,7 +404,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 64M
+          memory: 128M
           cpus: "0.25"
     volumes:
       # 로그 읽기(읽기 전용): collector 로그 디렉토리. :ro — vector 장애가 collector에 무영향(REQ-018).
@@ -435,7 +437,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 32M
+          memory: 48M
           cpus: "0.1"
     expose:
       # 9100 node_exporter 메트릭(내부 전용, VM 스크랩 대상).
