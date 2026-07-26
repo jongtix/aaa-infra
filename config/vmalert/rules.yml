@@ -1101,20 +1101,25 @@ groups:
           description: "{{ $labels.mountpoint }} 사용률이 90% 초과 지속 — 쓰기 실패 임박, 즉시 공간 확보 필요."
           action: "ssh nas-ugreen \"df -h /volume1 /volume2\" → docker system df·로그·백업 순으로 대용량 정리"
 
-      # --- RAM: 사용률 80/90/95% (8GB NAS 상시 60~70%대 운영 패턴 반영, 2026-07-05 상향) ---
-      # NodeMemoryWarning1 (80%) 비활성화 2026-07-18: 8GB NAS 상시 80%대 발화로 신호 가치 상실.
-      # TODO: 16GB RAM 업그레이드 후 임계값 재산정하여 복원.
-      # - alert: NodeMemoryWarning1
-      #   expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.80
-      #   for: 10m
-      #   labels:
-      #     severity: warning
-      #     component: node
-      #     tier: TICKET
-      #   annotations:
-      #     summary: "NAS 메모리 사용률 1단계 — {{ $value | humanizePercentage }}"
-      #     description: "호스트 메모리 사용률이 80% 초과 지속."
-      #     action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
+      # --- RAM: 사용률 80/90/95% (2026-07-25 NAS RAM 8GB→32GB 업그레이드, #119) ---
+      # 임계값 자체(80/90/95%)는 비율 기반이라 변경 없음 — 8GB 시절 "상시 60~70%대 운영" 프로세는
+      # 더 이상 유효하지 않다(2026-07-26 실측: 31Gi 중 5.6Gi 사용, ~18%). 이제 세 단계 모두
+      # 통상 운영에서는 발화하지 않는 실질 임계로 작동할 것으로 기대된다.
+      # NodeMemoryWarning1 (80%) 비활성화 2026-07-18: 당시 8GB NAS 상시 80%대 발화로 신호 가치 상실.
+      #   → 32GB 업그레이드로 상시-근접 조건이 해소되어 복원(2026-07-26). 애초 TODO는 "16GB 업그레이드
+      #   후 재산정"이었으나 실제로는 32GB로 업그레이드됨 — 임계값 재산정 없이 그대로 복원해도
+      #   32GB 여유 하에서는 상시 발화 재발 우려가 낮다고 판단.
+      - alert: NodeMemoryWarning1
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          component: node
+          tier: TICKET
+        annotations:
+          summary: "NAS 메모리 사용률 1단계 — {{ $value | humanizePercentage }}"
+          description: "호스트 메모리 사용률이 80% 초과 지속."
+          action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
 
       - alert: NodeMemoryWarning2
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
