@@ -164,7 +164,7 @@ tests:
   # ===========================================================================
 
   # T27. [발화] domestic-news stale>1h AND market_open==1 → 발화.
-  # anchor=-4000 → t=0 staleness=4000s > 1h(3600s) → for:5m 후 eval_time=10m 발화.
+  # anchor=-4000 → t=0 staleness=4000s > 1h(3600s) → for:7m 후 eval_time=10m 발화.
   - interval: 30s
     input_series:
       - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-news"}'
