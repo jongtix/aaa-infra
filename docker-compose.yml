@@ -473,7 +473,7 @@ services:
   cadvisor:
     # [HARD] latest 금지(mysql 8.4·redis 8.8·VM/vmalert 선례). v0.53.0부터 registry가 ghcr.io/google/cadvisor로
     #   이전되어 gcr.io/cadvisor/cadvisor에는 더 이상 신규 태그가 없다 — gcr.io 기준 최종 안정 태그 v0.52.1 고정.
-    image: gcr.io/cadvisor/cadvisor:v0.52.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: aaa-cadvisor
     restart: unless-stopped
     deploy:
