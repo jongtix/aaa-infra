@@ -479,9 +479,10 @@ services:
     deploy:
       resources:
         limits:
-          # alertmanager/vmalert(96M)와 동급의 경량 모니터링 사이드카 기준. cAdvisor 자체 RSS는
-          # 단일 호스트 ~11개 컨테이너 스크랩 대상 기준 통상 50~150MB대(실측 기반 문서/커뮤니티 사례).
-          memory: 128M
+          # 최초 128M(alertmanager/vmalert 동급 사이드카 기준)은 NAS 실측으로 부족 확인 — 2026-07-28
+          #   OOM kill(exitCode 137) 1회 발생, 재시작 직후에도 working set ~125MiB(97.8%)로 상한 재근접.
+          #   실측 수요의 약 2배(limit ≈ 2×working set)로 상향해 컨테이너 증가·스크랩 스파이크 흡수.
+          memory: 256M
           cpus: "0.25"
     # [하드닝, B안 개정 — NAS 라이브 검증 2026-07-26] 최초 B안(/var/run + /sys만)은 로컬(Docker Desktop,
     #   macOS)에서 정상 동작하는 것처럼 보였으나, 실제 NAS에서는 개별 aaa-* 컨테이너 지표가 전혀 잡히지 않고
