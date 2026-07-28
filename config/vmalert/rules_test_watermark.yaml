@@ -514,3 +514,38 @@ tests:
         groupname: collector-silent-drops
         alertname: CollectorSilentDropsDetected
         exp_alerts: []
+
+  # ===========================================================================
+  # 룰 W8: collector-finra-ticker-reuse-skip — REQ-SSOG-019 (SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002)
+  # ===========================================================================
+
+  # TI-WM-TRS-001. [발화] finra_ticker_reuse_skip_total 5분 내 증가 → CollectorFinraTickerReuseSuspected 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_finra_ticker_reuse_skip_total'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-finra-ticker-reuse-skip
+        alertname: CollectorFinraTickerReuseSuspected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+              notify: fire_only
+            exp_annotations:
+              summary: "FINRA 티커 재사용 의심 — 상장일 이전 매칭 제외 발생"
+              description: "최근 1시간 내 FINRA CDN 일별 파일 매칭 시 종목의 listed_date 이전 거래일 데이터가 게이트에 의해 제외됨 — 폐지·인수합병으로 재사용된 티커의 구 소유자 데이터 유입 의심(REQ-SSOG-019, SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002)."
+              action: "collector 로그(FINRA 매칭 게이트 제외) → 대상 종목 symbol·date 확인 → runbook-cik-verification.md 절차로 CIK 대조 후 신원 판정. 로그 미발견 시 VM 카운터 증가 시각으로 배치 식별"
+
+  # TI-WM-TRS-002. [무발화] finra_ticker_reuse_skip_total 변화 없음 → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_finra_ticker_reuse_skip_total'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: collector-finra-ticker-reuse-skip
+        alertname: CollectorFinraTickerReuseSuspected
+        exp_alerts: []

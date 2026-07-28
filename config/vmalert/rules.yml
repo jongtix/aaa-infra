@@ -951,6 +951,28 @@ groups:
           action: "collector 로그(침묵 드롭 WARN — 테이블·에러코드·행) → 해당 테이블·원본 대조. 로그 미발견 시 VM 카운터 증가 시각으로 배치 식별"
 
   # ---------------------------------------------------------------------------
+  # 그룹 W8: finra_ticker_reuse_skip — SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002 REQ-SSOG-019
+  # [2026-07-28] FINRA CDN 일별 적재 시 티커 재사용(구 소유자 데이터 유입) 방지 게이트가 종목을
+  #   제외한 건수를 계측한다. collector-silent-drops와 동일하게 이벤트형(카운터 증분) →
+  #   `notify: fire_only`(resolved 통지 억제). 행별 상세 로그 부재 — 확인 줄에 로그 폴백 구절 포함.
+  # ---------------------------------------------------------------------------
+  - name: collector-finra-ticker-reuse-skip
+    interval: 30s
+    rules:
+      - alert: CollectorFinraTickerReuseSuspected
+        expr: increase(aaa_collector_finra_ticker_reuse_skip_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: collector
+          tier: TICKET
+          notify: fire_only
+        annotations:
+          summary: "FINRA 티커 재사용 의심 — 상장일 이전 매칭 제외 발생"
+          description: "최근 1시간 내 FINRA CDN 일별 파일 매칭 시 종목의 listed_date 이전 거래일 데이터가 게이트에 의해 제외됨 — 폐지·인수합병으로 재사용된 티커의 구 소유자 데이터 유입 의심(REQ-SSOG-019, SPEC-COLLECTOR-SHORTSALE-OVERSEAS-002)."
+          action: "collector 로그(FINRA 매칭 게이트 제외) → 대상 종목 symbol·date 확인 → runbook-cik-verification.md 절차로 CIK 대조 후 신원 판정. 로그 미발견 시 VM 카운터 증가 시각으로 배치 식별"
+
+  # ---------------------------------------------------------------------------
   # 그룹 10: 안전 모드 진입/해제 — SPEC-OBSV-SYSALERT-001 / SPEC-COLLECTOR-SAFEMODEGAUGE-001
   # [2026-07-20 상태형 게이지 전환, aaa-infra#85 해소] 이벤트형(카운터 증분) 관측을 상태형 게이지
   #   aaa_collector_safe_mode_active{module,alias}(0/1)로 교체했다. 해제가 어느 경로로 일어나든
