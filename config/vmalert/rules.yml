@@ -472,13 +472,16 @@ groups:
           description: "미국 장 마감 후 4시간이 지나도 최신 거래일까지 적재되지 않음 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형, PAGE)."
           action: "overseas-daily 배치(평일 16:30 ET) 로그 → daily_ohlcv 최근 거래일 조회"
 
-      # B-3 원/달러 환율 — TICKET, 4h.
+      # B-3 원/달러 환율 — TICKET, 배치 자체 신선도 기준.
+      # [2026-07-30] 공유 expected_watermark_seconds(KRX 15:30 마감 즉시 당일로 점프)는
+      #   SPEC-COLLECTOR-MARKETIND-004(화~토 10:30 KST 전용 cron, D-1 확정값)의 실제 배치 스케줄과
+      #   구조적으로 어긋나 매 영업일 저녁~다음날 10:30까지 상시 오탐(false positive)했다.
+      #   실제 cron("0 30 10 * * TUE-SAT")의 최대 정상 공백은 토(10:30)→화(10:30) 72시간이므로,
+      #   배치 자체 실행 신선도(aaa_collector_batch_last_load_seconds)를 72h+마진 기준으로 직접 판정한다.
       - alert: CollectorWatermarkFreshnessStaleUsdKrw
         expr: |
-          (aaa_collector_expected_watermark_seconds
-           - on(market) group_right aaa_collector_data_watermark_seconds{series="market-usdkrw"}
-          ) > 0
-        for: 4h
+          (time() - aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}) > 76 * 3600
+        for: 5m
         keep_firing_for: 10m
         labels:
           severity: warning
@@ -486,8 +489,8 @@ groups:
           tier: TICKET
         annotations:
           summary: "원/달러 환율 갱신 지연"
-          description: "직전 영업일 환율(D−1)이 적재되지 않은 상태가 4시간 이상 지속 — 기대 대비 {{ $value | humanizeDuration }} 뒤처짐(REQ-WM-017 즉시형, SPEC-COLLECTOR-MARKETIND-004 D−1 전환 반영)."
-          action: "usdkrw 전용 배치(화~토 10:30 KST, D−1 확정값)·02:00 백필 갭워크 로그에서 KOREAEXIM→Yahoo 폴백 동작 확인 → market_indicators에서 USDKRW 최근 일자 조회"
+          description: "usdkrw 전용 배치(화~토 10:30 KST, D−1 확정값)가 76시간(정상 최대 공백 토→화 72h + 마진) 초과 미실행 — 마지막 적재 후 {{ $value | humanizeDuration }} 경과."
+          action: "usdkrw 전용 배치(화~토 10:30 KST)·02:00 백필 갭워크 로그에서 KOREAEXIM→Yahoo 폴백 동작 확인 → market_indicators에서 USDKRW 최근 일자 조회"
 
       # B-4 투자자별 매매동향 — TICKET, 4h. domestic-supply-investor는 독립 크론 없이 일봉 체인 후속.
       - alert: CollectorWatermarkFreshnessStaleInvestorTrend

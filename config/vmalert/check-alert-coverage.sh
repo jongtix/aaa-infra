@@ -12,14 +12,15 @@
 set -u
 cd "$(dirname "$0")" || exit 1
 
-# 의도적 미커버(2026-07-11 기준): W2 신선도 자매 룰 — 동일 표현식 패턴을
+# 의도적 미커버(2026-07-30 기준): W2 신선도 자매 룰 — 동일 표현식 패턴을
 # StaleDomesticDaily/StaleInvestorTrend/StaleDisclosures/StaleVix 테스트가 대표 커버.
+# CollectorWatermarkFreshnessStaleUsdKrw는 2026-07-30 batch_last_load_seconds 기준으로
+# 재배선되며 전용 테스트(TI-WM-FR-004b~d)가 생겨 목록에서 제외.
 ALLOW_UNCOVERED="
 CollectorWatermarkFreshnessStaleExtendedHoursAfter
 CollectorWatermarkFreshnessStaleExtendedHoursPre
 CollectorWatermarkFreshnessStaleOverseasDaily
 CollectorWatermarkFreshnessStaleShortSaleDomestic
-CollectorWatermarkFreshnessStaleUsdKrw
 "
 
 rules=$(awk '/^[[:space:]]*- alert:/ {print $NF}' rules.yml | sort -u)

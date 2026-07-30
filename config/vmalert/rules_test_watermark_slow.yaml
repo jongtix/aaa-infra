@@ -103,6 +103,52 @@ tests:
               description: "장 마감 후 4시간이 지나도 당일 수급 데이터가 적재되지 않음 — 기대 대비 2h 46m 40s 뒤처짐(REQ-WM-017 즉시형)."
               action: "domestic-supply-investor 배치(평일 16:00 일봉 체인 후속) 로그 → investor_trend 최근 일자 조회"
 
+  # TI-WM-FR-004b~d. [2026-07-30, B-3 재설계] market-usdkrw는 SPEC-COLLECTOR-MARKETIND-004
+  #   전용 cron(화~토 10:30 KST)으로 분리되어 공유 expected_watermark_seconds(KRX 15:30 마감 기준)와
+  #   구조적으로 어긋나 매 영업일 저녁 상시 오탐했다 — batch_last_load_seconds 직접 비교(76h=72h 정상
+  #   최대 공백+마진)로 재배선. 회귀 방지 핵심 케이스는 FR-004c(주말 정상 공백 미발화).
+  # TI-WM-FR-004b. [무발화, 정상 야간] 당일 배치 완료 9h30m 후(구 룰이라면 발화했을 저녁 시간대) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}'
+        values: '-34200+0x25'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleUsdKrw
+        exp_alerts: []
+
+  # TI-WM-FR-004c. [무발화, 주말 최대 정상 공백] 토 10:30 실행 후 71h 경과(화 09:29, 다음 실행 직전) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}'
+        values: '-255600+0x25'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleUsdKrw
+        exp_alerts: []
+
+  # TI-WM-FR-004d. [발화, TICKET] 76h(정상 최대 공백 72h+마진) 초과 미실행 → for:5m 후 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="market-usdkrw"}'
+        values: '-277200+0x25'
+    alert_rule_test:
+      - eval_time: 10m
+        groupname: collector-watermark-freshness-immediate
+        alertname: CollectorWatermarkFreshnessStaleUsdKrw
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: collector
+              tier: TICKET
+              batch: market-usdkrw
+            exp_annotations:
+              summary: "원/달러 환율 갱신 지연"
+              description: "usdkrw 전용 배치(화~토 10:30 KST, D−1 확정값)가 76시간(정상 최대 공백 토→화 72h + 마진) 초과 미실행 — 마지막 적재 후 3d 5h 10m 0s 경과."
+              action: "usdkrw 전용 배치(화~토 10:30 KST)·02:00 백필 갭워크 로그에서 KOREAEXIM→Yahoo 폴백 동작 확인 → market_indicators에서 USDKRW 최근 일자 조회"
+
   # TI-WM-FR-005. [발화, TICKET 17h30m, B-8] disclosures diff>0 상시 → for:17h30m 지속 후 발화(8h→17h30m 개정 검증).
   - interval: 10m
     input_series:
