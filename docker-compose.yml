@@ -214,7 +214,10 @@ services:
   # --- VictoriaMetrics: 수집 정상성 메트릭 스크랩/저장 (외부 판정 TSDB) ---
   victoriametrics:
     # [HARD] VM·vmalert 동일 버전 태그 고정. latest 금지(mysql 8.4·redis 8.8 선례).
-    image: victoriametrics/victoria-metrics:v1.148.0
+    # [#139 핀 롤백] v1.148.0+는 vmalert-tool unittest의 time()이 epoch-0 시뮬레이션 시계에서
+    # 호스트 벽시계로 바뀌는 업스트림 회귀로 CI 4개 샤드 실패(v1.149.0도 미수정 실측).
+    # 업스트림 수정 릴리스 확인(probe_test.yaml 재검) 전까지 v1.147.0 고정 — dependabot 범프 자동수용 금지.
+    image: victoriametrics/victoria-metrics:v1.147.0
     container_name: aaa-victoriametrics
     restart: unless-stopped
     # [D2 개정, #119] VM 512M: 단노드 통상 RSS 100~200M+에 TSDB merge/쿼리 스파이크·OOM 크래시루프 마진을
@@ -260,7 +263,8 @@ services:
   # --- vmalert: VM 데이터로 룰 평가 → Alertmanager 통지 (외부 판정기) ---
   vmalert:
     # [HARD] VM과 동일 버전 태그 유지 — 같은 릴리스에서 함께 배포됨.
-    image: victoriametrics/vmalert:v1.148.0
+    # [#139 핀 롤백] 위 victoriametrics 주석 참조 — unittest time() 회귀로 v1.147.0 고정.
+    image: victoriametrics/vmalert:v1.147.0
     container_name: aaa-vmalert
     restart: unless-stopped
     deploy:
