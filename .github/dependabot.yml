@@ -21,6 +21,11 @@ updates:
       - dependency-name: "redis"
         update-types:
           - "version-update:semver-major"
+      # [#139 핀 롤백] vmalert-tool v1.148.0+ unittest time() 벽시계 회귀로 VM·vmalert를
+      # v1.147.0에 고정 중(docker-compose.yml 주석 참조). 업스트림 수정 릴리스를
+      # probe_test.yaml로 재검·확인한 뒤 이 ignore 2건을 제거하고 수동 업그레이드한다.
+      - dependency-name: "victoriametrics/victoria-metrics"
+      - dependency-name: "victoriametrics/vmalert"
 
   # GitHub Actions 워크플로우 액션 버전 추적
   - package-ecosystem: "github-actions"
