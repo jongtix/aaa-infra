@@ -142,7 +142,11 @@ services:
         limits:
           memory: 400M
           cpus: "0.5"
-    # ADR-016: DB 미접속 단계라 env_file/depends_on 없음(DB 연결은 INFER-001에서 추가)
+    # SPEC-ANALYZER-SCHEMA-001: analyzer/trainer 계정 신설 + DB 접속 배선(REQ-ASCH-041~044).
+    # 실제 DB 연결 코드(SQLAlchemy 등)는 aaa-analyzer 레포 범위 밖 — 후속 ANALYZER-INFER-001에서 추가(REQ-ASCH-045).
+    env_file:
+      - ${AAA_SSD_BASE}/secrets/.env.common
+      - ${AAA_SSD_BASE}/secrets/.env.analyzer
     expose:
       - "8000"
     volumes:
@@ -151,6 +155,9 @@ services:
     networks:
       - aaa-network
     # HEALTHCHECK는 이미지에 내장(Dockerfile, urllib 기반 /health 프로브) — 재정의 불필요
+    depends_on:
+      mysql:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp
