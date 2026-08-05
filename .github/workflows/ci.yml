@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare dummy .env + secret files
-        # docker-compose.yml의 env_file 참조(.env.mysql/.env.redis/.env.common/.env.collector)는
+        # docker-compose.yml의 env_file 참조(.env.mysql/.env.redis/.env.common/.env.collector/.env.analyzer)는
         # 실제 파일 존재를 요구한다(compose config가 검증). 값은 비어 있어도 문법 검증엔 무관하다.
         # alertmanager/vector 등의 볼륨 마운트 소스 파일·top-level secrets 파일은 실측 확인 결과
         # `docker compose config -q`가 존재를 요구하지 않는다(문법+변수 참조 검증만 수행).
@@ -32,6 +32,7 @@ jobs:
           : > "$AAA_SSD_BASE/secrets/.env.redis"
           : > "$AAA_SSD_BASE/secrets/.env.common"
           : > "$AAA_SSD_BASE/secrets/.env.collector"
+          : > "$AAA_SSD_BASE/secrets/.env.analyzer"
           {
             echo "AAA_SSD_BASE=$AAA_SSD_BASE"
             echo "AAA_HDD_BASE=$AAA_HDD_BASE"
