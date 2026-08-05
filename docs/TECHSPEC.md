@@ -590,10 +590,11 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 **접근 보안**:
 - Flyway 전용 계정과 서비스 런타임 계정을 분리 ([ADR-016](ADR/ADR-016-flyway-schema-migration.md))
   - `flyway`: SELECT, INSERT, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES (Flyway 마이그레이션 전용. `spring.flyway.user`로 지정)
-  - `collector`: SELECT, INSERT + UPDATE(stocks, stock_grades, short_sale_overseas, etf_metadata만). DELETE/DDL 없음 ([ADR-026](ADR/ADR-026-collector-grant-two-tier-model.md))
+  - `collector`: SELECT, INSERT + UPDATE(stocks, stock_grades, short_sale_overseas, etf_metadata, backfill_status만). DELETE/DDL 없음 ([ADR-026](ADR/ADR-026-collector-grant-two-tier-model.md))
   - `notifier`: SELECT, INSERT + 필요 테이블 UPDATE. `notification_log`는 SELECT/INSERT만 (INSERT-ONLY)
   - `trader`: SELECT, INSERT + 필요 테이블 UPDATE. `order_log`는 SELECT/INSERT만 (INSERT-ONLY)
   - `analyzer`: SELECT, INSERT (trading_signals·signal_price_bands에 INSERT, 나머지는 SELECT)
+  - `trainer`: SELECT-only(`aaa.*`, MacBook 터널 전용, `172.20.0.1` 고정 host — 6.2절 "MacBook → NAS MySQL 접속 보안" 참조)
 - 서비스 런타임 계정에 DELETE/DDL 권한을 부여하지 않는다. DELETE가 필요한 경우 별도 ADR로 결정
 - `order_log`, `notification_log` 테이블: 해당 서비스(trader, notifier)의 DB 사용자 권한에서 INSERT-ONLY를 DB 수준으로 강제
 - 시계열 데이터 테이블은 `INSERT IGNORE`로 중복 방지하며 UPDATE를 사용하지 않는다 ([ADR-025](ADR/ADR-025-daily-ohlcv-raw-price-storage.md))
@@ -1179,7 +1180,7 @@ PRD 6.2절에 정의된 A/B/C/F 등급을 자동 분류하는 기준.
 5. **조각 병합 후처리(비단조 대응)**: 트리 모델의 비단조성(모멘텀 피처는 가격↑→score↑, 과열 피처는 반대 + 계단형 출력)으로 폭이 좁은 등급 조각이 생길 수 있다 — 폭 < 임계(프로퍼티, 초안 1%)인 조각은 인접 밴드에 병합한다. 대안인 monotone constraints(가격 파생 피처 단조 제약 학습)는 ANALYZER-TRAIN-001에서 성능 대조 실험 후 채택 여부 결정 [초기 미적용 — 어느 피처에 어느 방향 제약이 옳은지 자체가 모델링 결정이며 성능 훼손 위험]
 6. **저장**: `signal_price_bands` INSERT
 
-**`signal_price_bands` 컬럼 윤곽** (타입 정밀화·인덱스는 ANALYZER-SCHEMA-001): `stock_id`(FK), `trade_date`(기준 일봉 날짜 — 밴드의 적용 대상은 익거래일 장중), `horizon`(D20/D60), `boundary_set`(PROMOTE/DEMOTE), `band_seq`, `price_low`, `price_high`, `grade`(5클래스), `regime_suppressed`, `model_version`, `created_at`
+**`signal_price_bands` 컬럼 윤곽** (타입 정밀화·인덱스는 ANALYZER-SCHEMA-001): `stock_id`(FK), `trade_date`(기준 일봉 날짜 — 밴드의 적용 대상은 익거래일 장중), `horizon`(D20/D60), `boundary_set`(PROMOTE/DEMOTE), `band_seq`, `price_low`, `price_high`, `signal_class`(5클래스), `regime_suppressed`, `model_version`, `created_at`
 
 **소비 규칙 (notifier — 8.1절 1단계와 연동)**:
 - 장 시작 전 cron에서 당일 밴드를 프로세스 메모리에 적재(notifier 참조 데이터 장전 스냅샷에 통합). 틱 경로 DB 동기 조회 금지 원칙 유지
@@ -1192,7 +1193,7 @@ PRD 6.2절에 정의된 A/B/C/F 등급을 자동 분류하는 기준.
 - confidence는 실제 종가 기준으로 신호당 1회만 산출하며 가격별로 재계산하지 않는다(예측구간의 가격 민감도는 2차 효과로 판단 — 필요성이 운영 데이터로 입증되면 후속 개선 후보)
 - 밴드 유효기간은 익거래일 하루다 — 동결 피처가 매 마감 갱신되므로 같은 모델이라도 밴드는 매일 달라지며, 스윕은 매 영업일 재수행한다
 
-**체제 억제 연동**: 체제 감지(6.4절) 발동 시 밴드의 `grade`를 전 구간 HOLD로 강제하고 `regime_suppressed=true`로 저장한다 — notifier가 체제 상태를 별도로 알 필요 없이 밴드만으로 일관 동작. 원 score 기준 밴드는 저장하지 않는다(원 score는 `trading_signals`에 보존되므로 사후 재현 가능).
+**체제 억제 연동**: 체제 감지(6.4절) 발동 시 밴드의 `signal_class`를 전 구간 HOLD로 강제하고 `regime_suppressed=true`로 저장한다 — notifier가 체제 상태를 별도로 알 필요 없이 밴드만으로 일관 동작. 원 score 기준 밴드는 저장하지 않는다(원 score는 `trading_signals`에 보존되므로 사후 재현 가능).
 
 **비용**: 시장당 A·B등급 ~60종목 × 그리드 ~120 × horizon 2 ≈ 1.4만 행 predict — 트리 부스팅 배치 추론으로 N100에서 초 단위 예상. 메모리 영향은 500MB 예산 내 실측(ANALYZER-INFER-001).
 
