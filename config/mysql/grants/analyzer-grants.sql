@@ -21,8 +21,10 @@
 --        배포 완료된 것을 flyway_schema_history로 확인한 **이후에만** 실행한다.
 --        순서 위반 시 ERROR 1146 (42S02)로 즉시 실패한다.
 --
--- [APPLY] MySQL 호스트(NAS)에서 — DB명은 aaa 고정(MYSQL_DATABASE=aaa):
---   docker exec -i aaa-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' \
+-- [APPLY] MySQL 호스트(NAS)에서 — DB명은 aaa 고정(MYSQL_DATABASE=aaa).
+--   -p"$VAR" 형식은 금지(docker top/ps aux에 패스워드 노출) — MYSQL_PWD 환경변수로
+--   컨테이너 내부에서 해석되도록 한다:
+--   docker exec -i aaa-mysql bash -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot aaa' \
 --     < config/mysql/grants/analyzer-grants.sql
 --
 -- [VERIFY] SHOW GRANTS FOR 'analyzer'@'%';
