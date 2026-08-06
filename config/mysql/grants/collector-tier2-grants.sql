@@ -12,6 +12,10 @@
 --                        진행점(last_collected_date/attempt_count) 전진은 UPDATE (SPEC-COLLECTOR-BACKFILL-001)
 --   market_calendar      상태 — 일일 갱신 배치가 소스 우선순위 판정 후 기존 행을 in-place UPDATE
 --                        (SPEC-COLLECTOR-CALENDAR-001 REQ-CAL-004/-020/-021, aaa-infra#120)
+--   short_sale_domestic  정정 대상 — short_sell_vol_rate/short_sell_qty/acml_vol/vol_rate_verified_at를
+--                        평이한 UPDATE ... WHERE로 in-place 정정 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001,
+--                        aaa-infra#61 분할·병합 왜곡 상시 정정 + aaa-infra#133 T+0 예비치 리비전 소급 정정,
+--                        ADR-026 2026-08-06 개정 — daily_ohlcv/investor_trend는 포함하지 않음)
 --
 -- [WHY 별도 파일] initdb.d(01-init-collector.sh)는 MySQL 최초 init 시점,
 --   즉 Flyway가 스키마를 만들기 전에 실행된다. MySQL 8.4는 존재하지 않는
@@ -35,4 +39,5 @@ GRANT UPDATE ON aaa.short_sale_overseas TO 'collector'@'%';
 GRANT UPDATE ON aaa.etf_metadata TO 'collector'@'%';
 GRANT UPDATE ON aaa.backfill_status TO 'collector'@'%';
 GRANT UPDATE ON aaa.market_calendar TO 'collector'@'%';
+GRANT UPDATE ON aaa.short_sale_domestic TO 'collector'@'%';
 FLUSH PRIVILEGES;

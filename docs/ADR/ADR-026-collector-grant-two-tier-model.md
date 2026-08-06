@@ -43,12 +43,13 @@ ADR-022가 명시한 "nameKo/nameEn만 갱신"은 **애플리케이션 코드 �
 | `short_sale_overseas` | FINRA Daily/Short Interest 이중 소스 UPSERT 병합 ([ADR-017](ADR-017-short-sale-table-split.md), TECHSPEC §4) |
 | `etf_metadata` | 메타 upsert — `EtfMetadataWriter.upsert()`의 `existing.updateFrom()` |
 | `backfill_status` | 상태 — 백필 진행점 전진(`last_collected_date`/`attempt_count`/`status` UPDATE). 시딩=INSERT IGNORE(Tier-1), 진행점 전진=UPDATE(Tier-2) (SPEC-COLLECTOR-BACKFILL-001, 아래 개정 참고) |
+| `short_sale_domestic` | 정정 대상 — `short_sell_vol_rate`/`short_sell_qty`/`acml_vol`/`vol_rate_verified_at`를 평이한 `UPDATE ... WHERE`로 in-place 정정(SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001, 아래 개정 참고) |
 
 TECHSPEC §4(`:575`)는 두 가지를 정정한다:
 - **`backfill_status` 제거** — (본 ADR 제정 시점 2026-06-13) 해당 테이블은 존재하지 않았다(마이그레이션 부재). 미구현 테이블을 권한 목록에 두지 않았다. → **2026-06-20 재추가**: SPEC-COLLECTOR-BACKFILL-001이 `backfill_status` 테이블(V24)을 생성하면서 Tier-2로 재등재한다(아래 개정 절 참고).
 - **`etf_metadata` 추가** — 실제 갱신되나 목록에서 누락돼 있었다.
 
-나머지 13개 테이블(`daily_ohlcv`, `market_indicators`, `investor_trend`, `credit_balance`, `short_sale_domestic`, `macro_indicators`, `domestic_news_headlines`, `overseas_news_headlines`, `analyst_estimates`, `corporate_events`, `futures_daily`, `financials`, `etf_representative_history`)은 Tier 1(INSERT 전용)로 둔다. `financials`/`analyst_estimates`/`domestic_news_headlines`/`overseas_news_headlines`는 현재 증거상 INSERT 전용이며, 갱신 필요가 확인되면 결정 3의 검증이 포착한다. (두 뉴스 테이블은 db 단위 `GRANT SELECT, INSERT ON aaa.*`로 자동 커버 — 별도 테이블 GRANT 불요. SPEC-COLLECTOR-OVERSEAS-ETC-001)
+나머지 12개 테이블(`daily_ohlcv`, `market_indicators`, `investor_trend`, `credit_balance`, `macro_indicators`, `domestic_news_headlines`, `overseas_news_headlines`, `analyst_estimates`, `corporate_events`, `futures_daily`, `financials`, `etf_representative_history`)은 Tier 1(INSERT 전용)로 둔다. `financials`/`analyst_estimates`/`domestic_news_headlines`/`overseas_news_headlines`는 현재 증거상 INSERT 전용이며, 갱신 필요가 확인되면 결정 3의 검증이 포착한다. (두 뉴스 테이블은 db 단위 `GRANT SELECT, INSERT ON aaa.*`로 자동 커버 — 별도 테이블 GRANT 불요. SPEC-COLLECTOR-OVERSEAS-ETC-001) `short_sale_domestic`은 본 ADR 제정 시점에는 Tier-1이었으나 2026-08-06 개정으로 Tier-2 편입됐다(아래 개정 절 참고) — 위 Decision 2 표에 반영.
 
 ### 결정 3 — GRANT 버전관리 및 검증
 
@@ -132,3 +133,39 @@ GRANT는 결정 3의 버전관리 원칙대로 코드(`config/mysql/grants/colle
 ### 기동 self-check 연동 (CR-01)
 
 aaa-collector `DbGrantVerifier.TIER2_TABLES`에 `backfill_status`를 추가했다(별도 레포 커밋). 이 root 수동 GRANT가 누락된 채 부팅하면 기동 self-check가 fail-fast(부팅 실패)한다 — 정상 부팅 후 진행점 UPDATE만 SQL 1142로 침묵 실패하는 무한루프를 기동 시점에 차단한다(REQ-BACKFILL-035a).
+
+---
+
+## 개정 — 2026-08-06: `short_sale_domestic` Tier-2 편입 (SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001)
+
+본 ADR 제정 시점에는 `short_sale_domestic`이 시계열/이벤트성 테이블로 분류되어 Tier-1(INSERT 전용)이었다. SPEC-COLLECTOR-SHORTSALE-VOLRATE-CORRECTION-001이 두 개의 독립적인 근본원인(aaa-infra#61 분할·병합 왜곡, aaa-infra#133 T+0 예비치 리비전)에 대한 공통 정정 파이프라인을 이 테이블에 도입하며, `short_sell_vol_rate`/`short_sell_qty`/`acml_vol`/`vol_rate_verified_at` 컬럼을 in-place UPDATE로 정정해야 하므로 Tier-2로 재분류한다.
+
+### 승격 근거 — 일시적 백필이 아니라 영구 편입
+
+이 SPEC의 정정 수요는 두 갈래다:
+
+- **#61(상시)**: 신규 상장 종목의 향후 이력 백필, 향후 분할·병합 이벤트 재수집 — 배포 이후에도 계속 발생하는 성장하는 대상 집합.
+- **#133(소급)**: 스케줄 이동(M2, 19:00 KST)으로 향후 발생은 소멸하나, 2026-06-29~M2 배포일 구간의 기존 행에 대한 소급 정정이 필요.
+
+두 갈래와 향후 유사 수요(예견됨)를 고려해 `short_sale_domestic`을 **영구** Tier-2 편입한다 — 이 SPEC 완료 후 되돌리지 않는다. `market_calendar`(SPEC-COLLECTOR-CALENDAR-001) 편입과 동일한 패턴 — 특정 SPEC의 정정 배치가 계기이나 분류 자체는 결정 1의 "이 테이블의 행이 쓰여진 뒤 제자리에서 갱신되어야 하는가" 규칙에 따른 영구 결정이다.
+
+### `daily_ohlcv`/`investor_trend`는 이 편입에 포함하지 않는다
+
+같은 SPEC의 aaa-infra#133 근본원인이 `daily_ohlcv`/`investor_trend`에도 정정을 요구하지만, 이 두 테이블은 Tier-2로 승격하지 않는다. 근거:
+
+1. **재단(backbone) 테이블 blast-radius 회피** — `daily_ohlcv`/`investor_trend`는 여러 서비스가 참조하는 재단 테이블이며, collector 앱 계정에 상시 UPDATE 권한을 부여하면 향후 버그가 이 두 테이블을 광범위하게 오염시킬 위험 반경이 크다. 반면 `short_sale_domestic`은 이 SPEC의 정정 파이프라인 자체가 유일한 상시 UPDATE 경로다.
+2. **닫히는 구간(closed window)** — aaa-infra#133의 근본원인은 M2(스케줄 19:00 KST 이동) 배포로 향후 발생이 확정적으로 소멸한다. `daily_ohlcv`/`investor_trend`의 소급 정정은 2026-06-29~M2 배포일 구간에 한정된 1회성 작업이며, 앱 코드 UPDATE 경로가 아니라 오퍼레이터의 수동 SQL(root 권한, 진단 스크립트 diff 검토 후 실행)로 처리한다. 상시 앱 계정 UPDATE 권한을 부여할 근거가 없다.
+
+이 두 테이블은 Tier-1로 유지한다.
+
+### `DbGrantVerifier.TIER2_TABLES` 6개 → 7개
+
+aaa-collector `DbGrantVerifier.TIER2_TABLES`에 `short_sale_domestic`을 추가했다(별도 레포 커밋). `collector-tier2-grants.sql`에 `GRANT UPDATE ON aaa.short_sale_domestic TO 'collector'@'%';`를 추가했다 — 대상 테이블(`short_sale_domestic`)은 이미 존재하므로(V42 마이그레이션으로 생성 완료) 스키마 생성 순서 제약(ERROR 1146) 없이 root로 즉시 적용 가능하다.
+
+### `Tier1InsertIgnoreGuardTest.TIER2_TABLE_ALLOWLIST`는 갱신하지 않는다
+
+이 SPEC의 정정 UPDATE 경로는 평이한 `UPDATE ... WHERE`(REQ-SSVC-061)를 사용하며 `ON DUPLICATE KEY UPDATE` 패턴 자체가 등장하지 않는다. 위 `backfill_status`/`market_calendar` 개정과 동일한 근거로, 가드 허용목록(4개, `ON DUPLICATE KEY UPDATE` 패턴 전용 검사)에는 추가하지 않는다.
+
+### 배포 순서
+
+이 GRANT는 aaa-collector 코드 배포보다 **선행**해야 한다 — 누락 시 `DbGrantVerifier` 기동 self-check가 fail-fast한다(위 CR-01 절과 동일 메커니즘).
