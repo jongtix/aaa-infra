@@ -144,6 +144,11 @@ services:
           cpus: "0.5"
     # SPEC-ANALYZER-SCHEMA-001: analyzer/trainer 계정 신설 + DB 접속 배선(REQ-ASCH-041~044).
     # 실제 DB 연결 코드(SQLAlchemy 등)는 aaa-analyzer 레포 범위 밖 — 후속 ANALYZER-INFER-001에서 추가(REQ-ASCH-045).
+    # SPEC-ANALYZER-TRAIN-AUTOMATION-001: WoL+SSH 원격 학습 디스패치에 필요한
+    # TRAIN_AUTOMATION_* 11개 값(필수 10 + MOUNT_SCRIPT_PATH)은 .env.analyzer에
+    # 함께 둔다(aaa-analyzer/.env.example 참고) — 디스패치 대상(맥북) SSH 호스트,
+    # DB 터널 정보 등은 시크릿은 아니나 이미 이 파일이 서비스 전용 설정 파일로
+    # 쓰이고 있어 별도 파일을 새로 만들지 않는다.
     env_file:
       - ${AAA_SSD_BASE}/secrets/.env.common
       - ${AAA_SSD_BASE}/secrets/.env.analyzer
@@ -151,6 +156,19 @@ services:
       - "8000"
     volumes:
       - ${AAA_HDD_BASE}/logs/aaa-analyzer:/var/log/aaa-analyzer
+    # REQ-ATA-022: 디스패치 전용 SSH 프라이빗 키/known_hosts. alertmanager와
+    # 동일 패턴(compose secrets — non-swarm은 mode를 무시하고 호스트 파일 권한을
+    # 그대로 미러, [배포 실측 2026-06-20] 참조)이므로 호스트
+    # ${AAA_SSD_BASE}/secrets/ssh/id_ed25519_analyzer_dispatch는 0600이어야
+    # validate_private_key_permissions()가 통과한다(2026-08-12 실측 생성 —
+    # NAS에 이미 존재). target 경로는 aaa-analyzer/.env.example의
+    # TRAIN_AUTOMATION_SSH_KEY_PATH/KNOWN_HOSTS_PATH 기본값과 반드시 일치해야
+    # 한다 — 컨테이너 내부 경로만 고정, 호스트 파일명은 자유.
+    secrets:
+      - source: analyzer_dispatch_key
+        target: analyzer-dispatch-key
+      - source: analyzer_dispatch_known_hosts
+        target: analyzer-dispatch-known-hosts
     logging: *default-logging
     networks:
       - aaa-network
@@ -543,8 +561,24 @@ services:
 # 각 파일 내용은 값만(KEY= 없음, 후행 개행 없이). 기존 시스템봇 TELEGRAM_SYSTEM_BOT_TOKEN/TELEGRAM_OPERATOR_CHAT_ID 값 재사용
 # (신규 봇 발급 없음). 배포 전 NAS에 직접 배치 — scripts/init-nas.sh 안내 참조.
 # 컨테이너 내부엔 /run/secrets/am_bot_token · /run/secrets/am_chat_id 로 마운트된다.
+#
+# --- Secrets: Analyzer 디스패치 전용 SSH 키/known_hosts (SPEC-ANALYZER-TRAIN-AUTOMATION-001, REQ-ATA-022) ---
+# db_tunnel 키(trainer-tunnel-datagrip)와 별개의 신규 키페어(2026-08-12 생성,
+# NAS ${AAA_SSD_BASE}/secrets/ssh/ 하위에 실측 확인) — NAS analyzer 컨테이너 →
+# 맥북 SSH 디스패치 전용. 호스트 키 파일은 반드시 0600(파일 소유자만 읽기)이어야
+# 한다 — compose secrets(non-swarm)는 mode를 무시하고 호스트 파일 권한을 그대로
+# 미러하므로, aaa-analyzer의 validate_private_key_permissions()가 컨테이너
+# 내부에서 그 권한을 그대로 검증한다. known_hosts는 맥북 SSH 호스트키 지문을
+# ssh-keyscan으로 채집해 배치(REQ-ATA-022, StrictHostKeyChecking=no 금지).
+# 컨테이너 내부엔 /run/secrets/analyzer-dispatch-key ·
+# /run/secrets/analyzer-dispatch-known-hosts 로 마운트된다(target 고정,
+# 호스트 파일명은 secrets/ssh/ 하위 관례를 그대로 따른다).
 secrets:
   am_bot_token:
     file: ${AAA_SSD_BASE}/secrets/alertmanager.bot_token
   am_chat_id:
     file: ${AAA_SSD_BASE}/secrets/alertmanager.chat_id
+  analyzer_dispatch_key:
+    file: ${AAA_SSD_BASE}/secrets/ssh/id_ed25519_analyzer_dispatch
+  analyzer_dispatch_known_hosts:
+    file: ${AAA_SSD_BASE}/secrets/ssh/known_hosts_analyzer_dispatch
