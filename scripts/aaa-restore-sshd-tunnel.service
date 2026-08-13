@@ -1,0 +1,44 @@
+# =============================================================================
+# aaa-restore-sshd-tunnel.service — 부팅 시 db_tunnel Match 블록 복구
+# =============================================================================
+# UGOS 업데이트/재부팅으로 /etc/ssh/sshd_config가 재생성되면 db_tunnel
+# 계정용 `Match User db_tunnel` 블록(AllowTcpForwarding yes + PermitOpen)이
+# 사라져 db_tunnel의 -L 포트포워딩이 접속 즉시 끊긴다(2026-08-13 실측 —
+# SPEC-ANALYZER-TRAIN-AUTOMATION-001 수동 학습 실행 중 발견, #118 ACL 장애와
+# 동일 재부팅 시각에 sshd_config도 함께 재생성된 것으로 추정). sshd가 시작하기
+# 전에 restore-sshd-db-tunnel.sh로 블록을 선제 복구한다.
+#
+# 설치 (NAS, root):
+#   cp scripts/aaa-restore-sshd-tunnel.service /etc/systemd/system/
+#   # ExecStart 경로를 실제 배포 경로로 수정했는지 확인
+#   systemctl daemon-reload
+#   systemctl enable aaa-restore-sshd-tunnel.service
+#
+# 검증:
+#   systemctl status aaa-restore-sshd-tunnel.service
+#   journalctl -u aaa-restore-sshd-tunnel.service -b
+#
+# 순서: sshd 자체가 시작하기 전에 블록을 파일에 써 넣어야 첫 기동부터 올바른
+# 설정으로 뜬다(사후 reload에 의존하지 않는다). ssh.service 실제 유닛명이
+# 다른 NAS 모델/UGOS 버전에서 다를 수 있으니 설치 전
+# `systemctl list-units --type=service | grep -i ssh`로 재확인할 것.
+# =============================================================================
+[Unit]
+Description=AAA NAS sshd db_tunnel Match Block Restore
+DefaultDependencies=no
+Requires=local-fs.target
+After=local-fs.target
+Before=ssh.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra
+ExecStart=/bin/bash /volume1/SSD_1/Development/aaa/aaa-infra/scripts/restore-sshd-db-tunnel.sh
+RemainAfterExit=no
+# 실패해도 sshd 기동 자체는 막지 않는다(전역 설정으로도 SSH 접속 자체는
+# 가능하므로) — 실패 시 journalctl로 원인 확인 후 수동 재실행한다.
+SuccessExitStatus=0
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
