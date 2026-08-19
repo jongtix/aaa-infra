@@ -1,0 +1,17 @@
+# 이 파일은 docker-compose.yml이 pull하는 서드파티 이미지 8종 전체에 공용으로 적용된다.
+# CVE ID 매칭은 이미지 구분 없이 전역 적용된다(Trivy .trivyignore 표준 동작) — spec.md §3 A3 참조.
+# 항목 추가는 사용자 명시 승인 필요(전역 규칙). 자동 추가 금지.
+#
+# 포맷 (SPEC-INFRA-CVE-SCAN-001 REQ-CVE-016과 동일, Trivy 네이티브 .trivyignore 문법):
+#   # CVE-YYYY-NNNNN: <justification> (approved: YYYY-MM-DD)
+#   CVE-YYYY-NNNNN exp:YYYY-MM-DD
+#
+# 만료일 상한: 승인일로부터 최대 30일. 사유 필드에 이 배포 컨텍스트에서 현실적
+# 공격 표면이 없음을 구체적으로 문서화한 경우에 한해 최대 90일까지 허용한다.
+#
+# 만료된 항목은 억제를 멈추고(finding이 다시 알림 대상에 복귀) 다음 스캔부터
+# 운영자 Telegram 알림의 "예외 만료 확인" 섹션에 나타난다. 만료를 넘긴 항목을
+# 계속 억제하려면 사람이 새 승인일·새 만료일로 다시 기록해야 한다(자동 갱신 없음).
+#
+# (SPEC-INFRA-CVE-SCAN-003 — 아직 승인된 예외 항목 없음. 항목은 개별 CVE 검토·승인
+# 시점에 사용자 승인 하에 별도 커밋으로 추가된다.)
