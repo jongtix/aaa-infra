@@ -307,12 +307,22 @@ fail() {
   exit 1
 }
 
-# ---- REQ-VF-001/-005 메트릭 푸시 — 스텁(M4에서 구현) ----
+# ---- REQ-VF-001/-005 메트릭 푸시 ----
+# mode="full"/mode="binlog" 레이블로 분리된 시리즈를 각각 독립적으로 푸시한다
+# (REQ-VF-001[HARD] — 두 모드가 레이블 없는 동일 시리즈로 병합되어서는 안 됨,
+# 아래 curl 페이로드 자체가 레이블을 포함하므로 자동으로 충족된다).
+# 푸시 실패는 REQ-VF-003 알림을 별도로 트리거하지 않는다 — 신선도 저하는
+# vmalert 데드맨 룰(REQ-VF-002/-005, config/vmalert/rules.yml
+# backup-mysql-deadman 그룹)이 감지하는 영역이며, spec.md에 별도 요구가 없다.
+# 다만 조용히 삼키지 않고 warn 로그로 남긴다.
 push_metric() {
   local mode="$1"
-  # TODO(M4): curl -sf -d "aaa_backup_last_success_timestamp_seconds{mode=\"${mode}\"} $(date +%s)" \
-  #   "${VM_IMPORT_URL:-http://localhost:8428}/api/v1/import/prometheus"
-  info "[stub] mode=${mode} 메트릭 푸시는 M4에서 구현 예정 — 현재는 스킵"
+  local url="${VM_IMPORT_URL:-http://localhost:8428}/api/v1/import/prometheus"
+  if curl -sf -d "aaa_backup_last_success_timestamp_seconds{mode=\"${mode}\"} $(date +%s)" "$url"; then
+    info "메트릭 푸시 완료: mode=${mode} → ${url}"
+  else
+    warn "메트릭 푸시 실패: mode=${mode} → ${url} (백업 자체는 계속 진행 — vmalert 데드맨 룰이 신선도 저하를 별도 감지)"
+  fi
 }
 
 # =============================================================================

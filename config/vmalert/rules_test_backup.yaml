@@ -1,0 +1,110 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — MySQL 백업 데드맨 (그룹 backup-mysql-deadman)
+# SPEC-INFRA-DB-BACKUP-001 REQ-VF-002/-005, AC-VF-002/AC-VF-005
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+#   또는: vmalert-tool unittest --files='/rules/rules_test_*.yaml'  (순차, CWD=config/vmalert 마운트)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.147.0 \
+#     unittest --files=/rules/rules_test_backup.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [장주기 그리드 — 왜 evaluation_interval을 1h로 굵게 잡았나] (rules_test_watermark_slow.yaml과
+#   동일 근거) 두 alert 모두 `time() - last_over_time(metric[window]) > threshold`이며
+#   threshold가 6h~28h이므로, unittest는 t=0부터 eval_time까지 evaluation_interval
+#   간격으로 전 구간을 순회 평가한다 — "시리즈 길이는 eval_time 이상이어야 한다"는
+#   기존 샤드의 실측 관례를 따른다(불일치 시 last_over_time이 값을 찾지 못해
+#   미발화로 오판됨 — 최초 작성 시 30s 간격 3점짜리 짧은 시리즈로 시도했다가
+#   이 실패를 실측하고 정정함). 30s 그리드로 28h를 표현하면 3,362스텝이 되므로
+#   1h로 굵게 잡아 스텝 수를 1/120로 줄인다.
+# [메트릭 값 모델] 두 alert 모두 마지막 성공 시각(t=0으로 고정)에 값 0을 푸시한
+#   것으로 모델링한다 — time()이 곧 eval_time(0=epoch 기준)이므로
+#   time()-last_over_time(...) = eval_time - 0 = eval_time이 되어, 원하는
+#   staleness(경과 시간)를 eval_time만으로 직접 제어할 수 있다.
+# [for: 1m 반영] 두 alert 모두 for: 1m이므로 threshold를 막 넘는 시점(경계, 1스텝째
+#   true)에서는 미발화할 수 있어 발화 시나리오는 threshold를 넘긴 후 최소 2스텝
+#   이상 지난 시점을 eval_time으로 잡는다(evaluation_interval=1h ≫ for:1m이므로
+#   1스텝만 지나도 조건은 충분하나, 구현 세부사항에 좌우되지 않도록 여유를 둔다).
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 1h
+
+tests:
+  # ===========================================================================
+  # 룰: BackupMysqlFullStale — REQ-VF-002 / AC-VF-002
+  # ===========================================================================
+  # 시리즈 길이: eval_time 32h → N = 32(1h 간격 33점, `0+0x32`)로 24h/32h 두
+  #   eval_time을 모두 커버.
+
+  # TI-BK-DM-001. [발화] 마지막 성공(t=0, 값 0) 이후 28시간(100,800s) threshold를
+  #   4시간(2스텝) 이상 초과한 32시간 시점 → 발화.
+  - interval: 1h
+    input_series:
+      - series: 'aaa_backup_last_success_timestamp_seconds{mode="full"}'
+        values: '0+0x32'
+    alert_rule_test:
+      - eval_time: 32h
+        groupname: backup-mysql-deadman
+        alertname: BackupMysqlFullStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: backup
+              mode: full
+              tier: TICKET
+            exp_annotations:
+              summary: "MySQL 풀 백업(mysqldump) 마지막 성공이 28시간 초과"
+              description: "aaa_backup_last_success_timestamp_seconds{mode=\"full\"}의 마지막 푸시가 28시간(100,800초) 이상 지났음 — 매일 05:00 KST 백업이 실패/미실행됐거나 스케줄러(aaa-backup-mysql.timer)가 멈췄을 가능성(REQ-VF-002)."
+              action: "NAS에서 systemctl --user status aaa-backup-mysql.timer aaa-backup-mysql.service 확인, journalctl --user -u aaa-backup-mysql.service로 실패 원인 확인. REQ-VF-003 Telegram 실패 알림이 먼저 왔는지도 대조"
+
+  # TI-BK-DM-002. [무발화] 정상 daily(24시간) 간격 시나리오 — 다음 예정 백업 시각
+  #   (24시간 후)에는 아직 threshold(28시간) 미도달 → 미발화.
+  - interval: 1h
+    input_series:
+      - series: 'aaa_backup_last_success_timestamp_seconds{mode="full"}'
+        values: '0+0x32'
+    alert_rule_test:
+      - eval_time: 24h
+        groupname: backup-mysql-deadman
+        alertname: BackupMysqlFullStale
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰: BackupMysqlBinlogStale — REQ-VF-005(OP-4 확정) / AC-VF-005
+  # ===========================================================================
+  # 시리즈 길이: eval_time 8h → N = 8(1h 간격 9점, `0+0x8`)로 1h/8h 두 eval_time을 모두 커버.
+
+  # TI-BK-DM-003. [발화] 마지막 성공(t=0, 값 0) 이후 6시간(21,600s) threshold를
+  #   2시간(2스텝) 이상 초과한 8시간 시점 → 발화.
+  - interval: 1h
+    input_series:
+      - series: 'aaa_backup_last_success_timestamp_seconds{mode="binlog"}'
+        values: '0+0x8'
+    alert_rule_test:
+      - eval_time: 8h
+        groupname: backup-mysql-deadman
+        alertname: BackupMysqlBinlogStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: backup
+              mode: binlog
+              tier: TICKET
+            exp_annotations:
+              summary: "MySQL binlog 아카이브 마지막 성공이 6시간 초과"
+              description: "aaa_backup_last_success_timestamp_seconds{mode=\"binlog\"}의 마지막 푸시가 6시간(21,600초) 이상 지났음 — 매시 FLUSH BINARY LOGS+복사(aaa-backup-binlog.timer)가 조용히 멈췄을 가능성. full 백업 데드맨(BackupMysqlFullStale)만으로는 이 실패가 감지되지 않는다(REQ-VF-001 모드 분리)."
+              action: "NAS에서 systemctl --user status aaa-backup-binlog.timer aaa-backup-binlog.service 확인, journalctl --user -u aaa-backup-binlog.service로 실패 원인 확인"
+
+  # TI-BK-DM-004. [무발화] 정상 매시(1시간) 간격 시나리오 — 다음 예정 binlog 복사
+  #   시각(1시간 후)에는 아직 threshold(6시간) 미도달 → 미발화.
+  - interval: 1h
+    input_series:
+      - series: 'aaa_backup_last_success_timestamp_seconds{mode="binlog"}'
+        values: '0+0x8'
+    alert_rule_test:
+      - eval_time: 1h
+        groupname: backup-mysql-deadman
+        alertname: BackupMysqlBinlogStale
+        exp_alerts: []

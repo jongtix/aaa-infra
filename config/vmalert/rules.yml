@@ -1357,3 +1357,51 @@ groups:
           summary: "victorialogs 스크랩 실패(다운) — 90s 연속"
           description: "VictoriaMetrics가 victorialogs /metrics 스크랩에 90s(30s×3) 연속 실패. 게이트 무관 발화."
           action: "ssh nas-ugreen \"docker ps -a | grep victorialogs\" → 컨테이너 기동·재시작 상태 확인. 이상 시 \"docker logs aaa-vector\"로 적재 공백(victorialogs 연결 실패 에러) 확인"
+
+  # ---------------------------------------------------------------------------
+  # 그룹: MySQL 백업 데드맨 (SPEC-INFRA-DB-BACKUP-001 REQ-VF-002/-005, OP-4 확정)
+  # ---------------------------------------------------------------------------
+  # [HARD ADD-only] collector-watermark-deadman(그룹 W1) 및 XR-I와 동일 원칙 —
+  #   기존 그룹을 대체하지 않고 신규 그룹만 추가한다. 다만 감시 방식은 다르다:
+  #   W1/XR-I는 absent()로 "시계열 자체의 소실"을 감시하는 반면, 이 그룹은
+  #   push 방식 메트릭(aaa_backup_last_success_timestamp_seconds)의
+  #   stale-timeout을 last_over_time으로 감시한다 — push 샘플은 시간이 지나면
+  #   stale 처리되어 raw 시리즈 비교로는 신선도 판정이 불가능하기 때문이다
+  #   (REQ-VF-002/-005 shall). 이 프로젝트에서 첫 push-metric 데드맨 패턴이다.
+  #   mode="full"/mode="binlog" 두 시리즈는 레이블로 분리되어 있으므로
+  #   (REQ-VF-001) 각각 독립된 alert로 감시한다 — 매시 성공하는 binlog가
+  #   daily 풀 백업 실패를 마스킹하지 않도록 하기 위함이다.
+  - name: backup-mysql-deadman
+    interval: 30s
+    rules:
+      # full 백업(mysqldump) 데드맨(REQ-VF-002): 임계 28시간(100,800초), 윈도우 [3d].
+      # 임계 근거: 마지막 성공이 어느 날 05:0X KST일 때, 다음날 백업이
+      # 실패/미실행되면 다음날 09:0X KST경 발화(사용자 확정).
+      - alert: BackupMysqlFullStale
+        expr: time() - last_over_time(aaa_backup_last_success_timestamp_seconds{mode="full"}[3d]) > 100800
+        for: 1m
+        labels:
+          severity: warning
+          component: backup
+          mode: full
+          tier: TICKET
+        annotations:
+          summary: "MySQL 풀 백업(mysqldump) 마지막 성공이 28시간 초과"
+          description: "aaa_backup_last_success_timestamp_seconds{mode=\"full\"}의 마지막 푸시가 28시간(100,800초) 이상 지났음 — 매일 05:00 KST 백업이 실패/미실행됐거나 스케줄러(aaa-backup-mysql.timer)가 멈췄을 가능성(REQ-VF-002)."
+          action: "NAS에서 systemctl --user status aaa-backup-mysql.timer aaa-backup-mysql.service 확인, journalctl --user -u aaa-backup-mysql.service로 실패 원인 확인. REQ-VF-003 Telegram 실패 알림이 먼저 왔는지도 대조"
+
+      # binlog 아카이브 데드맨(REQ-VF-005, OP-4 확정 2026-08-21): 임계 6시간(21,600초), 윈도우 [1d].
+      # binlog는 매시(REQ-BK-010) push되어 24회/일 샘플이 확보되므로, REQ-VF-002의
+      # [3d]보다 짧은 [1d] 윈도우로도 last_over_time의 stale 처리가 안정적으로 동작한다.
+      - alert: BackupMysqlBinlogStale
+        expr: time() - last_over_time(aaa_backup_last_success_timestamp_seconds{mode="binlog"}[1d]) > 21600
+        for: 1m
+        labels:
+          severity: warning
+          component: backup
+          mode: binlog
+          tier: TICKET
+        annotations:
+          summary: "MySQL binlog 아카이브 마지막 성공이 6시간 초과"
+          description: "aaa_backup_last_success_timestamp_seconds{mode=\"binlog\"}의 마지막 푸시가 6시간(21,600초) 이상 지났음 — 매시 FLUSH BINARY LOGS+복사(aaa-backup-binlog.timer)가 조용히 멈췄을 가능성. full 백업 데드맨(BackupMysqlFullStale)만으로는 이 실패가 감지되지 않는다(REQ-VF-001 모드 분리)."
+          action: "NAS에서 systemctl --user status aaa-backup-binlog.timer aaa-backup-binlog.service 확인, journalctl --user -u aaa-backup-binlog.service로 실패 원인 확인"
