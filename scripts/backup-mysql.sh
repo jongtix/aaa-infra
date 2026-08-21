@@ -9,8 +9,11 @@
 #   --mode=full    매일 05:00 KST: mysqldump 풀 덤프 + zstd 압축 + 무결성 검증
 #                   + GFS 보존(일간 7/주간 4/월간 6) + 메트릭 푸시(스텁, M4)
 #                   REQ-BK-001~006, REQ-SEC-003.
-#   --mode=binlog   매시: FLUSH BINARY LOGS + 복사 + 프루닝. **M3에서 구현 예정
-#                   — 현재는 스텁**(usage 출력 + 비정상 종료). REQ-BK-010~012.
+#   --mode=binlog   매시: FLUSH BINARY LOGS + 닫힌 파일 복사 + daily 등급
+#                   최고(最古) 덤프 기준(+1일 여유) 프루닝. REQ-BK-010~012.
+#                   mysqlbinlog는 사용하지 않는다 — raw 파일 복사만 하므로
+#                   M1에서 확인된 mysqlbinlog 부재(Gap)와 무관하다. 재생/파싱은
+#                   M7(PITR 런북) 범위.
 #
 # [전제 조건 — 이 스크립트 자체는 만들지 않는다]
 #   PREP-2: config/mysql/grants/backup-grants.sql(신규 DB는 initdb.d/
@@ -58,7 +61,7 @@ usage() {
 사용법: backup-mysql.sh --mode=full|binlog
 
   --mode=full    매일 05:00 KST 트리거: mysqldump 풀 덤프 + GFS 보존
-  --mode=binlog  매시 트리거: binlog 회전+복사 (M3에서 구현 예정 — 현재 스텁)
+  --mode=binlog  매시 트리거: FLUSH BINARY LOGS + 닫힌 파일 복사 + 프루닝
 EOF
   exit 1
 }
@@ -208,6 +211,76 @@ gfs_prune() {
 }
 
 # =============================================================================
+# binlog 프루닝 — REQ-BK-012 (GFS와는 별개의 독립 판정, gfs_classify 재사용 금지)
+# =============================================================================
+# 덤프 GFS(daily/weekly/monthly OR 조건, §위)와는 목적이 다른 기준이므로 별도
+# 함수로 구현한다 — "GFS daily 등급의 가장 오래된(最古) 덤프 시점 + 1일 여유"만
+# 기준점으로 쓰며, weekly/monthly로 승격된 과거 덤프(예: 5개월 전 monthly)는
+# 기준점 계산에 절대 포함하지 않는다(design.md §2.2, acceptance.md AC-BK-011).
+
+# daily 등급(오늘 기준 최근 RETENTION_DAILY일 이내)에 속하는 덤프 중 가장 오래된
+# 날짜(YYYYMMDD)를 stdout에 출력한다. daily 등급 덤프가 하나도 없으면(예:
+# 스케줄러 장기 정지 후 복구) 아무것도 출력하지 않고 exit 1 — 호출부가 감지해
+# 이번 회차 프루닝을 스킵한다(acceptance.md Edge Cases: "run-phase에서 판단"의
+# M3 결정 — 기준점을 알 수 없는 상태에서 삭제를 시도하는 것보다 스킵이 안전).
+_oldest_daily_dump_date() {
+  local dump_dir="$1" today="${2:-$(_today_ymd)}"
+  local ty tm td today_jdn
+  read -r ty tm td <<<"$(_split_ymd "$today")"
+  today_jdn=$(_jdn "$ty" "$tm" "$td")
+
+  local f base oldest="" oldest_jdn=""
+  while IFS= read -r -d '' f; do
+    base="$(basename "$f")"
+    [[ "$base" =~ ^dump-([0-9]{8})\.sql\.zst$ ]] || continue
+    local date_str="${BASH_REMATCH[1]}" y m d file_jdn days_ago
+    read -r y m d <<<"$(_split_ymd "$date_str")"
+    file_jdn=$(_jdn "$y" "$m" "$d")
+    days_ago=$(( today_jdn - file_jdn ))
+    (( days_ago < 0 || days_ago >= RETENTION_DAILY )) && continue
+    if [[ -z "$oldest_jdn" ]] || (( file_jdn < oldest_jdn )); then
+      oldest="$date_str"
+      oldest_jdn="$file_jdn"
+    fi
+  done < <(find "$dump_dir" -maxdepth 1 -name 'dump-*.sql.zst' -print0 2>/dev/null)
+
+  [[ -z "$oldest" ]] && return 1
+  printf '%s\n' "$oldest"
+}
+
+# 인자: $1=binlog 복사본 디렉토리 $2=풀 덤프 디렉토리 $3=오늘(YYYYMMDD, 생략시 실제 오늘)
+# 복사본 파일명은 "<YYYYMMDD>-<원본 binlog 파일명>"(복사 시점 날짜 접두 —
+# run_binlog 참조) 형식이어야 이 함수가 날짜를 파싱할 수 있다.
+binlog_prune() {
+  local binlog_dir_="$1" dump_dir="$2" today="${3:-$(_today_ymd)}"
+  local oldest_daily
+  if ! oldest_daily="$(_oldest_daily_dump_date "$dump_dir" "$today")"; then
+    warn "daily 등급 덤프가 없어 binlog 프루닝 기준점을 계산할 수 없음 — 이번 회차 프루닝 스킵(비차단)"
+    return 0
+  fi
+
+  local y m d daily_jdn cutoff_jdn
+  read -r y m d <<<"$(_split_ymd "$oldest_daily")"
+  daily_jdn=$(_jdn "$y" "$m" "$d")
+  # "daily 최고 덤프 시점보다 1일(24시간) 이상 이전"인 복사본만 삭제
+  # → cutoff = daily_jdn - 1; file_jdn < cutoff 인 파일만 DELETE.
+  cutoff_jdn=$(( daily_jdn - 1 ))
+
+  local f base
+  while IFS= read -r -d '' f; do
+    base="$(basename "$f")"
+    [[ "$base" =~ ^([0-9]{8})- ]] || continue
+    local date_str="${BASH_REMATCH[1]}" fy fm fd file_jdn
+    read -r fy fm fd <<<"$(_split_ymd "$date_str")"
+    file_jdn=$(_jdn "$fy" "$fm" "$fd")
+    if (( file_jdn < cutoff_jdn )); then
+      info "binlog 프루닝: 삭제 - ${base}"
+      rm -f -- "${binlog_dir_}/${base}"
+    fi
+  done < <(find "$binlog_dir_" -maxdepth 1 -type f -print0 2>/dev/null)
+}
+
+# =============================================================================
 # REQ-VF-003 — 실패 즉시 통지 (telegram_notify 패턴 재사용)
 # =============================================================================
 
@@ -300,11 +373,71 @@ run_full() {
 }
 
 # =============================================================================
-# --mode=binlog — REQ-BK-010~012 (M3에서 구현 예정 — 현재 스텁)
+# --mode=binlog — REQ-BK-010~012
 # =============================================================================
 run_binlog() {
-  error "binlog 모드는 아직 구현되지 않았습니다(M3에서 구현 예정)"
-  exit 1
+  local dump_dir dir today
+  dump_dir="$(backup_dir)"
+  dir="$(binlog_dir)"
+  mkdir -p "$dir"
+  chmod 700 "$dir"  # REQ-SEC-003
+
+  today="$(_today_ymd)"
+
+  # REQ-BK-010: mysqldump와 동일한 --defaults-extra-file 자격증명(backup 계정)
+  # 을 재사용한다 — root 패스워드/argv/MYSQL_PWD는 여기서도 사용하지 않는다.
+  # FLUSH BINARY LOGS에는 RELOAD 권한이 필요(backup-grants.sql에 이미 부여됨).
+  info "FLUSH BINARY LOGS 실행(docker exec ${MYSQL_CONTAINER})"
+  if ! docker exec "$MYSQL_CONTAINER" mysql \
+        --defaults-extra-file="$BACKUP_CNF_CONTAINER" -N -e "FLUSH BINARY LOGS"; then
+    fail "FLUSH BINARY LOGS 실패"
+  fi
+
+  # SHOW BINARY LOGS는 REPLICATION CLIENT 권한으로 조회 가능(backup-grants.sql에
+  # 이미 부여됨). MySQL은 항상 생성 순서(오래된→최신) 오름차순으로 반환하므로
+  # 마지막 행이 "현재 쓰기 중인(방금 FLUSH로 새로 열린) 파일" — 그 앞의 행들은
+  # 전부 닫힌 파일이다(design.md §2.2 "binlog.index 마지막 항목을 제외한 닫힌
+  # 파일들"과 동일 판정을 SHOW BINARY LOGS로 수행 — datadir 직접 읽기는 호스트
+  # 권한상 불가하므로 mysql 클라이언트 조회로 대체. mysqlbinlog는 필요 없음).
+  local logs_output
+  if ! logs_output="$(docker exec "$MYSQL_CONTAINER" mysql \
+        --defaults-extra-file="$BACKUP_CNF_CONTAINER" -N -e "SHOW BINARY LOGS" 2>&1)"; then
+    fail "SHOW BINARY LOGS 조회 실패: ${logs_output}"
+  fi
+
+  local -a all_files=()
+  local fname _rest
+  while IFS=$'\t' read -r fname _rest; do
+    [[ -z "$fname" ]] && continue
+    all_files+=("$fname")
+  done <<<"$logs_output"
+
+  local n=${#all_files[@]}
+  if (( n <= 1 )); then
+    info "닫힌 binlog 파일 없음(현재 파일 ${n}개) — 복사 스킵"
+  else
+    local i
+    for ((i = 0; i < n - 1; i++)); do
+      local src="${all_files[$i]}"
+      local dest="${dir}/${today}-${src}"
+      if [[ -f "$dest" ]]; then
+        info "이미 복사됨(매시 재실행 중복 방지): ${src}"
+        continue
+      fi
+      info "binlog 복사: ${src} → $(basename "$dest")"
+      # mysqldump와 동일한 docker exec stdout 파이프 패턴 — docker cp 대신
+      # 이미 스크립트에서 쓰는 방식을 재사용한다(신규 인터페이스 도입 않음).
+      if ! docker exec "$MYSQL_CONTAINER" cat "/var/lib/mysql/${src}" > "$dest"; then
+        rm -f -- "$dest"
+        fail "binlog 파일 복사 실패: ${src}"
+      fi
+      chmod 600 "$dest"
+    done
+  fi
+
+  binlog_prune "$dir" "$dump_dir" "$today"
+  push_metric binlog
+  info "binlog 아카이브 완료"
 }
 
 # =============================================================================
