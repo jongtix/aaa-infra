@@ -1,0 +1,79 @@
+-- =============================================================================
+-- backup 전용 MySQL 계정 GRANT (재적용) — SPEC-INFRA-DB-BACKUP-001 (REQ-SEC-001/-002)
+-- =============================================================================
+-- 이 파일은 GRANT 문만 담는다 — CREATE USER는 포함하지 않는다(기존 관례:
+-- analyzer-grants.sql/collector-tier2-grants.sql과 동일). 계정 생성은 아래
+-- 둘 중 하나로 수행된다:
+--   (a) 신규/복구 DB: config/mysql/initdb.d/03-init-backup.sh가 MySQL 최초
+--       기동 시 CREATE USER + 동일 GRANT를 함께 적용한다(MYSQL_BACKUP_PASSWORD
+--       환경변수 필요, .env.mysql — 사용자가 NAS 측에 직접 추가).
+--   (b) 기존 라이브 DB: root 1회성 수동 SQL로 계정을 생성한다(trainer/analyzer
+--       계정과 동일한 선례 — 02-init-analyzer.sh 서문 참조).
+-- 이 파일의 목적은 (a)/(b) 어느 경로로 계정이 생성됐든 GRANT 표류(권한 누락/
+-- 초과)가 발생했을 때 권한만 재적용/복구하는 것이다(collector-tier2-grants.sql
+-- 과 동일한 용도).
+--
+-- mysqldump --single-transaction --source-data=2 --routines --events --triggers
+-- --no-tablespaces --all-databases (REQ-BK-001) + FLUSH BINARY LOGS(REQ-BK-010)
+-- 실행에 필요한 최소 권한만 부여한다. PROCESS 권한은 절대 부여하지 않는다
+-- (REQ-SEC-001[HARD]) — tablespace 메타데이터 조회는 mysqldump 측
+-- --no-tablespaces 옵션으로 회피한다(PROCESS 없이도 정상 동작).
+--
+-- [권한별 근거]
+--   SELECT       *.*  — 전 DB 데이터 덤프(--all-databases)
+--   SHOW VIEW    *.*  — 뷰 정의 덤프
+--   TRIGGER      *.*  — 트리거 정의 덤프(--triggers)
+--   EVENT        *.*  — 이벤트 스케줄러 정의 덤프(--events)
+--   LOCK TABLES  *.*  — --single-transaction과 함께 비-InnoDB 테이블(있을 경우)의
+--                        안전한 락 확보에 필요(트랜잭션 테이블은 FTWRL 대신
+--                        START TRANSACTION WITH CONSISTENT SNAPSHOT 사용)
+--   RELOAD       글로벌 — --source-data=2가 내부적으로 FLUSH TABLES WITH READ LOCK을
+--                        짧게 수행하기 위해 필요 + REQ-BK-010의 FLUSH BINARY LOGS 실행에도 필요
+--   REPLICATION CLIENT  글로벌 — --source-data=2가 SHOW MASTER STATUS(현재 binlog
+--                        좌표) 조회에 필요
+--
+-- [PROCESS 미부여 대체]
+--   mysqldump --no-tablespaces 플래그로 PROCESS 없이도 tablespace 조회 스킵
+--   (REQ-BK-001에 이미 반영됨).
+--
+-- [자동화 여부 — REQ-SEC-002]
+--   이 파일은 CI/CD가 NAS에 자동 동기화하지 않는다(SPEC-INFRA-CICD-001 REQ-CD-015).
+--   scripts/*는 자동 동기화 대상이지만 config/mysql/grants/*는 항상 수동 적용
+--   대상이다(기존 analyzer-grants.sql/collector-tier2-grants.sql과 동일 관례).
+--   2026-08-07 GRANT 미적용 크래시루프 교훈 — 반드시 적용 확인 절차를 거칠 것
+--   (PREP-2, acceptance.md에 확인 절차 명시).
+--
+-- [자격증명 전달 이원 관례 — REQ-MIG-002(b)]
+--   자동화/스크립트 경로(backup-mysql.sh)는 --defaults-extra-file(600 권한,
+--   PREP-3에서 NAS 전용으로 수동 생성, repo에 커밋하지 않음)로만 패스워드를
+--   전달한다(REQ-BK-003, REQ-SEC-001 정신 계승 — argv/환경변수 노출 금지).
+--   이 GRANT 재적용 파일을 수동으로 적용하는 root 1회성 작업은 기존 관례대로
+--   컨테이너 내부 MYSQL_PWD 환경변수 확장 패턴을 사용한다(아래 [APPLY] 참조).
+--   이 파일에는 어떤 패스워드도 등장하지 않는다(계정 생성이 아니므로).
+--
+-- [WHEN] 계정이 이미 존재하는 상태에서 GRANT 표류를 복구해야 할 때만 적용한다.
+--   신규/복구 DB에서 계정을 처음 만드는 경우는 03-init-backup.sh가 자동 적용
+--   하므로 이 파일을 별도로 실행할 필요가 없다.
+--
+-- [APPLY] MySQL 호스트(NAS)에서 — 'backup'@'%' 계정이 이미 존재해야 한다:
+--   -p"$VAR" 형식은 금지(docker top/ps aux에 패스워드 노출) — MYSQL_PWD
+--   환경변수로 컨테이너 내부에서 해석되도록 한다:
+--
+--   cat config/mysql/grants/backup-grants.sql | \
+--     ssh nas-ugreen "docker exec -i aaa-mysql bash -c 'MYSQL_PWD=\"\$MYSQL_ROOT_PASSWORD\" mysql -uroot'"
+--
+--   (scp는 사용하지 않는다 — 파이프 전달만 가능. GRANT 파일 적용 관례 교훈 참조.)
+--
+-- [VERIFY] SHOW GRANTS FOR 'backup'@'%';
+--   → 다음 권한 행만 존재해야 한다(그 외 PROCESS/UPDATE/DELETE/DDL 0건):
+--     GRANT SELECT, SHOW VIEW, TRIGGER, LOCK TABLES, EVENT, RELOAD,
+--           REPLICATION CLIENT ON *.* TO `backup`@`%`
+--
+-- [REVERT] REVOKE ALL PRIVILEGES ON *.* FROM 'backup'@'%'; (계정 자체 삭제는
+--   DROP USER 'backup'@'%'; — 이 파일의 책임 범위 밖, 계정 생성 경로가 소유)
+-- =============================================================================
+
+GRANT SELECT, SHOW VIEW, TRIGGER, EVENT, LOCK TABLES ON *.* TO 'backup'@'%';
+GRANT RELOAD, REPLICATION CLIENT ON *.* TO 'backup'@'%';
+
+FLUSH PRIVILEGES;
