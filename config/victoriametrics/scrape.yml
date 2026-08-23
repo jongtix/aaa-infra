@@ -44,3 +44,12 @@ scrape_configs:
     static_configs:
       # aaa-network 내부 DNS. cadvisor는 expose 8080(호스트 미공개).
       - targets: ["aaa-cadvisor:8080"]
+
+  # [SPEC-ANALYZER-TRAIN-GATE-001 REQ-ATG-013] 상시 게이트·주간 재학습 프로덕션
+  # 배선 관측. 전역 scrape_interval: 30s 상속.
+  - job_name: analyzer
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      # aaa-network 내부 DNS. analyzer는 expose 8000(호스트 미공개).
+      - targets: ["aaa-analyzer:8000"]

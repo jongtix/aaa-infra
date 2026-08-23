@@ -1,0 +1,120 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — analyzer 학습 게이트 관측(빠른 계열)
+# SPEC-ANALYZER-TRAIN-GATE-001 REQ-ATG-014 (b)(c)
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+#   또는: vmalert-tool unittest --files='/rules/rules_test_*.yaml'  (순차, CWD=config/vmalert 마운트)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.145.0 \
+#     unittest --files=/rules/rules_test_analyzer.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# (a) AnalyzerTrainingWeeklySilent(8일 window)는 increase()가 실측 8일 창을 요구해
+#   느린 계열이므로 rules_test_analyzer_slow.yaml로 분리했다(watermark_slow와 동일 관례).
+#   이 파일은 (b)(c) — 둘 다 increase(...[1h]) 패턴으로 30s 그리드에서도 저렴하다
+#   (collector-silent-drops/finra-ticker-reuse-skip 관례 그대로 재사용).
+# [REQ-WM-025 관례 계승] 모든 alert에 tier(PAGE|TICKET) 라벨이 부여되므로 exp_labels에
+#   tier를 명시한다(누락 시 vmalert-tool이 라벨 불일치로 FAILED 처리).
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ===========================================================================
+  # 룰 (b): analyzer-training-automation — AnalyzerTrainingRunFailed
+  # ===========================================================================
+
+  # TI-ATG-FAIL-001. [발화] outcome=failure 1h 내 증가(stage=training) → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_training_run_total{stage="training",outcome="failure"}'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingRunFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+              notify: fire_only
+              stage: training
+              outcome: failure
+            exp_annotations:
+              summary: "analyzer 학습 실행 실패 — training"
+              description: "최근 1시간 내 학습 실행 또는 상시 게이트가 training 단계에서 실패로 종료됨(metrics.record_failure 발행)."
+              action: "docker logs aaa-analyzer → training 단계 오류(SSH 연결·타임아웃·게이트 파싱 등) 확인"
+
+  # TI-ATG-FAIL-002. [발화, E-1 게이트 실패 케이스] outcome=failure 1h 내 증가(stage=promotion_gate) → 발화.
+  #   AC-ATG-014(b)가 명시적으로 요구하는 stage="promotion_gate" 테스트.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_training_run_total{stage="promotion_gate",outcome="failure"}'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingRunFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+              notify: fire_only
+              stage: promotion_gate
+              outcome: failure
+            exp_annotations:
+              summary: "analyzer 학습 실행 실패 — promotion_gate"
+              description: "최근 1시간 내 학습 실행 또는 상시 게이트가 promotion_gate 단계에서 실패로 종료됨(metrics.record_failure 발행)."
+              action: "docker logs aaa-analyzer → promotion_gate 단계 오류(SSH 연결·타임아웃·게이트 파싱 등) 확인"
+
+  # TI-ATG-FAIL-003. [무발화] outcome=failure 변화 없음(success만 증가) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_training_run_total{stage="success",outcome="success"}'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingRunFailed
+        exp_alerts: []
+
+  # ===========================================================================
+  # 룰 (c): analyzer-training-automation — AnalyzerTrainingHeldBack
+  # ===========================================================================
+
+  # TI-ATG-HELD-001. [발화] outcome=held-back 1h 내 증가 → 발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_training_run_total{stage="success",outcome="held-back"}'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingHeldBack
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+              notify: fire_only
+              stage: success
+              outcome: held-back
+            exp_annotations:
+              summary: "analyzer 챌린저 보류 — 챔피언 유지"
+              description: "최근 1시간 내 챌린저 모델이 챔피언을 능가하지 못해 보류(held-back) 처리됨 — 정상 동작, 기존 챔피언이 계속 서빙 중."
+              action: "docker logs aaa-analyzer → 보류된 (market,horizon,algorithm) 조합 및 rank_ic 비교값 확인"
+
+  # TI-ATG-HELD-002. [무발화] outcome=held-back 변화 없음(success만 증가) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_training_run_total{stage="success",outcome="success"}'
+        values: '0+0x10 1+0x5'
+    alert_rule_test:
+      - eval_time: 330s
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingHeldBack
+        exp_alerts: []

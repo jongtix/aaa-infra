@@ -1,0 +1,80 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — analyzer 학습 게이트 관측(느린 계열, 8일 window)
+# SPEC-ANALYZER-TRAIN-GATE-001 REQ-ATG-014 (a)
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.145.0 \
+#     unittest --files=/rules/rules_test_analyzer_slow.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [1h 그리드 전용 샤드 — 왜 별도 파일인가] (rules_test_watermark_slow.yaml과 동일 관례)
+#   AnalyzerTrainingWeeklySilent는 increase(...[8d])가 실측 8일(192h) 창을 요구해
+#   음수 anchor 압축이 불가능하다(increase()는 range selector 자체가 실제 경과시간을
+#   요구 — time() 비교식과 달리 anchor로 우회 불가). evaluation_interval을 30s→1h로
+#   굵게 잡아 스텝 수를 8d=192스텝으로 줄인다(watermark_slow의 26h/10m=157스텝과 동일
+#   자릿수 — BF-2 선례 계승).
+# [REQ-WM-025 관례 계승] tier 라벨을 exp_labels에 명시한다.
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 1h
+
+tests:
+  # ===========================================================================
+  # 룰 (a): analyzer-training-automation — AnalyzerTrainingWeeklySilent
+  # ===========================================================================
+  # 시리즈 길이: 8d+1h=193h → `+0x196`(여유분 포함, 197샘플=196h 커버).
+
+  # TI-ATG-SILENT-001. [발화, 경과] run_total이 8일(192h) 내내 무증분(값 고정) → 무음실패 발화.
+  #   held-back 조합이 여러 주 정체되는 것은 last_success_timestamp에서는 정상이지만,
+  #   run_total 자체가 8일간 전혀 증분되지 않는 것은 주간 잡 자체가 실행되지 않았다는 신호다.
+  #   [실측] rules.yml expr이 sum(increase(...))이므로 결과 벡터에 stage/outcome 라벨이
+  #   남지 않는다(sum()이 라벨 무관 합산) — exp_labels에 stage/outcome을 넣지 말 것.
+  - interval: 1h
+    input_series:
+      - series: 'aaa_analyzer_training_run_total{stage="success",outcome="held-back"}'
+        values: '3+0x196'
+    alert_rule_test:
+      - eval_time: 193h
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingWeeklySilent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+            exp_annotations:
+              summary: "analyzer 주간 학습 잡 무음 실패 — 8일간 실행 신호 없음"
+              description: "상시 게이트·주간 재학습 실행 카운터(aaa_analyzer_training_run_total)가 8일(주간 케이던스 7일 + 여유 1일) 동안 한 번도 증가하지 않음 — 일요일 01:00 KST cron 미발화 또는 컨테이너 기동 실패 의심."
+              action: "docker logs aaa-analyzer → 일요일 01:00 KST 주간 재학습 잡 실행 로그·G-1 fail-fast 기동 오류 확인"
+
+  # TI-ATG-SILENT-002. [무발화] run_total이 8일 창 내(t=150h)에서 1회 증가 → 미발화(정상 주간 실행).
+  - interval: 1h
+    input_series:
+      - series: 'aaa_analyzer_training_run_total{stage="success",outcome="held-back"}'
+        values: '3+0x150 4+0x46'
+    alert_rule_test:
+      - eval_time: 193h
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingWeeklySilent
+        exp_alerts: []
+
+  # TI-ATG-SILENT-003. [발화, 부재] 메트릭 자체가 전혀 존재하지 않음(프로세스 최초 기동 전 또는
+  #   완전 유실) → absent_over_time으로 발화(AC-ATG-014a "메트릭 자체 부재도 커버").
+  - interval: 1h
+    input_series: []
+    alert_rule_test:
+      - eval_time: 193h
+        groupname: analyzer-training-automation
+        alertname: AnalyzerTrainingWeeklySilent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+            exp_annotations:
+              summary: "analyzer 주간 학습 잡 무음 실패 — 8일간 실행 신호 없음"
+              description: "상시 게이트·주간 재학습 실행 카운터(aaa_analyzer_training_run_total)가 8일(주간 케이던스 7일 + 여유 1일) 동안 한 번도 증가하지 않음 — 일요일 01:00 KST cron 미발화 또는 컨테이너 기동 실패 의심."
+              action: "docker logs aaa-analyzer → 일요일 01:00 KST 주간 재학습 잡 실행 로그·G-1 fail-fast 기동 오류 확인"
