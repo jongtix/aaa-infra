@@ -1,0 +1,28 @@
+# =============================================================================
+# aaa-backup-mysql.service — MySQL 풀 덤프 실행 유닛 (SPEC-INFRA-DB-BACKUP-001)
+# =============================================================================
+# aaa-backup-mysql.timer(매일 05:00 KST)가 발화한다. backup-mysql.sh를
+# --mode=full로 호출 — mysqldump 풀 덤프 + zstd 압축 + 무결성 검증 + GFS
+# 보존(일간 7/주간 4/월간 6) + 데드맨 메트릭 푸시(REQ-BK-001~006, M4).
+#
+# systemd **USER** scope 유닛이다 — root 전용 지시자(DefaultDependencies=,
+# Requires=local-fs.target 등) 미사용. [Install] 섹션 불필요(타이머가 트리거).
+#
+# WorkingDirectory/ExecStart 경로는 실제 NAS 배포 경로로 맞춰져 있다
+# (${AAA_SSD_BASE} 실측값, project_nas_infra_deploy_method 메모리 참조).
+# 배포 경로가 다르면 두 값 모두 수정할 것.
+#
+# 설치: aaa-backup-mysql.timer 헤더 주석 참조(동일 절차).
+# 검증:
+#   systemctl --user status aaa-backup-mysql.service
+#   journalctl --user -u aaa-backup-mysql.service -b
+#   systemctl --user start aaa-backup-mysql.service   # 수동 1회 실행(즉시 검증용)
+# =============================================================================
+[Unit]
+Description=AAA MySQL Full Backup (SPEC-INFRA-DB-BACKUP-001)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra
+ExecStart=/bin/bash /volume1/SSD_1/Development/aaa/aaa-infra/scripts/backup-mysql.sh --mode=full
+TimeoutStartSec=1800

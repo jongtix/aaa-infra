@@ -1,0 +1,43 @@
+# =============================================================================
+# aaa-backup-mysql.timer — MySQL 풀 덤프 스케줄러 (SPEC-INFRA-DB-BACKUP-001)
+# =============================================================================
+# 매일 05:00 KST에 aaa-backup-mysql.service를 발화한다. mysqldump 풀 덤프 +
+# zstd 압축 + 무결성 검증 + GFS 보존(일간 7/주간 4/월간 6)을 수행한다
+# (design.md §1, REQ-BK-001~006).
+#
+# systemd **USER** scope 유닛이다(root 전용 시스템 유닛 아님) — 설치·활성화에
+# sudo가 불요하고, root 전용 지시자(DefaultDependencies=/Requires=local-fs.target/
+# 부팅 순서 Before=/After=)는 사용하지 않는다. aaa-reset-acl.service(시스템
+# 유닛, 부팅 시 ACL 리셋 목적)와는 scope가 다르다.
+#
+# OnCalendar는 systemd가 실행되는 **호스트 로컬 타임존**으로 해석된다.
+# 05:00이 실제 05:00 KST로 발화하려면 NAS 호스트 타임존이 KST여야 한다 —
+# 설치 전 `timedatectl` 로 `Time zone: Asia/Seoul`인지 반드시 사전 확인할 것.
+# (Local time == UTC 이면 05:00 UTC = 14:00 KST로 발화하므로 반드시 확인)
+#
+# 설치 (NAS, 배포 계정 — sudo 불요):
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/aaa-backup-mysql.timer scripts/aaa-backup-mysql.service \
+#      ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aaa-backup-mysql.timer
+#
+# 검증:
+#   timedatectl                                    # Time zone: Asia/Seoul 확인
+#   systemctl --user is-active aaa-backup-mysql.timer
+#   systemctl --user list-timers aaa-backup-mysql.timer
+#   journalctl --user -u aaa-backup-mysql.service -n 50
+#
+# 전제조건(PREP-5, 사용자 수동): PREP-2(백업 계정 GRANT 라이브 적용) +
+# PREP-3(자격증명 파일 생성) + M5(docker-compose.yml ro 마운트, 본 파일과
+# 함께 커밋됨)가 선행되어야 첫 자동 실행이 성공한다.
+# =============================================================================
+[Unit]
+Description=AAA MySQL Full Backup Timer (SPEC-INFRA-DB-BACKUP-001)
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

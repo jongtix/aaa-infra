@@ -1,0 +1,32 @@
+# =============================================================================
+# aaa-backup-binlog.service — binlog 회전+복사 실행 유닛 (SPEC-INFRA-DB-BACKUP-001)
+# =============================================================================
+# aaa-backup-binlog.timer(매시)가 발화한다. backup-mysql.sh를 --mode=binlog로
+# 호출 — FLUSH BINARY LOGS + 닫힌 파일 복사 + daily 등급 최고(最古) 덤프 기준
+# (+1일 여유) 프루닝(REQ-BK-010~012). mysqlbinlog는 사용하지 않는다(raw 파일
+# 복사만 수행 — M1에서 확인된 mysqlbinlog 부재와 무관, 재생/파싱은 M7 범위).
+#
+# systemd **USER** scope 유닛이다 — root 전용 지시자 미사용. [Install]
+# 섹션 불필요(타이머가 트리거).
+#
+# TimeoutStartSec=900(15분)은 binlog 파일 크기를 고려한 값 — 풀 덤프
+# (aaa-backup-mysql.service, 1800초)보다 짧게 설정했다. 실측 후 binlog
+# 파일 크기·복사 소요 시간에 따라 조정 가능(재량).
+#
+# WorkingDirectory/ExecStart 경로는 aaa-backup-mysql.service와 동일 배포
+# 경로(${AAA_SSD_BASE} 실측값)를 사용한다.
+#
+# 설치: aaa-backup-binlog.timer 헤더 주석 참조(동일 절차).
+# 검증:
+#   systemctl --user status aaa-backup-binlog.service
+#   journalctl --user -u aaa-backup-binlog.service -b
+#   systemctl --user start aaa-backup-binlog.service   # 수동 1회 실행(즉시 검증용)
+# =============================================================================
+[Unit]
+Description=AAA MySQL Binlog Rotation (SPEC-INFRA-DB-BACKUP-001)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra
+ExecStart=/bin/bash /volume1/SSD_1/Development/aaa/aaa-infra/scripts/backup-mysql.sh --mode=binlog
+TimeoutStartSec=900

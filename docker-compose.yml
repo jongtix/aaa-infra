@@ -41,6 +41,11 @@ services:
       - ${AAA_SSD_BASE}/config/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
       - ${AAA_SSD_BASE}/config/mysql/initdb.d:/docker-entrypoint-initdb.d:ro
       - ${AAA_HDD_BASE}/logs/mysql:/var/log/mysql
+      # SPEC-INFRA-DB-BACKUP-001 M5: backup-mysql.sh --defaults-extra-file 자격증명(PREP-3,
+      # 사용자 수동 생성, 600 권한, repo 미커밋)을 aaa-mysql 컨테이너에 ro 마운트.
+      # 컨테이너 내부 경로는 scripts/backup-mysql.sh의 BACKUP_CNF_CONTAINER 기본값
+      # (/run/secrets/backup-mysql.cnf)과 정확히 일치해야 한다.
+      - ${AAA_SSD_BASE}/secrets/backup-mysql.cnf:/run/secrets/backup-mysql.cnf:ro
     logging: *default-logging
     networks:
       - aaa-network
