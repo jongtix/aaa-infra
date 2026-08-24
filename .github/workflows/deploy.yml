@@ -39,27 +39,34 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Parse AAA_SSD_BASE (fail-closed on parse error)
-        # REQ-CD-004: collector와 동일한 awk _parse_env 패턴(lib.sh parse_env_or_fail)으로 해석.
-        # REQ-CD-004A: 파싱 실패 시 이후 단계를 전부 건너뛰기 위해 결과를 output 플래그로만 넘긴다
-        # (이 스텝 자체는 항상 exit 0 — 실패 판단은 후속 스텝의 명시적 if 조건에 위임).
-        # 값(AAA_SSD_BASE 내용)은 어떤 로그에도 echo하지 않는다(REQ-CD-004 부정절, AC-CD-003A).
+      - name: Parse AAA_SSD_BASE/AAA_HDD_BASE (fail-closed on parse error)
+        # REQ-CD-001/004: 백업 저장 위치(AAA_HDD_BASE)와 배포 대상 경로 계산(AAA_SSD_BASE)이
+        # 서로 다른 용도로 쓰이므로 둘 다 이 스텝에서 파싱한다. 하나라도 실패하면 이후 단계를
+        # 전부 건너뛴다(fail-closed, REQ-CD-004A) — 값은 어떤 로그에도 echo하지 않는다.
         id: env_parse
         run: |
           set -u
           source .github/deploy/lib.sh
 
           if ! AAA_SSD_BASE=$(parse_env_or_fail 'AAA_SSD_BASE' "$AAA_INFRA_DIR/.env"); then
-            echo "ssd_base_ok=false" >> "$GITHUB_OUTPUT"
+            echo "env_ok=false" >> "$GITHUB_OUTPUT"
+            echo "failed_key=AAA_SSD_BASE" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "ssd_base_ok=true" >> "$GITHUB_OUTPUT"
+          if ! AAA_HDD_BASE=$(parse_env_or_fail 'AAA_HDD_BASE' "$AAA_INFRA_DIR/.env"); then
+            echo "env_ok=false" >> "$GITHUB_OUTPUT"
+            echo "failed_key=AAA_HDD_BASE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "env_ok=true" >> "$GITHUB_OUTPUT"
           echo "AAA_SSD_BASE=$AAA_SSD_BASE" >> "$GITHUB_ENV"
+          echo "AAA_HDD_BASE=$AAA_HDD_BASE" >> "$GITHUB_ENV"
 
       - name: Notify on env parse failure
         # REQ-CD-004A: "환경변수 읽기 실패 — 안전을 위해 수동 처리"를 Telegram으로 통지.
-        if: steps.env_parse.outputs.ssd_base_ok != 'true'
+        if: steps.env_parse.outputs.env_ok != 'true'
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_SYSTEM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_OPERATOR_CHAT_ID }}
@@ -69,19 +76,19 @@ jobs:
           NL=$'\n'
           SHORT_SHA="${GITHUB_SHA:0:7}"
           telegram_notify "$BOT_TOKEN" "$CHAT_ID" \
-            "🚨 <b>aaa-infra CD 중단</b>${NL}상태: 환경변수 읽기 실패(AAA_SSD_BASE) — 안전을 위해 수동 처리. 커밋 ${SHORT_SHA}."
+            "🚨 <b>aaa-infra CD 중단</b>${NL}상태: 환경변수 읽기 실패(${{ steps.env_parse.outputs.failed_key }}) — 안전을 위해 수동 처리. 커밋 ${SHORT_SHA}."
 
       - name: Stop pipeline if env parse failed
         # REQ-CD-004A shall not proceed: 통지 이후 동기화·반영 단계를 전부 건너뛰고 종료.
-        if: steps.env_parse.outputs.ssd_base_ok != 'true'
+        if: steps.env_parse.outputs.env_ok != 'true'
         run: |
-          echo "[FATAL] AAA_SSD_BASE 파싱 실패 — 이후 동기화 단계를 건너뛰고 종료(REQ-CD-004A)"
+          echo "[FATAL] ${{ steps.env_parse.outputs.failed_key }} 파싱 실패 — 이후 동기화 단계를 건너뛰고 종료(REQ-CD-004A)"
           exit 1
 
       - name: Compute per-file deploy diff
         # REQ-CD-005~007: 체크아웃본 vs NAS 현재 사본 per-file diff, 배포대상 한정+제외목록 적용.
         id: diff
-        if: steps.env_parse.outputs.ssd_base_ok == 'true'
+        if: steps.env_parse.outputs.env_ok == 'true'
         run: |
           set -u
           source .github/deploy/lib.sh
@@ -105,7 +112,7 @@ jobs:
         run: |
           set -u
           source .github/deploy/lib.sh
-          backup_dir=$(create_backup_dir "$AAA_SSD_BASE")
+          backup_dir=$(create_backup_dir "$AAA_HDD_BASE")
           echo "backup_dir=$backup_dir" >> "$GITHUB_OUTPUT"
           while IFS= read -r rel; do
             [ -z "$rel" ] && continue
@@ -118,7 +125,7 @@ jobs:
         run: |
           set -u
           source .github/deploy/lib.sh
-          prune_backup_retention "$AAA_SSD_BASE/backups/cicd" 10
+          prune_backup_retention "$AAA_HDD_BASE/backups/cicd" 10
 
       - name: Reflect changes to NAS services
         # T-004: 서비스별 최소 반영(.github/deploy/reflect.sh). rules.yml/alertmanager.yml/

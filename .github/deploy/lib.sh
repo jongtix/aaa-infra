@@ -12,7 +12,7 @@
 # 제공 함수:
 #   _parse_env <key> <path>              — collector deploy.yml과 동일한 awk 패턴
 #   parse_env_or_fail <key> <path>       — 파싱 실패 시 stdout 비움 + return 1 (REQ-CD-004/004A)
-#   create_backup_dir <ssd_base>         — ${AAA_SSD_BASE}/backups/cicd/<timestamp>/ 생성 (REQ-CD-008)
+#   create_backup_dir <backup_base>      — ${AAA_HDD_BASE}/backups/cicd/<timestamp>/ 생성 (REQ-CD-001/008)
 #   backup_file <src> <repo_rel> <backup_dir> — 덮어쓰기 전 원본 백업 (REQ-CD-008)
 #   prune_backup_retention <backup_base> [keep=10] — N=10 보존, 초과분 오래된 것부터 삭제 (DP-4)
 #   is_excluded_path <repo_rel>          — 배포 제외목록 판정 (REQ-CD-007)
@@ -63,11 +63,14 @@ parse_env_or_fail() {
 # -----------------------------------------------------------------------------
 
 create_backup_dir() {
-  # $1=ssd_base
-  local ssd_base="$1"
+  # $1=backup_base — REQ-CD-001(M6): 배포 대상 경로(AAA_SSD_BASE)와는 별개로,
+  # 백업 저장 위치는 HDD(AAA_HDD_BASE)를 받는다. 호출부가 어느 base를 넘기든
+  # 이 함수는 그 아래 backups/cicd/<timestamp>/ 를 만들 뿐이므로 파라미터명을
+  # 범용화한다(기능 변경 없음).
+  local backup_base="$1"
   local ts dir
   ts=$(date +%Y%m%d-%H%M%S)
-  dir="$ssd_base/backups/cicd/$ts"
+  dir="$backup_base/backups/cicd/$ts"
   mkdir -p "$dir"
   printf '%s\n' "$dir"
 }
