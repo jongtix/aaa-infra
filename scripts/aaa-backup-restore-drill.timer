@@ -1,0 +1,49 @@
+# =============================================================================
+# aaa-backup-restore-drill.timer — 월 1회 복원 드릴 스케줄러 (SPEC-INFRA-DB-BACKUP-001)
+# =============================================================================
+# 매월 1일 05:30 KST에 aaa-backup-restore-drill.service를 발화한다. 최신 풀
+# 덤프를 throwaway mysql:8.4 컨테이너에 복원 후 테이블 수·핵심 테이블 행 수·
+# MAX(trade_date) 신선도를 검증하고 컨테이너를 폐기한다(design.md §1,
+# REQ-VF-004). 2026-08-24 v0.5.0 사용자 확정 — GitHub Actions workflow_dispatch
+# (수동)에서 이 systemd USER timer(자동)로 전환. 05:30은 daily 풀 덤프
+# 타이머(05:00:00)가 완료된 뒤 발화하도록 30분 여유를 둔 값이다.
+#
+# systemd **USER** scope 유닛이다(root 전용 시스템 유닛 아님) — 설치·활성화에
+# sudo가 불요하고, root 전용 지시자(DefaultDependencies=/Requires=local-fs.target/
+# 부팅 순서 Before=/After=)는 사용하지 않는다. aaa-backup-mysql.timer /
+# aaa-backup-binlog.timer와 동일한 원칙(REQ-BK-020 패턴).
+#
+# OnCalendar는 systemd가 실행되는 **호스트 로컬 타임존**으로 해석된다.
+# 05:30이 실제 05:30 KST로 발화하려면 NAS 호스트 타임존이 KST여야 한다 —
+# 설치 전 `timedatectl` 로 `Time zone: Asia/Seoul`인지 반드시 사전 확인할 것
+# (aaa-backup-mysql.timer/aaa-backup-binlog.timer와 동일 주의, spec.md V-6).
+#
+# 설치 (NAS, 배포 계정 — sudo 불요):
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/aaa-backup-restore-drill.timer scripts/aaa-backup-restore-drill.service \
+#      ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aaa-backup-restore-drill.timer
+#
+# 검증:
+#   timedatectl                                              # Time zone: Asia/Seoul 확인
+#   systemctl --user is-active aaa-backup-restore-drill.timer
+#   systemctl --user list-timers aaa-backup-restore-drill.timer
+#   journalctl --user -u aaa-backup-restore-drill.service -n 50
+#
+# 수동 1회 재실행(즉시 검증용, PREP-7 참조):
+#   systemctl --user start aaa-backup-restore-drill.service
+#
+# 전제조건(PREP-7, 사용자 수동): 최소 1회 성공한 풀 덤프(aaa-backup-mysql.timer)
+# 가 있어야 복원할 대상이 존재한다 — daily 풀 덤프 타이머가 먼저 최소 1회
+# 성공한 뒤 이 타이머를 활성화하는 순서를 권장한다.
+# =============================================================================
+[Unit]
+Description=AAA MySQL Restore Drill Timer (SPEC-INFRA-DB-BACKUP-001)
+
+[Timer]
+OnCalendar=*-*-01 05:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

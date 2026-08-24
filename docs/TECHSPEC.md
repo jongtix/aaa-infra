@@ -1689,19 +1689,24 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 
 ### 10.6 데이터 백업 정책
 
+> SPEC-INFRA-DB-BACKUP-001로 구현 완료(REQ-DOC-001). 이전 버전의 `[TBD]`
+> 저장 위치·주 1회 주기·4주 보관 정책은 아래 표로 대체됐다.
+
 | 항목 | 정책 |
 |------|------|
 | 대상 | MySQL 전체 데이터베이스 |
-| 방식 | mysqldump (`--single-transaction`) + binlog PITR |
-| 실행 주기 | 주 1회 (일요일 03:00 KST) |
-| 보관 기간 | 4주치 (4개 파일, 이후 자동 삭제) |
-| 저장 위치 | [TBD] (NAS 로컬 경로 또는 외부 스토리지). 백업 파일 권한: `chmod 600` |
-| 실패 시 처리 | 시스템 채널(텔레그램) 즉시 알림 |
+| 방식 | mysqldump (`--single-transaction --source-data=2`) + binlog PITR |
+| 실행 주기 | 매일 05:00 KST(풀 덤프) + 매시 5분(binlog 아카이브, `OnCalendar=*-*-* *:05:00`) |
+| 보존 정책 | GFS(Grandfather-Father-Son) — 일간 7 / 주간 4(일요일) / 월간 6(매월 1일) |
+| 저장 위치 | `${AAA_HDD_BASE}/backups/mysql/`(풀 덤프) + `${AAA_HDD_BASE}/backups/mysql/binlog/`(binlog 아카이브). 백업 디렉토리 권한: `chmod 700`, 파일 권한: `chmod 600` |
+| 오프사이트 백업 | 도입하지 않음(사용자 확정, 향후 후보로만 기록 — Backblaze B2 등) |
+| 실패 시 처리 | 즉시 Telegram 알림(`telegram_notify`) + 데드맨 알림(vmalert, mode="full" 28시간 / mode="binlog" 6시간 무갱신 시 발화) |
+| 복원 검증 | 월 1회 자동 복원 드릴(`aaa-backup-restore-drill.timer`, 매월 1일 05:30 KST) — throwaway `mysql:8.4` 컨테이너에 최신 덤프를 복원해 테이블 수·핵심 테이블 행 수·`MAX(trade_date)` 신선도 검증 후 폐기 |
 
 **binlog 설정**:
 - `binlog_expire_logs_seconds`: 2592000 (30일, MySQL 8.4 기본값)
 - `max_binlog_size`: 1GB (기본값)
-- 복구 방법: mysqldump 복원 후 해당 시점 이후 binlog를 `mysqlbinlog`로 재실행 (PITR)
+- 복구 방법: mysqldump 복원 후 해당 시점 이후 binlog를 `mysqlbinlog`로 재실행 (PITR) — 상세 절차·시간대 함정·`mysqlbinlog` 온디맨드 확보(`aaa-mysql` 컨테이너에 부재) 절차는 [`docs/RUNBOOK-mysql-pitr.md`](RUNBOOK-mysql-pitr.md) 참조
 
 ---
 

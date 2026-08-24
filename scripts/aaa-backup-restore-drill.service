@@ -1,0 +1,35 @@
+# =============================================================================
+# aaa-backup-restore-drill.service — 복원 드릴 실행 유닛 (SPEC-INFRA-DB-BACKUP-001)
+# =============================================================================
+# aaa-backup-restore-drill.timer(매월 1일 05:30 KST)가 발화한다.
+# aaa-backup-restore-drill.sh를 실행 — 최신 풀 덤프를 throwaway mysql:8.4
+# 컨테이너에 복원 후 테이블 수·핵심 테이블 행 수·MAX(trade_date) 신선도를
+# 검증하고 컨테이너를 폐기한다(REQ-VF-004). PITR 재생(mysqlbinlog 온디맨드
+# 확보)은 이 스크립트 범위 밖 — docs/RUNBOOK-mysql-pitr.md 참조.
+#
+# systemd **USER** scope 유닛이다 — root 전용 지시자(DefaultDependencies=,
+# Requires=local-fs.target 등) 미사용. [Install] 섹션 불필요(타이머가 트리거).
+#
+# TimeoutStartSec=1800(30분)은 aaa-backup-mysql.service(풀 덤프, 1800초)와
+# 동일 값 — throwaway 컨테이너 기동 대기 + 덤프 복원(원본 덤프와 동일 크기
+# 데이터 처리) + 검증 쿼리를 포함하므로 풀 덤프와 유사한 소요 시간을
+# 예상해 채택했다. 실측 후 필요 시 조정 가능(재량).
+#
+# WorkingDirectory/ExecStart 경로는 실제 NAS 배포 경로로 맞춰져 있다
+# (${AAA_SSD_BASE} 실측값, project_nas_infra_deploy_method 메모리 참조).
+# 배포 경로가 다르면 두 값 모두 수정할 것.
+#
+# 설치: aaa-backup-restore-drill.timer 헤더 주석 참조(동일 절차).
+# 검증:
+#   systemctl --user status aaa-backup-restore-drill.service
+#   journalctl --user -u aaa-backup-restore-drill.service -b
+#   systemctl --user start aaa-backup-restore-drill.service   # 수동 1회 실행(즉시 검증용, PREP-7)
+# =============================================================================
+[Unit]
+Description=AAA MySQL Restore Drill (SPEC-INFRA-DB-BACKUP-001)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra
+ExecStart=/bin/bash /volume1/SSD_1/Development/aaa/aaa-infra/scripts/aaa-backup-restore-drill.sh
+TimeoutStartSec=1800
