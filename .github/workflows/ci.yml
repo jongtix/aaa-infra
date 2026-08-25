@@ -6,6 +6,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 permissions: {}  # 워크플로 전체 기본 권한 차단, job별 최소 권한 선언(REQ-SEC-001)
 
