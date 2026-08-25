@@ -68,6 +68,7 @@ EOF
 
 # ---- 설정 (환경변수로 오버라이드 가능 — 테스트/검증 용도) ----
 MYSQL_CONTAINER="${MYSQL_CONTAINER_NAME:-aaa-mysql}"
+VM_CONTAINER="${VM_CONTAINER_NAME:-aaa-victoriametrics}"
 BACKUP_CNF_CONTAINER="${BACKUP_CNF_CONTAINER_PATH:-/run/secrets/backup-mysql.cnf}"
 TELEGRAM_BOT_TOKEN_FILE="${TELEGRAM_BOT_TOKEN_FILE:-${AAA_SSD_BASE:-}/secrets/alertmanager.bot_token}"
 TELEGRAM_CHAT_ID_FILE="${TELEGRAM_CHAT_ID_FILE:-${AAA_SSD_BASE:-}/secrets/alertmanager.chat_id}"
@@ -315,13 +316,24 @@ fail() {
 # vmalert 데드맨 룰(REQ-VF-002/-005, config/vmalert/rules.yml
 # backup-mysql-deadman 그룹)이 감지하는 영역이며, spec.md에 별도 요구가 없다.
 # 다만 조용히 삼키지 않고 warn 로그로 남긴다.
+#
+# [PREP-5 라이브 검증 정정, 2026-08-25] VictoriaMetrics는 docker-compose.yml에서
+# 호스트에 8428 포트를 공개하지 않는다(mysql/redis/collector와 동일한 격리
+# 정책 — "8428 내부 전용... 호스트 미공개" 주석 참조). 이 스크립트는 systemd
+# USER 유닛으로 호스트 셸에서 직접 실행되므로 http://localhost:8428은 애초에
+# 도달 불가능했다(라이브 실측으로 발견 — M4 스텁 검증은 fake curl이라 이
+# 격리를 가리지 못했다). 해법: VM 컨테이너 자체 내부에서 wget으로 자기
+# localhost(127.0.0.1)를 호출 — mysqldump와 동일한 docker exec 패턴 재사용,
+# 신규 포트 공개·신규 의존성 없음.
 push_metric() {
   local mode="$1"
-  local url="${VM_IMPORT_URL:-http://localhost:8428}/api/v1/import/prometheus"
-  if curl -sf -d "aaa_backup_last_success_timestamp_seconds{mode=\"${mode}\"} $(date +%s)" "$url"; then
-    info "메트릭 푸시 완료: mode=${mode} → ${url}"
+  local url="http://127.0.0.1:8428/api/v1/import/prometheus"
+  if docker exec "$VM_CONTAINER" wget -q -O /dev/null \
+    --post-data="aaa_backup_last_success_timestamp_seconds{mode=\"${mode}\"} $(date +%s)" \
+    "$url"; then
+    info "메트릭 푸시 완료: mode=${mode} → docker exec ${VM_CONTAINER} wget ${url}"
   else
-    warn "메트릭 푸시 실패: mode=${mode} → ${url} (백업 자체는 계속 진행 — vmalert 데드맨 룰이 신선도 저하를 별도 감지)"
+    warn "메트릭 푸시 실패: mode=${mode} → docker exec ${VM_CONTAINER} wget ${url} (백업 자체는 계속 진행 — vmalert 데드맨 룰이 신선도 저하를 별도 감지)"
   fi
 }
 
