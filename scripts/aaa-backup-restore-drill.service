@@ -31,5 +31,6 @@ Description=AAA MySQL Restore Drill (SPEC-INFRA-DB-BACKUP-001)
 [Service]
 Type=oneshot
 WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra
+EnvironmentFile=/volume1/SSD_1/Development/aaa/aaa-infra/.env
 ExecStart=/bin/bash /volume1/SSD_1/Development/aaa/aaa-infra/scripts/aaa-backup-restore-drill.sh
 TimeoutStartSec=1800
