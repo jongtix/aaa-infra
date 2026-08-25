@@ -188,3 +188,15 @@ jobs:
           fi
           cd .github/deploy
           docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -S warning -x ./*.sh
+
+  # --- required_status_checks 집계 (SPEC-INFRA-CICD-002 M3, REQ-014) ---
+  # 4개 레포 main-protection 룰셋의 required_status_checks가 이 컨텍스트를 감시한다.
+  # 개별 job 6개를 하나의 status로 묶어야 룰셋 설정이 6개 job명을 각각 추적하지 않아도 된다.
+  status-check:
+    needs: [compose-config, vmalert-unittest, amtool-check, vm-scrape-dryrun, vector-validate, shellcheck]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: All required jobs succeeded
+        run: echo '${{ toJSON(needs) }}' | jq -e 'all(.[]; .result == "success")'
