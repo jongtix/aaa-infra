@@ -21,6 +21,13 @@
 --        배포 완료된 것을 flyway_schema_history로 확인한 **이후에만** 실행한다.
 --        순서 위반 시 ERROR 1146 (42S02)로 즉시 실패한다.
 --
+-- [CREDENTIAL CONVENTION] SPEC-INFRA-DB-BACKUP-001 M8부터 프로젝트는 두 가지 관례를
+--   병행한다: (1) 자동화/스크립트 경로(CI 워크플로, ops 스크립트)는
+--   `--defaults-extra-file`(600 권한 cnf 파일, 필요 시 컨테이너 ro 마운트)을 사용한다.
+--   (2) 아래처럼 사람이 직접 실행하는 수동 root 1회성 작업은 기존 `docker exec` 내부
+--   `MYSQL_PWD` 관례를 그대로 유지한다 — 이런 드물게 실행되는 수동 작업을 위해 신규
+--   root급 자격증명 파일을 만드는 것은 유출 표면만 늘리기 때문이다(REQ-MIG-002(b)).
+--
 -- [APPLY] MySQL 호스트(NAS)에서 — DB명은 aaa 고정(MYSQL_DATABASE=aaa).
 --   -p"$VAR" 형식은 금지(docker top/ps aux에 패스워드 노출) — MYSQL_PWD 환경변수로
 --   컨테이너 내부에서 해석되도록 한다:

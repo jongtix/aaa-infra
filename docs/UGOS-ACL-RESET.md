@@ -87,7 +87,10 @@ UGOS 업데이트 직후에는 자동 훅과 별개로 아래를 확인한다.
 1. `docker ps` — 11개 컨테이너 전부 `Up`, healthcheck 있는 컨테이너는
    전부 `healthy`인지 확인
 2. `docker exec aaa-mysql sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e "SELECT 1"'`
-   로 mysql 응답 확인
+   로 mysql 응답 확인 — 이 명령은 사람이 직접 실행하는 수동 root 1회성 점검이므로
+   기존 `MYSQL_PWD` 관례를 그대로 유지한다. SPEC-INFRA-DB-BACKUP-001 M8부터 프로젝트의
+   자동화/스크립트 경로(CI 워크플로, ops 스크립트)는 별도로 `--defaults-extra-file`
+   방식을 사용하며, 두 관례는 병행 유지된다(REQ-MIG-002(b)).
 3. `aaa-victoriametrics`는 `restart: unless-stopped`이어도 재부팅 전
    정상 종료 상태였다면 자동 기동되지 않을 수 있다 — `docker compose up -d`
    로 명시적으로 기동 상태를 맞춘다

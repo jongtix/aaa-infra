@@ -46,6 +46,13 @@ services:
       # 컨테이너 내부 경로는 scripts/backup-mysql.sh의 BACKUP_CNF_CONTAINER 기본값
       # (/run/secrets/backup-mysql.cnf)과 정확히 일치해야 한다.
       - ${AAA_SSD_BASE}/secrets/backup-mysql.cnf:/run/secrets/backup-mysql.cnf:ro
+      # SPEC-INFRA-DB-BACKUP-001 M8 / REQ-MIG-001: aaa-collector deploy.yml의 Flyway
+      # docker-inspect 노출 지점(docker exec -e MYSQL_PWD=...)을 --defaults-extra-file
+      # 방식으로 대체하기 위한 자격증명(PREP-6, 사용자 수동 생성, 600 권한, repo 미커밋)을
+      # aaa-mysql 컨테이너에 ro 마운트. deploy.yml이 `docker exec`로 이 컨테이너 내부의
+      # mysql 클라이언트를 재사용하므로, 컨테이너 내부 경로는 deploy.yml에 하드코딩된
+      # 경로(/run/secrets/flyway.cnf)와 정확히 일치해야 한다.
+      - ${AAA_SSD_BASE}/secrets/flyway.cnf:/run/secrets/flyway.cnf:ro
     logging: *default-logging
     networks:
       - aaa-network
