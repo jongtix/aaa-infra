@@ -1,0 +1,35 @@
+# =============================================================================
+# aaa-reset-acl.timer — 주기적 UGOS ACL 리셋 (aaa-infra#148)
+# =============================================================================
+# aaa-reset-acl.service는 부팅 시에만 발동해 재부팅 없이 발생하는 UGOS ACL
+# 재적용(#148)을 놓친다. 이 타이머는 동일한 aaa-reset-acl.service를 짧은
+# 주기로 재실행시켜 재부팅 의존성을 제거한다.
+#
+# init-nas.sh --reset-acl은 대상 디렉토리를 재귀 chown/chmod만 수행하며
+# data/mysql, data/redis는 건드리지 않는다. 리눅스는 파일 권한을 open()
+# 시점에만 검사하므로, 이미 열려 있는 fd로 쓰고 있는 컨테이너에 재실행해도
+# 영향이 없다 — 컨테이너가 정상 기동 중인 상태에서 주기 실행해도 안전하다.
+#
+# 설치 (NAS, root):
+#   cp scripts/aaa-reset-acl.timer /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now aaa-reset-acl.timer
+#
+# 검증:
+#   systemctl list-timers aaa-reset-acl.timer
+#   journalctl -u aaa-reset-acl.service --since "1 hour ago"
+# =============================================================================
+[Unit]
+Description=AAA NAS UGOS ACL Reset — periodic (aaa-infra#148)
+
+[Timer]
+# 부팅 5분 후 최초 실행 — aaa-reset-acl.service(부팅 훅)와 겹치지 않게 여유를 둠
+OnBootSec=5min
+# 이후 30분마다 재실행
+OnUnitActiveSec=30min
+# NAS가 꺼져 있던 구간을 건너뛴 경우 부팅 후 즉시 1회 실행(OnBootSec으로 이미 커버되지만 방어적으로 유지)
+Persistent=true
+Unit=aaa-reset-acl.service
+
+[Install]
+WantedBy=timers.target

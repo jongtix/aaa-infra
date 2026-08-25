@@ -1,6 +1,6 @@
 # UGOS ACL 리셋 — 부팅 후 점검 절차
 
-관련 이슈: aaa-infra#118
+관련 이슈: aaa-infra#118, aaa-infra#148
 
 ## 배경
 
@@ -70,6 +70,31 @@ systemctl show docker_serv.service -p WantedBy,After   # (또는 실제 도커 �
 
 유닛명이 다르면 `aaa-reset-acl.service`의 `Before=`/`After=`를 그에 맞게
 수정해야 순서 보장이 성립한다.
+
+## 재발 방지 — 주기적 재실행 (aaa-infra#148)
+
+`aaa-reset-acl.service`는 **부팅 시에만** 발동한다. 2026-08-25 실측(#148)에서
+UGOS가 **재부팅 없이** 백그라운드로 ACL을 재적용해 부팅 훅이 4주 1일간
+재실행되지 않은 사이 크래시루프가 재발했다. `aaa-reset-acl.timer`를 함께
+등록하면 동일한 서비스를 30분 주기로 재실행해 재부팅 의존성을 제거한다.
+
+`--reset-acl`은 재귀 chown/chmod만 수행하고 `data/mysql`, `data/redis`는
+건드리지 않으며, 리눅스 파일 권한은 `open()` 시점에만 검사되므로 컨테이너가
+이미 열어 둔 fd에는 영향이 없다 — 컨테이너가 정상 기동 중인 상태에서 주기
+실행해도 안전하다.
+
+```bash
+sudo cp scripts/aaa-reset-acl.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aaa-reset-acl.timer
+```
+
+검증:
+
+```bash
+sudo systemctl list-timers aaa-reset-acl.timer
+sudo journalctl -u aaa-reset-acl.service --since "1 hour ago"
+```
 
 ## 이 유닛으로 해결되지 않는 경우
 

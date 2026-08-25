@@ -32,6 +32,11 @@
 # 주의: docker_serv.service 자체가 UGOS 업데이트로 깨지는 경우(예: runner systemd
 # 유닛 손상 전례, project_nas_runner_autorestart 참고)는 이 유닛으로 해결되지
 # 않는다. 독립 감지 경로(호스트 cron 하트비트)를 반드시 병행한다.
+#
+# 커버리지 공백 (aaa-infra#148): 이 유닛은 부팅 시에만 발동한다. UGOS는
+# 재부팅 없이 백그라운드로 ACL을 재적용할 수 있어(2026-08-25 실측), 부팅
+# 훅만으로는 재발을 막지 못한다. aaa-reset-acl.timer를 함께 등록해 동일
+# 서비스를 주기적으로 재실행할 것 — 설치 방법은 aaa-reset-acl.timer 헤더 참고.
 # =============================================================================
 [Unit]
 Description=AAA NAS UGOS ACL Reset (aaa-infra#118)
