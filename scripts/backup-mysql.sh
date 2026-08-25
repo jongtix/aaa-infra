@@ -74,6 +74,11 @@ TELEGRAM_BOT_TOKEN_FILE="${TELEGRAM_BOT_TOKEN_FILE:-${AAA_SSD_BASE:-}/secrets/al
 TELEGRAM_CHAT_ID_FILE="${TELEGRAM_CHAT_ID_FILE:-${AAA_SSD_BASE:-}/secrets/alertmanager.chat_id}"
 : "${TELEGRAM_CURL_CMD:=curl}"
 
+# Telegram 알림 "확인:" 줄에 반복 사용하는 복붙용 명령(운영자 관점 문구)
+readonly ACTION_JOURNAL_FULL='ssh nas-ugreen "journalctl --user -u aaa-backup-mysql.service -n 50"'
+readonly ACTION_RERUN_FULL='systemctl --user start aaa-backup-mysql.service 로 재실행'
+readonly ACTION_GRANT_CHECK="ssh nas-ugreen \"docker ps | grep ${MYSQL_CONTAINER}\" → 정상이면 config/mysql/grants/backup-grants.sql 적용 여부 확인"
+
 readonly RETENTION_DAILY=7
 readonly RETENTION_WEEKLY=4
 readonly RETENTION_MONTHLY=6
@@ -285,10 +290,18 @@ binlog_prune() {
 # REQ-VF-003 — 실패 즉시 통지 (telegram_notify 패턴 재사용)
 # =============================================================================
 
-notify_failure() {
+# [메시지 형식, 2026-08-25 사용자 확정] 운영자가 폰에서 봤을 때 "무엇이 /
+# 왜 / 뭘 확인" 3줄로 읽히는 것이 목적이다 — config/alertmanager/alertmanager.yml
+# 의 vmalert 알림 뼈대(아이콘 [긴급/점검] / • 제목 / 상태: / 확인:)를 빌리되,
+# 스펙 ID·내부 변수명·raw 에러 출력은 본문에 넣지 않는다(상세는 journalctl로
+# 유도, 로컬 로그에는 그대로 남김). 이 스크립트는 시각 그룹핑이 없는 1회성
+# 발신이므로 "(시각~)" 접미사는 생략한다.
+_html_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
+
+_telegram_send() {
   local text="$1"
   if [[ ! -r "$TELEGRAM_BOT_TOKEN_FILE" || ! -r "$TELEGRAM_CHAT_ID_FILE" ]]; then
-    error "Telegram 자격증명 파일을 읽을 수 없어 알림 전송 실패: ${text}"
+    error "Telegram 자격증명 파일을 읽을 수 없어 알림 전송 실패"
     return 1
   fi
   local bot_token chat_id
@@ -301,10 +314,21 @@ notify_failure() {
         --data-urlencode "text=${text}"
 }
 
+# _notify <머리글> <제목> <상태> <확인>
+_notify() {
+  local head="$1" title="$2" status="$3" action="$4"
+  local text
+  text="${head}"$'\n• <b>'"$(_html_escape "$title")"$'</b>\n상태: '"$(_html_escape "$status")"$'\n확인: '"$(_html_escape "$action")"
+  _telegram_send "$text"
+}
+notify_failure() { _notify $'🚨 <b>[긴급]</b>' "$@"; }
+notify_warning() { _notify $'⚠️ <b>[점검]</b>' "$@"; }
+
+# fail <제목> <상태> <확인> — 로컬 로그 + Telegram 통지 후 종료
 fail() {
-  local msg="$1"
-  error "$msg"
-  notify_failure "🚨 [aaa-backup] ${msg}" || warn "Telegram 알림 전송도 실패했습니다(위 오류 참조)."
+  local title="$1" status="$2" action="$3"
+  error "${title} — ${status}"
+  notify_failure "$title" "$status" "$action" || warn "Telegram 알림 전송도 실패했습니다(위 오류 참조)."
   exit 1
 }
 
@@ -362,13 +386,18 @@ run_full() {
         --no-tablespaces --all-databases \
       | zstd -q -o "$dump_file"; then
     local ps=("${PIPESTATUS[@]}")
-    fail "mysqldump 또는 zstd 압축 실패(exit mysqldump=${ps[0]:-?} zstd=${ps[1]:-?}) — dump_file=${dump_file} (REQ-BK-021: 동시 DDL 등으로 인한 안전한 실패일 수 있음)"
+    error "exit mysqldump=${ps[0]:-?} zstd=${ps[1]:-?} dump_file=${dump_file}"
+    fail "MySQL 풀 백업 실패 — 덤프 생성 중단" \
+      "오늘 백업 파일이 만들어지지 않음. 배포(Flyway 마이그레이션)와 겹쳤다면 의도된 안전 실패" \
+      "${ACTION_JOURNAL_FULL} → 원인 확인 후 ${ACTION_RERUN_FULL}"
   fi
   chmod 600 "$dump_file"
 
   # REQ-BK-005: 무결성 검증 + SHA256
   if ! zstd -t "$dump_file" 2>/dev/null; then
-    fail "zstd 무결성 검증 실패: ${dump_file}"
+    fail "MySQL 풀 백업 실패 — 덤프 파일 손상" \
+      "생성된 덤프가 무결성 검사를 통과하지 못함($(basename "$dump_file")). HDD 공간 부족·쓰기 중단 의심" \
+      "ssh nas-ugreen \"df -h /volume2\" → 공간 확보 후 ${ACTION_RERUN_FULL}"
   fi
   ( cd "$dir" && sha256sum "$(basename "$dump_file")" > "$(basename "$dump_file").sha256" )
   chmod 600 "${dump_file}.sha256"
@@ -382,7 +411,11 @@ run_full() {
     prev_size=$(stat -f%z "${dir}/${prev_file}" 2>/dev/null || stat -c%s "${dir}/${prev_file}")
     threshold=$(( prev_size * SIZE_FLOOR_PERCENT / 100 ))
     if (( cur_size < threshold )); then
-      notify_failure "⚠️ [aaa-backup] 덤프 크기 이상: ${dump_file}(${cur_size}B) < 직전(${prev_file}, ${prev_size}B)의 ${SIZE_FLOOR_PERCENT}%" \
+      local cur_mb=$(( cur_size / 1048576 )) prev_mb=$(( prev_size / 1048576 )) pct=$(( cur_size * 100 / prev_size ))
+      warn "덤프 크기 급감: ${dump_file}(${cur_size}B) < 직전 ${prev_file}(${prev_size}B)의 ${SIZE_FLOOR_PERCENT}%"
+      notify_warning "MySQL 풀 백업 크기 급감" \
+        "오늘 덤프 ${cur_mb}MB, 직전 ${prev_mb}MB(${pct}%). 테이블 유실·덤프 일부 누락 가능성. 파일은 보관됨" \
+        "최근 DB 삭제 작업이 있었는지 확인 → 없으면 원본 DB 테이블 수와 대조" \
         || warn "크기 이상 알림 전송 실패(백업 자체는 계속 진행)"
     fi
   else
@@ -412,7 +445,9 @@ run_binlog() {
   info "FLUSH BINARY LOGS 실행(docker exec ${MYSQL_CONTAINER})"
   if ! docker exec "$MYSQL_CONTAINER" mysql \
         --defaults-extra-file="$BACKUP_CNF_CONTAINER" -N -e "FLUSH BINARY LOGS"; then
-    fail "FLUSH BINARY LOGS 실패"
+    fail "binlog 아카이브 실패 — MySQL 명령 거부" \
+      "이번 시간 binlog 미복사. MySQL 다운 또는 backup 계정 권한(RELOAD) 문제 의심" \
+      "$ACTION_GRANT_CHECK"
   fi
 
   # SHOW BINARY LOGS는 REPLICATION CLIENT 권한으로 조회 가능(backup-grants.sql에
@@ -424,7 +459,10 @@ run_binlog() {
   local logs_output
   if ! logs_output="$(docker exec "$MYSQL_CONTAINER" mysql \
         --defaults-extra-file="$BACKUP_CNF_CONTAINER" -N -e "SHOW BINARY LOGS" 2>&1)"; then
-    fail "SHOW BINARY LOGS 조회 실패: ${logs_output}"
+    error "SHOW BINARY LOGS 출력: ${logs_output}"
+    fail "binlog 아카이브 실패 — 로그 목록 조회 불가" \
+      "MySQL 접속은 됐으나 binlog 목록을 읽지 못함. backup 계정 권한(REPLICATION CLIENT) 의심" \
+      "$ACTION_GRANT_CHECK"
   fi
 
   local -a all_files=()
@@ -451,7 +489,9 @@ run_binlog() {
       # 이미 스크립트에서 쓰는 방식을 재사용한다(신규 인터페이스 도입 않음).
       if ! docker exec "$MYSQL_CONTAINER" cat "/var/lib/mysql/${src}" > "$dest"; then
         rm -f -- "$dest"
-        fail "binlog 파일 복사 실패: ${src}"
+        fail "binlog 아카이브 실패 — 파일 복사 중단" \
+          "${src} 복사 실패. HDD 마운트 해제·공간 부족·ACL 의심" \
+          "ssh nas-ugreen \"df -h /volume2 && ls -ld ${dir}\" → 마운트·권한 확인"
       fi
       chmod 600 "$dest"
     done
