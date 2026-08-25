@@ -134,13 +134,29 @@ main() {
   fi
   CONTAINER_STARTED=1
 
-  info "컨테이너 준비 대기(최대 ${DRILL_READY_TIMEOUT_SECONDS}초)"
-  local waited=0
-  until "$DOCKER_CMD" exec "$DRILL_CONTAINER_NAME" mysqladmin ping --silent >/dev/null 2>&1; do
-    sleep 2
-    waited=$((waited + 2))
-    if (( waited >= DRILL_READY_TIMEOUT_SECONDS )); then
-      fail "throwaway 컨테이너가 제한 시간(${DRILL_READY_TIMEOUT_SECONDS}초) 내 준비되지 않음: ${DRILL_CONTAINER_NAME}"
+  # [PREP-7 라이브 검증 정정, 2026-08-25] mysql:8.4 공식 이미지는 기동 중
+  # 임시(bootstrap) 서버 단계를 거치며, 이 단계에서도 mysqladmin ping이
+  # 일시적으로 성공했다가(임시 서버가 응답) 곧바로 실패하는(임시 서버 종료)
+  # 구간이 실측된다(t=4~5s 성공 → t=6~7s 실패 → t=8s+ 안정). 첫 성공에
+  # 곧바로 복원을 시작하면 임시 서버가 종료되는 타이밍과 겹쳐
+  # "Lost connection to MySQL server during query"로 복원이 중단된다.
+  # 연속 3회 성공(간격 2초, 총 6초 안정 구간)을 요구해 임시 서버 단계를
+  # 건너뛴다 — 이미지 버전마다 다를 수 있는 "ready for connections" 로그
+  # 출현 횟수에 의존하지 않는 범용 해법.
+  info "컨테이너 준비 대기(최대 ${DRILL_READY_TIMEOUT_SECONDS}초, 연속 3회 성공 요구)"
+  local waited=0 consecutive_ok=0
+  while (( consecutive_ok < 3 )); do
+    if "$DOCKER_CMD" exec "$DRILL_CONTAINER_NAME" mysqladmin ping --silent >/dev/null 2>&1; then
+      consecutive_ok=$((consecutive_ok + 1))
+    else
+      consecutive_ok=0
+    fi
+    if (( consecutive_ok < 3 )); then
+      sleep 2
+      waited=$((waited + 2))
+      if (( waited >= DRILL_READY_TIMEOUT_SECONDS )); then
+        fail "throwaway 컨테이너가 제한 시간(${DRILL_READY_TIMEOUT_SECONDS}초) 내 안정적으로 준비되지 않음: ${DRILL_CONTAINER_NAME}"
+      fi
     fi
   done
   info "컨테이너 준비 완료(대기 ${waited}초)"
