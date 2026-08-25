@@ -1383,12 +1383,12 @@ groups:
         labels:
           severity: warning
           component: backup
-          mode: full
           tier: TICKET
+          mode: full
         annotations:
-          summary: "MySQL 풀 백업(mysqldump) 마지막 성공이 28시간 초과"
-          description: "aaa_backup_last_success_timestamp_seconds{mode=\"full\"}의 마지막 푸시가 28시간(100,800초) 이상 지났음 — 매일 05:00 KST 백업이 실패/미실행됐거나 스케줄러(aaa-backup-mysql.timer)가 멈췄을 가능성(REQ-VF-002)."
-          action: "NAS에서 systemctl --user status aaa-backup-mysql.timer aaa-backup-mysql.service 확인, journalctl --user -u aaa-backup-mysql.service로 실패 원인 확인. REQ-VF-003 Telegram 실패 알림이 먼저 왔는지도 대조"
+          summary: "MySQL 풀 백업 중단 — mysqldump 마지막 성공 28시간 초과"
+          description: "매일 05:00 KST 백업(aaa-backup-mysql.timer)의 마지막 성공 이후 28시간(100,800초) 이상 경과 — 백업이 실패/미실행됐거나 스케줄러가 멈췄을 가능성(REQ-VF-002)."
+          action: "ssh nas-ugreen \"systemctl --user status aaa-backup-mysql.timer aaa-backup-mysql.service\" → 상태 확인 후 \"journalctl --user -u aaa-backup-mysql.service\"로 실패 원인 확인. REQ-VF-003 Telegram 실패 알림이 먼저 왔는지도 대조"
 
       # binlog 아카이브 데드맨(REQ-VF-005, OP-4 확정 2026-08-21): 임계 6시간(21,600초), 윈도우 [1d].
       # binlog는 매시(REQ-BK-010) push되어 24회/일 샘플이 확보되므로, REQ-VF-002의
@@ -1399,9 +1399,9 @@ groups:
         labels:
           severity: warning
           component: backup
-          mode: binlog
           tier: TICKET
+          mode: binlog
         annotations:
-          summary: "MySQL binlog 아카이브 마지막 성공이 6시간 초과"
-          description: "aaa_backup_last_success_timestamp_seconds{mode=\"binlog\"}의 마지막 푸시가 6시간(21,600초) 이상 지났음 — 매시 FLUSH BINARY LOGS+복사(aaa-backup-binlog.timer)가 조용히 멈췄을 가능성. full 백업 데드맨(BackupMysqlFullStale)만으로는 이 실패가 감지되지 않는다(REQ-VF-001 모드 분리)."
-          action: "NAS에서 systemctl --user status aaa-backup-binlog.timer aaa-backup-binlog.service 확인, journalctl --user -u aaa-backup-binlog.service로 실패 원인 확인"
+          summary: "MySQL binlog 아카이브 중단 — 마지막 성공 6시간 초과"
+          description: "매시 FLUSH BINARY LOGS+복사(aaa-backup-binlog.timer)의 마지막 성공 이후 6시간(21,600초) 이상 경과 — 스케줄러가 조용히 멈췄을 가능성. full 백업 데드맨(BackupMysqlFullStale)만으로는 이 실패가 감지되지 않는다(REQ-VF-001 모드 분리, REQ-VF-005)."
+          action: "ssh nas-ugreen \"systemctl --user status aaa-backup-binlog.timer aaa-backup-binlog.service\" → 상태 확인 후 \"journalctl --user -u aaa-backup-binlog.service\"로 실패 원인 확인"
