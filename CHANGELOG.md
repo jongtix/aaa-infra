@@ -6,6 +6,10 @@
 
 ### Added
 
+- aaa-analyzer 주간 챌린저 게이트 관측 배선(SPEC-ANALYZER-TRAIN-GATE-001 M6) — 스크랩 + 알림 룰 2계층 (REQ-ATG-*)
+  - VictoriaMetrics 스크랩 잡 신설 — `job_name: analyzer`, `/metrics`, `aaa-analyzer:8000` (AC-ATG-013)
+  - vmalert 신규 그룹 `analyzer-training-automation`(30s interval) 알림 3종 — `AnalyzerTrainingWeeklySilent`(8일 무발화 데드맨), `AnalyzerTrainingRunFailed`, `AnalyzerTrainingHeldBack` (AC-ATG-014)
+  - 신규 유닛테스트 샤드 2개(`rules_test_analyzer.yaml`/`_slow.yaml`) — 기존 8샤드 0 회귀 확인
 - MySQL 백업 시스템 신설 — mysqldump 풀 덤프(매일 05:00 KST) + binlog 아카이브(매시 05분) 조합의 PITR(Point-In-Time Recovery) 체계 (SPEC-INFRA-DB-BACKUP-001, REQ-BK-*)
   - 전용 백업 계정(`backup@%`) 최소권한 GRANT 정의 — `config/mysql/grants/backup-grants.sql` (REQ-SEC-001)
   - `scripts/backup-mysql.sh --mode=full|binlog` — GFS 세대 보존(일간 7 / 주간 4 / 월간 6) 자동 등급 판정 + binlog 회전·복사·프루닝 (REQ-BK-001~012)
