@@ -9,6 +9,8 @@ updates:
       day: "monday"
       time: "16:00"
       timezone: "Asia/Seoul"
+    cooldown:
+      default-days: 3
     ignore:
       # MySQL은 8.4 LTS를 고정 사용. 메이저/마이너 업그레이드는 스키마 호환성과
       # LTS 정책 검토 후 수동으로 진행해야 하므로 패치 업데이트만 허용.
@@ -35,3 +37,5 @@ updates:
       day: "monday"
       time: "16:00"
       timezone: "Asia/Seoul"
+    cooldown:
+      default-days: 3
