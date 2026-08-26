@@ -59,6 +59,18 @@ NOTIFIER_UID=1006
 # Alertmanager 공식 이미지 실행 유저(nobody)
 AM_UID=65534
 
+# SPEC-ANALYZER-TRAIN-STALENESS-001 REQ-ATD-004: docker-compose.yml의 활성
+# 모델 디렉토리(:ro bind mount, REQ-ATD-002)는 analyzer가 소유·생성하지 않는
+# 디렉토리다(트레이너 SMB 쓰기 프로세스 소유) — chown으로 소유권을 가져오지
+# 않고, 아래 group_read_grants 루프에서 chgrp $ANALYZER_UID + chmod g+rX로
+# "그룹 읽기 권한만" 확보한다(vector→analyzer 로그 group_add 패턴, docker-
+# compose.yml L437-444 주석과 동일한 취지 — analyzer의 기본 그룹이 이미
+# $ANALYZER_UID이므로 컨테이너 쪽 group_add 지시자는 불필요).
+# 실제 host 서브경로는 NAS 실측 확인 완료(2026-08-27, `getfacl` 확인 — 현재
+# 777, 확장 ACL 없음, other=rwx라 이 chgrp 없이도 이미 읽기 가능. 향후 트레이너
+# 측이 권한을 강화할 경우를 대비한 방어적 장치) — docker-compose.yml의 마운트
+# 소스와 반드시 동일해야 한다.
+
 # --- 모드 파싱 ---
 RESET_ACL_ONLY=false
 if [[ "${1:-}" == "--reset-acl" ]]; then
@@ -258,6 +270,31 @@ for dir in "${chown_analyzer_dirs[@]}"; do
     chown $ANALYZER_UID:$ANALYZER_UID "$dir"
     chmod 750 "$dir"
     info "  chown $ANALYZER_UID:$ANALYZER_UID + chmod 750 $dir"
+done
+
+# SPEC-ANALYZER-TRAIN-STALENESS-001 REQ-ATD-004: 활성 모델 디렉토리(REQ-ATD-002
+# docker-compose.yml :ro 마운트 소스)는 위 chown_analyzer_dirs와 달리 analyzer가
+# 아닌 트레이너 SMB 쓰기 프로세스가 소유한다 — 소유권(chown)을 가져오지 않고
+# "그룹 읽기 권한만" 추가한다(chgrp $ANALYZER_UID + 기존 권한 비트를 보존하는
+# chmod g+rX). analyzer 컨테이너는 기본 그룹이 이미 $ANALYZER_UID이므로 이
+# chgrp만으로 group_add 없이 읽기 가능해진다(docker-compose.yml 활성 모델 볼륨
+# 주석 참고). NAS 실측 확인 완료(2026-08-27, `getfacl` — 현재 777이라 이 chgrp
+# 없이도 이미 읽기 가능, 향후 권한 강화 대비 방어적 장치) — 디렉토리가 없으면
+# 건너뛴다. --reset-acl 모드의 reset_targets 재귀 chown과 달리 여기서는
+# 소유권을 건드리지 않아 트레이너 쓰기 경로를 보호한다.
+group_read_grant_dirs=(
+    "${AAA_HDD_BASE}/models/active"
+)
+
+for dir in "${group_read_grant_dirs[@]}"; do
+    if [[ ! -d "$dir" ]]; then
+        warn "  활성 모델 디렉토리가 없어 group 읽기 권한 부여를 건너뜁니다: $dir"
+        continue
+    fi
+    chgrp -R $ANALYZER_UID "$dir"
+    find "$dir" -type d -exec chmod g+rx {} +
+    find "$dir" -type f -exec chmod g+r {} +
+    info "  chgrp $ANALYZER_UID(그룹만, 소유자 비변경) + chmod g+rX $dir"
 done
 
 # notifier는 $APP_UID(1004, collector/vector 전용)를 공유하지 않고 NOTIFIER_UID(1006, 상단 정의)로
