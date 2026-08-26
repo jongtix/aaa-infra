@@ -6,6 +6,12 @@
 
 ### Added
 
+- CI/CD 룰셋 강화 — infra 스코프 (SPEC-INFRA-CICD-002)
+  - `ci.yml`에 `pull_request` 트리거 추가 — PR에서 머지 전 실제 CI 검증(`status-check` job)
+  - `main` 브랜치 룰셋(`main-protection`) 신설 — 선형 히스토리 강제, 강제 푸시/삭제 차단, `status-check` 상태 체크 필수, GitHub App(`aaa-ci-release-bot`)만 `bypass_actors`로 등재해 보호된 `main`을 우회
+  - `tag-protection` 룰셋 신설(`refs/tags/v*`) — 릴리스 태그 삭제·재태그 차단
+  - `dependabot-auto-merge.yml` 신규 — non-major Dependabot PR을 CI 통과 후 자동 머지(`dependabot/fetch-metadata` + `gh pr merge --auto --rebase`), `dependabot.yml`에 3일 쿨다운 추가
+  - `aaa-collector`/`aaa-notifier`/`aaa-analyzer` 3개 서비스 레포에도 동일한 룰셋·App 우회·`workflow_run`→태그 트리거 전환·커밋백 제거·`concurrency` 그룹·`persist-credentials: false` 적용(레포별 상세는 각 레포 CHANGELOG 참조). 4개 레포 공통으로 "Allow auto-merge" 저장소 설정을 활성화(기본 비활성으로 확인되어, M6 자동 머지가 항상 실패했을 결함을 사전 수정)
 - aaa-analyzer 주간 챌린저 게이트 관측 배선(SPEC-ANALYZER-TRAIN-GATE-001 M6) — 스크랩 + 알림 룰 2계층 (REQ-ATG-*)
   - VictoriaMetrics 스크랩 잡 신설 — `job_name: analyzer`, `/metrics`, `aaa-analyzer:8000` (AC-ATG-013)
   - vmalert 신규 그룹 `analyzer-training-automation`(30s interval) 알림 3종 — `AnalyzerTrainingWeeklySilent`(8일 무발화 데드맨), `AnalyzerTrainingRunFailed`, `AnalyzerTrainingHeldBack` (AC-ATG-014)
