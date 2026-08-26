@@ -168,6 +168,17 @@ services:
       - "8000"
     volumes:
       - ${AAA_HDD_BASE}/logs/aaa-analyzer:/var/log/aaa-analyzer
+      # SPEC-ANALYZER-TRAIN-STALENESS-001 REQ-ATD-002: 일일 정체 감지 콜백
+      # (detect_stale_models())이 컨테이너 안에서 직접 rglob 스캔하는 활성 모델
+      # 디렉토리 — analyzer는 여기서 읽기만 한다(:ro). container_models_root
+      # (TRAIN_AUTOMATION_CONTAINER_MODELS_ROOT, aaa-analyzer .env.example
+      # 참고 — 예: /mnt/models)와 반드시 동일한 값이어야 한다. host-side 경로는
+      # NAS 실측 확인 완료(2026-08-27, `docker inspect`/`find`로 확정) —
+      # train_smb 소유(트레이너 SMB 쓰기 프로세스), 777(getfacl 확인, 확장 ACL
+      # 없음) — other=rwx라 analyzer(UID 1005)는 group_add 없이도 이미 읽기
+      # 가능(init-nas.sh REQ-ATD-004의 chgrp는 향후 권한이 강화될 경우를 대비한
+      # 방어적 장치).
+      - ${AAA_HDD_BASE}/models/active:/mnt/models:ro
     # REQ-ATA-022: 디스패치 전용 SSH 프라이빗 키/known_hosts. alertmanager와
     # 동일 패턴(compose secrets — non-swarm은 mode를 무시하고 호스트 파일 권한을
     # 그대로 미러, [배포 실측 2026-06-20] 참조)이므로 호스트
