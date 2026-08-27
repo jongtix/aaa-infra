@@ -1475,3 +1475,42 @@ groups:
           summary: "analyzer 챌린저 보류 — 챔피언 유지"
           description: "최근 1시간 내 챌린저 모델이 챔피언을 능가하지 못해 보류(held-back) 처리됨 — 정상 동작, 기존 챔피언이 계속 서빙 중."
           action: "docker logs aaa-analyzer → 보류된 (market,horizon,algorithm) 조합 및 rank_ic 비교값 확인"
+
+  # ---------------------------------------------------------------------------
+  # analyzer-model-staleness — SPEC-ANALYZER-TRAIN-STALENESS-001 REQ-ATD-011
+  # 일일 모델 정체 감지(04:00 KST, staleness.py detect_stale_models())가 발행하는
+  # aaa_analyzer_model_stale{market,horizon,algorithm} 게이지(0/1)를 소비한다.
+  # (a) per-combo 정체 — 게이지 값 자체가 판정 결과(임계값 28일 계산은 analyzer
+  #     측 책임)이므로 for: 0m(즉시 통지, GATE-001의 (b)(c) 관례 계승).
+  # (b) absent() 데드맨 — 일일 잡(04:00 KST, 24h 케이던스) + 여유 1h = 25h.
+  #     GATE-001 AnalyzerTrainingWeeklySilent(8d absent_over_time)와 동일 관례.
+  # ---------------------------------------------------------------------------
+  - name: analyzer-model-staleness
+    interval: 30s
+    rules:
+      # (a) per-combo 모델 정체 통지.
+      - alert: AnalyzerModelStale
+        expr: aaa_analyzer_model_stale == 1
+        for: 0m
+        labels:
+          severity: warning
+          component: analyzer
+          tier: TICKET
+          notify: fire_only
+        annotations:
+          summary: "analyzer 모델 정체 — {{ $labels.market }}/{{ $labels.horizon }}/{{ $labels.algorithm }}"
+          description: "(market={{ $labels.market }}, horizon={{ $labels.horizon }}, algorithm={{ $labels.algorithm }}) 조합의 활성 모델이 마지막 성공 재학습 후 정체 임계값(기본 28일)을 초과함 — 일일 정체 감지(04:00 KST)가 detect_stale_models()로 판정."
+          action: "docker logs aaa-analyzer → 04:00 KST 일일 정체 감지 로그 확인, 해당 조합의 주간 재학습(일요일 01:00 KST) 정상 실행 여부 점검"
+
+      # (b) 일일 정체 스캔 무음 실패 — 25h(24h 케이던스 + 1h 여유) 동안 게이지 무갱신/부재.
+      - alert: AnalyzerModelStaleScanSilent
+        expr: absent_over_time(aaa_analyzer_model_stale[25h])
+        for: 0m
+        labels:
+          severity: warning
+          component: analyzer
+          tier: TICKET
+        annotations:
+          summary: "analyzer 일일 모델 정체 감지 무음 실패 — 25시간간 실행 신호 없음"
+          description: "일일 정체 감지 게이지(aaa_analyzer_model_stale)가 25시간(일일 케이던스 24h + 여유 1h) 동안 한 번도 갱신되지 않음 — 04:00 KST cron 미발화 또는 컨테이너 기동 실패 의심."
+          action: "docker logs aaa-analyzer → 04:00 KST 일일 정체 감지 잡 실행 로그·마운트 오류(models_root 부재/권한 거부) 확인"

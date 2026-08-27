@@ -78,3 +78,66 @@ tests:
               summary: "analyzer 주간 학습 잡 무음 실패 — 8일간 실행 신호 없음"
               description: "상시 게이트·주간 재학습 실행 카운터(aaa_analyzer_training_run_total)가 8일(주간 케이던스 7일 + 여유 1일) 동안 한 번도 증가하지 않음 — 일요일 01:00 KST cron 미발화 또는 컨테이너 기동 실패 의심."
               action: "docker logs aaa-analyzer → 일요일 01:00 KST 주간 재학습 잡 실행 로그·G-1 fail-fast 기동 오류 확인"
+
+  # ===========================================================================
+  # 룰 analyzer-model-staleness — AnalyzerModelStaleScanSilent
+  # SPEC-ANALYZER-TRAIN-STALENESS-001 REQ-ATD-011(b), §B 리스크 4
+  # [분리 근거] absent_over_time([25h])는 실측 25시간 경과를 요구해 30s 그리드로는
+  #   느리다(watermark_slow/analyzer_slow의 8d 관례와 동일 이유) — 애초부터
+  #   _slow 파일에만 배치해 §B 리스크 4의 "필요 시 _slow 분리"를 선제 적용한다.
+  # [실측 발견, 구현 재량] `absent_over_time()`은 "시계열 자체의 소실"만 감지한다 —
+  #   analyzer 프로세스가 살아있는 채로 04:00 KST cron만 조용히 멈추면
+  #   `prometheus_client` Gauge는 마지막 `.set()` 값을 계속 스크레이프에 노출하므로
+  #   이 경우는 절대 감지되지 않는다(값이 고정돼도 시계열은 "존재"함). 이 룰이
+  #   실제로 감지하는 것은 스크레이프 타깃 완전 두절(컨테이너 다운/네트워크 단절)
+  #   — plan.md M6(b)가 지정한 설계를 그대로 구현하되, 이 한계를 여기 기록한다.
+  # ===========================================================================
+  # 시리즈 길이: 25h+1h=26h → `+0x27`(여유분 포함, 28샘플=27h 커버).
+
+  # TI-ATD-SILENT-001. [발화, 완전 두절] t=0 이후 스크레이프 완전 중단(컨테이너 다운
+  #   시뮬레이션 — 단일 샘플만 존재, 이후 25h+ 무샘플) → 무음실패 발화.
+  - interval: 1h
+    input_series:
+      - series: 'aaa_analyzer_model_stale{market="domestic",horizon="20",algorithm="lightgbm"}'
+        values: '0'
+    alert_rule_test:
+      - eval_time: 26h
+        groupname: analyzer-model-staleness
+        alertname: AnalyzerModelStaleScanSilent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+            exp_annotations:
+              summary: "analyzer 일일 모델 정체 감지 무음 실패 — 25시간간 실행 신호 없음"
+              description: "일일 정체 감지 게이지(aaa_analyzer_model_stale)가 25시간(일일 케이던스 24h + 여유 1h) 동안 한 번도 갱신되지 않음 — 04:00 KST cron 미발화 또는 컨테이너 기동 실패 의심."
+              action: "docker logs aaa-analyzer → 04:00 KST 일일 정체 감지 잡 실행 로그·마운트 오류(models_root 부재/권한 거부) 확인"
+
+  # TI-ATD-SILENT-002. [무발화] 게이지가 25h 창 내(t=20h)에서 갱신됨 → 미발화(정상 일일 실행).
+  - interval: 1h
+    input_series:
+      - series: 'aaa_analyzer_model_stale{market="domestic",horizon="20",algorithm="lightgbm"}'
+        values: '0+0x20 1+0x7'
+    alert_rule_test:
+      - eval_time: 26h
+        groupname: analyzer-model-staleness
+        alertname: AnalyzerModelStaleScanSilent
+        exp_alerts: []
+
+  # TI-ATD-SILENT-003. [발화, 부재] 메트릭 자체가 전혀 존재하지 않음 → absent_over_time 발화.
+  - interval: 1h
+    input_series: []
+    alert_rule_test:
+      - eval_time: 26h
+        groupname: analyzer-model-staleness
+        alertname: AnalyzerModelStaleScanSilent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+            exp_annotations:
+              summary: "analyzer 일일 모델 정체 감지 무음 실패 — 25시간간 실행 신호 없음"
+              description: "일일 정체 감지 게이지(aaa_analyzer_model_stale)가 25시간(일일 케이던스 24h + 여유 1h) 동안 한 번도 갱신되지 않음 — 04:00 KST cron 미발화 또는 컨테이너 기동 실패 의심."
+              action: "docker logs aaa-analyzer → 04:00 KST 일일 정체 감지 잡 실행 로그·마운트 오류(models_root 부재/권한 거부) 확인"

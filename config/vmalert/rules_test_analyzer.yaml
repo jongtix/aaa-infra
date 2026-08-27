@@ -118,3 +118,42 @@ tests:
         groupname: analyzer-training-automation
         alertname: AnalyzerTrainingHeldBack
         exp_alerts: []
+
+  # ===========================================================================
+  # 룰 analyzer-model-staleness — AnalyzerModelStale
+  # SPEC-ANALYZER-TRAIN-STALENESS-001 REQ-ATD-011(a)
+  # ===========================================================================
+
+  # TI-ATD-STALE-001. [발화] 조합 하나가 정체(1) → 발화, market/horizon/algorithm 라벨 전파.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_model_stale{market="domestic",horizon="20",algorithm="lightgbm"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 300s
+        groupname: analyzer-model-staleness
+        alertname: AnalyzerModelStale
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+              notify: fire_only
+              market: domestic
+              horizon: "20"
+              algorithm: lightgbm
+            exp_annotations:
+              summary: "analyzer 모델 정체 — domestic/20/lightgbm"
+              description: "(market=domestic, horizon=20, algorithm=lightgbm) 조합의 활성 모델이 마지막 성공 재학습 후 정체 임계값(기본 28일)을 초과함 — 일일 정체 감지(04:00 KST)가 detect_stale_models()로 판정."
+              action: "docker logs aaa-analyzer → 04:00 KST 일일 정체 감지 로그 확인, 해당 조합의 주간 재학습(일요일 01:00 KST) 정상 실행 여부 점검"
+
+  # TI-ATD-STALE-002. [무발화] 조합이 정상(0) → 미발화.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_model_stale{market="overseas",horizon="60",algorithm="xgboost"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 300s
+        groupname: analyzer-model-staleness
+        alertname: AnalyzerModelStale
+        exp_alerts: []
