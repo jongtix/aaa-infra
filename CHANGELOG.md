@@ -6,6 +6,13 @@
 
 ### Added
 
+- aaa-analyzer 일일 모델 정체 감지 배선 — 컨테이너 모델 마운트 + 관측 경로 (SPEC-ANALYZER-TRAIN-STALENESS-001 M2/M6, REQ-ATD-*)
+  - `docker-compose.yml` analyzer 서비스에 활성 모델 디렉토리 read-only 바인드 마운트 추가 — `${AAA_HDD_BASE}/models/active:/mnt/models:ro`(staging 제외). host 경로는 NAS 실측으로 확정(`docker inspect` + `find` + `getfacl`, 2026-08-27) — 트레이너 SMB 쓰기 프로세스(`train_smb`) 소유, 777 (AC-ATD-002)
+  - `scripts/init-nas.sh`에 해당 디렉토리 group 읽기 권한 확보 로직 추가 — `chgrp $ANALYZER_UID` + `chmod g+rX`(소유권 비이전). 현재 777이라 즉시 필요하진 않으나 트레이너 측 권한 강화에 대비한 방어적 장치 (AC-ATD-004)
+  - vmalert 신규 그룹 `analyzer-model-staleness`(기존 `analyzer-training-automation`과 분리) 알림 2종 — `AnalyzerModelStale`(`aaa_analyzer_model_stale == 1`, per-combo 정체 즉시 통지), `AnalyzerModelStaleScanSilent`(`absent_over_time(aaa_analyzer_model_stale[25h])`, 24h 케이던스 + 1h 여유 데드맨) (AC-ATD-011)
+  - 유닛테스트는 기존 샤드 2개(`rules_test_analyzer.yaml` / `_slow.yaml`)에 케이스 추가 — GATE-001이 같은 파일명을 선점하고 있어 신규 파일 대신 확장. 11샤드 전체 `vmalert-tool unittest` SUCCESS, `check-alert-coverage.sh` 죽은 참조 0건. 25h 시뮬레이션 실측 1.9초 (AC-ATD-012)
+  - 알려진 한계: `absent_over_time()`은 시계열 소실만 감지한다 — analyzer 프로세스가 살아있는 채로 cron만 조용히 멈추면 `prometheus_client` Gauge가 마지막 값을 계속 노출하므로 감지되지 않는다. 실제 감지 대상은 스크랩 타깃 완전 두절뿐(룰 YAML 주석에도 명시)
+  - 배포: `rules.yml`은 CD 자동 반영(REQ-CD-006) — NAS vmalert에 2종 룰 로드 확인 완료. `docker-compose.yml`·`init-nas.sh`는 항상 수동 적용 대상이며 운영자 작업 대기 중
 - CI/CD 룰셋 강화 — infra 스코프 (SPEC-INFRA-CICD-002)
   - `ci.yml`에 `pull_request` 트리거 추가 — PR에서 머지 전 실제 CI 검증(`status-check` job)
   - `main` 브랜치 룰셋(`main-protection`) 신설 — 선형 히스토리 강제, 강제 푸시/삭제 차단, `status-check` 상태 체크 필수, GitHub App(`aaa-ci-release-bot`)만 `bypass_actors`로 등재해 보호된 `main`을 우회
