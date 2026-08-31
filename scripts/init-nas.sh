@@ -182,8 +182,20 @@ if [[ "$RESET_ACL_ONLY" == true ]]; then
         fi
 
         chown -R "${owner}:${group}" "$dir"
-        find "$dir" -type d -exec chmod 750 {} +
-        find "$dir" -type f -exec chmod 640 {} +
+        # logs/aaa-analyzer만 setgid + 그룹 쓰기(2770/660)로 리셋한다 — 이 디렉토리는
+        # 트레이너 SMB 계정(train_smb, aaa-analyzer 그룹 멤버)이 원격 학습 로그를
+        # tee로 써야 한다(SPEC-ANALYZER-TRAIN-AUTOMATION-001). 나머지 대상은 컨테이너
+        # 자신만 쓰면 되므로 기존 750/640을 유지한다(aaa-infra#118 원래 정책 불변).
+        # 2026-08-31 실측: group-write 없는 750으로 리셋되던 중 트레이너 tee가
+        # Permission denied로 실패 → set -o pipefail로 학습 스크립트 전체가
+        # exit 1 반환(학습·저장 자체는 무관하게 성공했었음에도).
+        if [[ "$dir" == "${AAA_HDD_BASE}/logs/aaa-analyzer" ]]; then
+            find "$dir" -type d -exec chmod 2770 {} +
+            find "$dir" -type f -exec chmod 660 {} +
+        else
+            find "$dir" -type d -exec chmod 750 {} +
+            find "$dir" -type f -exec chmod 640 {} +
+        fi
         info "  재귀 리셋 완료: $dir (uid:gid=${owner}:${group})"
     done
 
@@ -262,14 +274,18 @@ done
 
 # analyzer는 ANALYZER_UID(1005, 상단 정의)로 실행된다(SPEC-ANALYZER-FOUNDATION-001, SPEC-OBSV-LOGS-002).
 # $APP_UID(1004, collector/vector 전용)를 재사용하지 않고 별도 명시적 chown으로 처리한다(notifier와 동일 패턴).
+# chmod 2770(setgid + 그룹 쓰기): 트레이너 SMB 계정(train_smb, aaa-analyzer 그룹
+# 멤버)이 원격 학습 로그를 tee로 써야 한다(SPEC-ANALYZER-TRAIN-AUTOMATION-001).
+# 다른 서비스(750, 소유 컨테이너만 씀)와 정책이 다른 이유이며, --reset-acl 모드의
+# reset_targets 루프도 이 디렉토리만 동일하게 2770/660으로 리셋한다.
 chown_analyzer_dirs=(
     "${AAA_HDD_BASE}/logs/aaa-analyzer"
 )
 
 for dir in "${chown_analyzer_dirs[@]}"; do
     chown $ANALYZER_UID:$ANALYZER_UID "$dir"
-    chmod 750 "$dir"
-    info "  chown $ANALYZER_UID:$ANALYZER_UID + chmod 750 $dir"
+    chmod 2770 "$dir"
+    info "  chown $ANALYZER_UID:$ANALYZER_UID + chmod 2770 $dir"
 done
 
 # SPEC-ANALYZER-TRAIN-STALENESS-001 REQ-ATD-004: 활성 모델 디렉토리(REQ-ATD-002
