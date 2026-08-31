@@ -75,6 +75,58 @@ systemctl list-units --type=service | grep -i ssh
 `Before=`와 `restore-sshd-db-tunnel.sh`의 reload 대상 서비스명을 그에 맞게
 수정해야 한다.
 
+## 2026-08-31 재발 — 부팅 순서 버그로 자동 복구 자체가 실패
+
+`aaa-restore-sshd-tunnel.service`를 설치해 둔 상태에서도 2026-08-30 16:46
+재부팅 후 `Match User db_tunnel` 블록이 다시 소실됐다(원격 학습 재트리거
+시 `pymysql`/raw TCP 모두 `admin­istratively prohibited`로 재현, `docker
+logs aaa-mysql`엔 흔적 없음 — MySQL 도달 전 sshd 포워딩 계층에서 즉시
+거부). 원인은 서비스 자체가 매 부팅 실패하고 있었던 것:
+
+```
+systemctl status aaa-restore-sshd-tunnel.service
+  Active: failed (Result: exit-code)
+  Main PID: 467 (code=exited, status=200/CHDIR)
+```
+
+`status=200/CHDIR`은 `WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra`로
+chdir이 실패했다는 뜻이다. 원래 유닛 파일이 `After=local-fs.target`만
+지정했는데, 이 시점엔 UGOS의 `/volume1/SSD_1` 마운트가 아직 준비되지
+않는다 — `aaa-reset-acl.service`(#118)가 이미 동일한 함정을 겪고
+`storage_serv.service`/`filemgr_serv.service`를 `After=`에 병기해
+고쳤던 것과 정확히 같은 원인이다. `aaa-restore-sshd-tunnel.service`는
+그 교훈이 반영되지 않은 채 배포돼 있었다. `Before=ssh.service`로
+순서가 보장돼 sshd 시작 전에 실행은 되지만, 그 실행 자체가 매번
+chdir 단계에서 죽어 아무 것도 복구하지 못한 채 부팅이 끝났다.
+
+수정: `After=local-fs.target storage_serv.service filemgr_serv.service`로
+병기(`aaa-restore-sshd-tunnel.service` 최신본 반영). 기존 설치본을
+쓰고 있다면 재배포 후 `systemctl daemon-reload`가 필요하다.
+
+## 재발 방지 — 주기 재실행 (재부팅 없이 발생하는 케이스)
+
+`aaa-reset-acl` 계열(#148)에서 이미 확인된 것처럼, UGOS는 재부팅 없이도
+백그라운드로 관리 대상 설정 파일을 재생성할 수 있다. 부팅 훅만으로는
+이 경로를 놓치므로, 동일한 서비스를 짧은 주기로 재실행하는 타이머를
+함께 등록한다:
+
+```bash
+sudo cp scripts/aaa-restore-sshd-tunnel.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now aaa-restore-sshd-tunnel.timer
+```
+
+검증:
+
+```bash
+sudo systemctl list-timers aaa-restore-sshd-tunnel.timer
+sudo journalctl -u aaa-restore-sshd-tunnel.service --since "1 hour ago"
+```
+
+`restore-sshd-db-tunnel.sh`는 멱등적이다 — 블록이 이미 있으면 파일 수정도
+reload도 하지 않고 즉시 종료하므로, ssh.service가 정상 기동 중인 상태에서
+주기 실행해도 안전하다.
+
 ## 이 훅으로 해결되지 않는 경우
 
 `db_tunnel` 계정의 `authorized_keys`(`restrict,port-forwarding,

@@ -1,0 +1,35 @@
+# =============================================================================
+# aaa-restore-sshd-tunnel.timer — 주기적 db_tunnel Match 블록 복구
+# =============================================================================
+# aaa-restore-sshd-tunnel.service는 부팅 시에만 발동해, 재부팅 없이 UGOS가
+# 백그라운드로 /etc/ssh/sshd_config를 재생성하는 경우(aaa-reset-acl #148과
+# 동일 성격 위험)를 놓친다. 이 타이머는 동일한 서비스를 짧은 주기로
+# 재실행시켜 재부팅 의존성을 제거한다.
+#
+# restore-sshd-db-tunnel.sh는 멱등적이다 — Match User db_tunnel 블록이 이미
+# 있으면 아무것도 하지 않고 즉시 종료한다(파일 수정도, reload도 발생하지
+# 않음). ssh.service가 정상 기동 중인 상태에서 주기 실행해도 안전하다.
+#
+# 설치 (NAS, root):
+#   cp scripts/aaa-restore-sshd-tunnel.timer /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now aaa-restore-sshd-tunnel.timer
+#
+# 검증:
+#   systemctl list-timers aaa-restore-sshd-tunnel.timer
+#   journalctl -u aaa-restore-sshd-tunnel.service --since "1 hour ago"
+# =============================================================================
+[Unit]
+Description=AAA NAS sshd db_tunnel Match Block Restore — periodic
+
+[Timer]
+# 부팅 5분 후 최초 실행 — aaa-restore-sshd-tunnel.service(부팅 훅)와 겹치지 않게 여유를 둠
+OnBootSec=5min
+# 이후 30분마다 재실행
+OnUnitActiveSec=30min
+# NAS가 꺼져 있던 구간을 건너뛴 경우 부팅 후 즉시 1회 실행(OnBootSec으로 이미 커버되지만 방어적으로 유지)
+Persistent=true
+Unit=aaa-restore-sshd-tunnel.service
+
+[Install]
+WantedBy=timers.target

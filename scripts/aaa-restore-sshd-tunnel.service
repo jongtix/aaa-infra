@@ -22,12 +22,27 @@
 # 설정으로 뜬다(사후 reload에 의존하지 않는다). ssh.service 실제 유닛명이
 # 다른 NAS 모델/UGOS 버전에서 다를 수 있으니 설치 전
 # `systemctl list-units --type=service | grep -i ssh`로 재확인할 것.
+#
+# [HARD] 순서 지정 함정(2026-08-31 실측, aaa-reset-acl.service #118과 동일 원인):
+#   최초 배포판은 After=local-fs.target만 지정했는데, 이 시점엔 UGOS의
+#   /volume1/SSD_1 마운트가 아직 준비되지 않아 WorkingDirectory chdir이
+#   실패했다(status=200/CHDIR, 2026-08-30 16:46:42 KST 재부팅에서 확인 —
+#   서비스는 enabled 상태였지만 매 부팅 실패, db_tunnel 포트포워딩이 계속
+#   막혀 있었다). aaa-reset-acl.service가 이미 겪은 것과 동일한 함정이므로
+#   동일하게 storage_serv.service/filemgr_serv.service를 After=에 병기한다.
+#   NAS 모델·UGOS 버전이 다르면 `systemctl show docker_serv.service -p
+#   WantedBy,After`(또는 storage_serv.service)로 재확인할 것.
+#
+# 커버리지 공백: 이 유닛은 부팅 시에만 발동한다. UGOS는 재부팅 없이 백그라운드로
+# 설정을 재적용할 수 있어(aaa-reset-acl #148과 동일 성격) 부팅 훅만으로는
+# 재발을 막지 못한다. aaa-restore-sshd-tunnel.timer를 함께 등록해 동일
+# 서비스를 주기적으로 재실행할 것 — 설치 방법은 해당 timer 파일 헤더 참고.
 # =============================================================================
 [Unit]
 Description=AAA NAS sshd db_tunnel Match Block Restore
 DefaultDependencies=no
 Requires=local-fs.target
-After=local-fs.target
+After=local-fs.target storage_serv.service filemgr_serv.service
 Before=ssh.service
 
 [Service]
