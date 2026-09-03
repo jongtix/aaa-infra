@@ -108,4 +108,4 @@ Logback 내부 확장점인 TurboFilter는 모든 MDC 쓰기를 인터셉트할 
   - HTTP 클라이언트 및 외부 라이브러리 로그: 보안 관련 라이브러리의 로그 레벨을 WARN 이상으로 설정하여 노출 최소화
   - 1인 프로젝트 규모에서 이 경로들에 대한 정적 분석 도구나 런타임 필터 도입은 비용 대비 실익이 낮다. SafeMdc가 가장 빈도 높은 경로(MDC)를 구조적으로 차단하고, 나머지는 코딩 컨벤션으로 관리하는 것이 현실적이다.
 - aaa-notifier, aaa-trader도 동일한 구조화 로깅 전략을 적용한다.
-- aaa-analyzer(Python)의 구조화 로깅 및 trace_id 전파 전략은 Phase 2에서 별도 ADR로 결정한다.
+- aaa-analyzer(Python)의 구조화 로깅 및 trace_id 전파 전략은 **ADR-035**로 결정됐다(2026-09-03, 본 항목이 남겼던 "Phase 2에서 별도 ADR로 결정한다"는 공백의 이행). 요지: analyzer는 stdlib `RotatingFileHandler(maxBytes=10 MiB, backupCount=5)`의 결정론적 총량 상한(약 60 MiB, 로그 볼륨 무관)을 유지하며 위 결정 1의 `total-size-cap: 50GB`에 대응하는 신규 코드 메커니즘을 도입하지 않는다. 단 이 "동등한 의도" 판단은 **디스크 사용량 무한 증가 방지**에만 한정되며, `max-history: 30`이 확보하는 사고 조사용 30일 보존 창과의 동등성은 함의하지 않는다 — analyzer의 회전은 크기 기준이라 보존 기간이 로그 볼륨에 따라 변동한다. 판단 근거·현재 관측 볼륨 기준 정성적 보존 기간 추정·재검토 조건은 ADR-035 본문 참조.
