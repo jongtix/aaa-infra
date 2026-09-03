@@ -6,6 +6,19 @@
 
 ### Added
 
+- MySQL/Redis 로그 보존 정리 타이머 신설 (SPEC-INFRA-LOG-CLEANUP-001, REQ-LC-*)
+  - `scripts/aaa-log-cleanup.sh` — `${AAA_HDD_BASE}/logs/{mysql,redis}` 2개 디렉토리에 대해 mtime 기준 30일(`RETENTION_DAYS`) 초과 파일을 삭제. `aaa-analyzer`/`aaa-collector`/`aaa-notifier`는 이미 활성 확인된 자체 회전(Python 네이티브 / logback rollingpolicy)이 있어 대상에서 제외 (REQ-LC-001~006)
+  - `scripts/aaa-log-cleanup.timer`/`.service` — systemd system(root) scope, 매주 일요일 06:30 KST 발화, `aaa-reset-acl.service`와 동일한 `After=local-fs.target storage_serv.service filemgr_serv.service` 체인 사용, 기존 백업 타이머 3종과 OnCalendar 충돌 없음 (REQ-LC-007~009)
+  - `docs/TECHSPEC.md` §2.3 갱신 — MySQL/Redis 및 non-Java 서비스에 대한 OS 레벨 30일 보존 정책 명문화, ADR-011의 Java 로테이션 목표와 구분 (REQ-DOC-LC-001)
+  - NAS 배포: root-scope 유닛 설치 + `enable --now` 완료, `systemctl list-timers`로 다음 발화 확인 완료(운영자 수동 실행)
+
+### Removed
+
+- 미사용 백업 타이머 self-heal watchdog 제거 (SPEC-INFRA-LOG-CLEANUP-001, REQ-WD-*)
+  - `scripts/aaa-timer-watchdog.service`/`.timer`, `scripts/watchdog-restart-timers.sh` 저장소에서 삭제 — 3개 백업 타이머(`aaa-backup-{mysql,binlog,restore-drill}`)가 root(system) scope로 전환되어(`0738f2d`) systemd가 재부팅 후 재무장을 자체 보장하므로, 재부팅 후 재무장 실패에 대응하던 이 watchdog는 더 이상 필요하지 않음 (REQ-WD-001)
+  - NAS 라이브 잔존물(user-scope 유닛 파일 + 배포 스크립트 사본) 이중 확인(`systemctl --user list-unit-files` + `~/.config/systemd/user/` 조회) 후 제거 완료 (REQ-WD-002/003)
+  - 이 시점 이후 aaa NAS에 신설되는 모든 systemd 유닛은 root(system)-scope만 허용 — user-scope 신설 금지 정책 명문화(REQ-WD-006), watchdog가 무력화된 user-scope 유닛 패턴의 재발 방지 근거로 문서화
+
 - aaa-analyzer 일일 모델 정체 감지 배선 — 컨테이너 모델 마운트 + 관측 경로 (SPEC-ANALYZER-TRAIN-STALENESS-001 M2/M6, REQ-ATD-*)
   - `docker-compose.yml` analyzer 서비스에 활성 모델 디렉토리 read-only 바인드 마운트 추가 — `${AAA_HDD_BASE}/models/active:/mnt/models:ro`(staging 제외). host 경로는 NAS 실측으로 확정(`docker inspect` + `find` + `getfacl`, 2026-08-27) — 트레이너 SMB 쓰기 프로세스(`train_smb`) 소유, 777 (AC-ATD-002)
   - `scripts/init-nas.sh`에 해당 디렉토리 group 읽기 권한 확보 로직 추가 — `chgrp $ANALYZER_UID` + `chmod g+rX`(소유권 비이전). 현재 777이라 즉시 필요하진 않으나 트레이너 측 권한 강화에 대비한 방어적 장치 (AC-ATD-004)
