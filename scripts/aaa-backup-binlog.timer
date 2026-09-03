@@ -12,26 +12,26 @@
 # 상대로 동시 발화하는 충돌이 하루 1회 발생해, 이를 회피하기 위해 5분
 # 오프셋을 채택했다(REQ-BK-010).
 #
-# systemd **USER** scope 유닛이다 — aaa-backup-mysql.timer와 동일 원칙
-# (root 전용 지시자 미사용, sudo 불요, 별도 유닛).
+# systemd **system(root)** scope 유닛이다 — aaa-backup-mysql.timer와 동일하게
+# root-scope로 전환했다(2026-09-03).
 #
 # OnCalendar=*-*-* *:05:00은 호스트 로컬 타임존 매시 5분에 발화한다. KST
 # 매시 5분 발화를 의도하므로 NAS 호스트 타임존이 KST여야 한다 — 설치 전
 # `timedatectl`로 `Time zone: Asia/Seoul` 확인 필수(aaa-backup-mysql.timer와
 # 동일 주의).
 #
-# 설치 (NAS, 배포 계정 — sudo 불요):
-#   mkdir -p ~/.config/systemd/user
-#   cp scripts/aaa-backup-binlog.timer scripts/aaa-backup-binlog.service \
-#      ~/.config/systemd/user/
-#   systemctl --user daemon-reload
-#   systemctl --user enable --now aaa-backup-binlog.timer
+# 설치 (NAS, root):
+#   sudo mkdir -p /etc/systemd/system
+#   sudo cp scripts/aaa-backup-binlog.timer scripts/aaa-backup-binlog.service \
+#      /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now aaa-backup-binlog.timer
 #
 # 검증:
 #   timedatectl
-#   systemctl --user is-active aaa-backup-binlog.timer
-#   systemctl --user list-timers aaa-backup-binlog.timer
-#   journalctl --user -u aaa-backup-binlog.service -n 50
+#   systemctl is-active aaa-backup-binlog.timer
+#   systemctl list-timers aaa-backup-binlog.timer
+#   journalctl -u aaa-backup-binlog.service -n 50
 #
 # 전제조건: aaa-backup-mysql.timer와 동일(PREP-2/PREP-3/M5 선행 필요) — 최고(最古)
 # 덤프 기준 프루닝 로직이 최초 풀 덤프 존재를 전제하므로, 풀 덤프 타이머가
