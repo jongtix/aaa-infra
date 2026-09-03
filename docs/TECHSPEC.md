@@ -202,6 +202,10 @@
   - **Virtual Threads MDC**: MDC는 부모→자식 스레드 자동 상속 안 됨. 자식 스레드에서 `TraceIdManager.set()` 별도 호출 필요
   - **로그 파일 롤링**: 최대 1GB / 보존 30일 / 총 용량 cap 50GB / gzip 압축
   - 상세: [ADR-011](ADR/ADR-011-structured-logging-strategy.md)
+- **OS 레벨 로그 보존(MySQL/Redis 및 non-Java 서비스)**: `aaa-log-cleanup.timer`(systemd system(root) scope, 매주 일요일 06:30 KST)가 `${AAA_HDD_BASE}/logs/{mysql,redis}` 2개 호스트 마운트 디렉토리에 대해 mtime 기준 30일 초과 파일을 삭제한다
+  - 위 ADR-011의 로그 로테이션 목표(최대 1GB/보존 30일/총 cap 50GB)는 `aaa-collector`/`aaa-notifier`의 logback `rollingpolicy`(애플리케이션 레벨 자체 회전)에 적용되며, MySQL/Redis는 자체 회전 메커니즘이 없어 이 OS 레벨 mtime 백스톱으로 별도 방어한다
+  - `aaa-analyzer`는 별도 Python 네이티브 메커니즘(`RotatingFileHandler`/`TimedRotatingFileHandler`)으로 다루며 이 OS 레벨 정리 대상이 아니다
+  - 상세: `SPEC-INFRA-LOG-CLEANUP-001`, `scripts/aaa-log-cleanup.sh`/`.service`/`.timer`
 - **패키지 구조**: Java 서비스는 Package by Feature 구조 채택
   - 도메인 피처 패키지는 해당 도메인의 모든 레이어(controller, service, repository, dto 등)를 포함한다
   - `common` 하위는 목적 단위로 분리 (`logging`, `exception`, `config` 등)

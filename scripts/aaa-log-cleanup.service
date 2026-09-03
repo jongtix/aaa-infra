@@ -1,0 +1,44 @@
+# =============================================================================
+# aaa-log-cleanup.service — MySQL/Redis 로그 보존 정리 (SPEC-INFRA-LOG-CLEANUP-001)
+# =============================================================================
+# aaa-log-cleanup.sh를 실행해 ${AAA_HDD_BASE}/logs/{mysql,redis} 2개 디렉토리의
+# mtime 30일 초과 파일을 삭제한다(REQ-LC-001~006). 컨테이너 내부가 아닌 호스트
+# 파일시스템 경로만 조작하므로 docker 기동을 기다릴 필요가 없다(REQ-LC-009) —
+# aaa-reset-acl.service와 동일한 After= 체인(local-fs.target storage_serv.service
+# filemgr_serv.service)만 사용하며 docker_serv.service/docker.socket/
+# docker.service는 포함하지 않는다.
+#
+# systemd **system(root)** scope 유닛이다 — user-scope 유닛은 재부팅 후 자동
+# 기동 실패 + 정지 후에도 파일 잔존이라는 신뢰성 문제가 실측 확인되어
+# 폐기된 패턴이며, 이 시점 이후 신설되는 모든 aaa NAS systemd 유닛은
+# root-scope만 허용한다(REQ-WD-006, 배경은 spec.md §1.2 참조).
+#
+# AAA_HDD_BASE는 aaa-backup-mysql.service와 동일하게 EnvironmentFile로 루트
+# .env에서 읽는다(하드코딩하지 않음 — 실제 마운트 경로는 배포 환경에 따라
+# 달라질 수 있다).
+#
+# 설치 (NAS, root):
+#   sudo mkdir -p /etc/systemd/system
+#   sudo cp scripts/aaa-log-cleanup.service scripts/aaa-log-cleanup.timer \
+#      /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now aaa-log-cleanup.timer
+#
+# 검증:
+#   systemctl status aaa-log-cleanup.service
+#   journalctl -u aaa-log-cleanup.service -n 50
+# =============================================================================
+[Unit]
+Description=AAA MySQL/Redis Log Retention Cleanup (SPEC-INFRA-LOG-CLEANUP-001)
+After=local-fs.target storage_serv.service filemgr_serv.service
+
+[Service]
+Type=oneshot
+# 실제 배포 경로로 수정할 것 (예: /volume1/SSD_1/Development/aaa/aaa-infra)
+WorkingDirectory=/volume1/SSD_1/Development/aaa/aaa-infra
+EnvironmentFile=/volume1/SSD_1/Development/aaa/aaa-infra/.env
+ExecStart=/bin/bash /volume1/SSD_1/Development/aaa/aaa-infra/scripts/aaa-log-cleanup.sh
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
