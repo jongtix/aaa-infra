@@ -1,0 +1,42 @@
+# =============================================================================
+# aaa-log-cleanup.timer — MySQL/Redis 로그 보존 정리 스케줄러
+# (SPEC-INFRA-LOG-CLEANUP-001)
+# =============================================================================
+# 매주 일요일 06:30 KST에 aaa-log-cleanup.service를 발화한다(REQ-LC-007).
+# 기존 3개 백업 타이머와의 충돌 회피 근거(plan.md §F M2 확정값):
+#   - 일간 풀 백업(aaa-backup-mysql.timer)  05:00:00 — 90분 간격, 겹치지 않음
+#   - binlog 회전(aaa-backup-binlog.timer)  매시 *:05:00 — 시(hour)는 겹칠 수
+#     있으나 분(minute)이 다름(:30 vs :05)으로 충돌 없음
+#   - 복원 드릴(aaa-backup-restore-drill.timer) 매월 1일 05:30:00 — 요일 무관,
+#     시각 자체가 다름(06:30 vs 05:30)
+#
+# systemd **system(root)** scope 유닛이다 — user-scope 유닛은 신뢰성 문제로
+# 폐기된 패턴이며, 신설 유닛은 root-scope만 허용한다(REQ-WD-006, 배경은
+# spec.md §1.2 참조).
+#
+# OnCalendar는 systemd가 실행되는 **호스트 로컬 타임존**으로 해석된다.
+# 06:30이 실제 06:30 KST로 발화하려면 NAS 호스트 타임존이 KST여야 한다 —
+# SPEC-INFRA-DB-BACKUP-001 V-6에서 이미 KST로 확인되었다(재확인만 필요).
+#
+# 설치 (NAS, root):
+#   sudo mkdir -p /etc/systemd/system
+#   sudo cp scripts/aaa-log-cleanup.timer scripts/aaa-log-cleanup.service \
+#      /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now aaa-log-cleanup.timer
+#
+# 검증:
+#   timedatectl                                    # Time zone: Asia/Seoul 확인
+#   systemctl is-active aaa-log-cleanup.timer
+#   systemctl list-timers aaa-log-cleanup.timer
+#   journalctl -u aaa-log-cleanup.service -n 50
+# =============================================================================
+[Unit]
+Description=AAA MySQL/Redis Log Retention Cleanup Timer (SPEC-INFRA-LOG-CLEANUP-001)
+
+[Timer]
+OnCalendar=Sun *-*-* 06:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
