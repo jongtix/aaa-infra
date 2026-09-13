@@ -1,0 +1,86 @@
+# =============================================================================
+# vmalert 룰 유닛테스트 — analyzer 추론 데드맨 스위치 (라우팅 비활성)
+# SPEC-ANALYZER-INFER-001 REQ-AIF-142 (M9)
+# =============================================================================
+# 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
+# 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.147.0 \
+#     unittest --files=/rules/rules_test_analyzer_inference.yaml
+# rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
+#
+# [별도 파일로 분리하는 이유] rules_test_analyzer.yaml(GATE-001/STALENESS-001)과는
+# 다른 SPEC(INFER-001) 소관이며, 라우팅-비활성이라는 이 그룹만의 상태(§B)를
+# 별도로 문서화하기 위해 전용 파일로 둔다 — check-alert-coverage.sh는
+# rules_test_*.yaml glob으로 파일명 무관하게 수집하므로 네이밍 제약은 없다.
+#
+# [absent_over_time 35m — "느린 계열" 분리 불필요] analyzer_slow.yaml(8d)/
+# analyzer_model_staleness의 25h 관례와 달리, 35m 윈도우는 30s 그리드에서도
+# 70스텝(35m/30s)에 불과해 저렴하다 — 8d(192h)·25h급 느린 계열 분리 기준에
+# 해당하지 않는다.
+#
+# [현재 메트릭 부재가 정상] aaa_analyzer_inference_cycle_duration_seconds는
+# __main__.py↔StreamConsumer 파이프라인 배선(이 SPEC 범위 밖 후속 SPEC)이
+# 완료되기 전까지 어떤 실행 경로에서도 발행되지 않는다 — TI-AIF-DEADMAN-002가
+# 검증하는 "메트릭 완전 부재 → 발화" 케이스가 지금 프로덕션의 실제 상태다.
+# 라우팅 비활성(alertmanager.yml null 리시버)이 이 상시 발화를 안전하게 흡수한다.
+# =============================================================================
+
+rule_files:
+  - rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # ===========================================================================
+  # 룰: analyzer-inference-deadman — AnalyzerInferenceDeadman
+  # ===========================================================================
+
+  # TI-AIF-DEADMAN-001. [무발화] 사이클 소요시간이 35분 창 내(t=10m)에서 관측됨 → 미발화(정상 실행 중 시뮬레이션).
+  #   30s 그리드에서 70스텝(35m) 커버 — `+0x` 뒤 반복수는 eval_time(2100s=35m)을
+  #   충분히 넘는 여유(80스텝=2400s)로 설정.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_inference_cycle_duration_seconds_count{market="domestic"}'
+        values: '0+0x20 1+0x60'
+    alert_rule_test:
+      - eval_time: 2100s
+        groupname: analyzer-inference-deadman
+        alertname: AnalyzerInferenceDeadman
+        exp_alerts: []
+
+  # TI-AIF-DEADMAN-002. [발화, 부재 — 배선 전 프로덕션 실제 상태] 메트릭 자체가
+  #   전혀 존재하지 않음(__main__.py↔StreamConsumer 파이프라인 미배선) → absent_over_time 발화.
+  - interval: 30s
+    input_series: []
+    alert_rule_test:
+      - eval_time: 2100s
+        groupname: analyzer-inference-deadman
+        alertname: AnalyzerInferenceDeadman
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+            exp_annotations:
+              summary: "analyzer 추론 사이클 데드맨 — 35분간 실행 신호 없음"
+              description: "추론 사이클 소요시간 계측(aaa_analyzer_inference_cycle_duration_seconds)이 35분(N=30분 + 여유 5분, REQ-AIF-142) 동안 한 번도 기록되지 않음 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] __main__.py 파이프라인 배선 완료 전까지는 이 메트릭 자체가 항상 부재해 상시 발화하며, alertmanager.yml에서 null 리시버로 매칭돼 실제 텔레그램 발송은 억제된다."
+              action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인. 활성화 여부는 TODO.md의 AnalyzerInferenceDeadman 항목 참조."
+
+  # TI-AIF-DEADMAN-003. [발화, 완전 두절] t=0 이후 스크레이프 완전 중단(단일 샘플만
+  #   존재, 이후 35m+ 무샘플) → 무음실패 발화(정상 STALENESS-001 관례 계승).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_analyzer_inference_cycle_duration_seconds_count{market="overseas"}'
+        values: '0'
+    alert_rule_test:
+      - eval_time: 2100s
+        groupname: analyzer-inference-deadman
+        alertname: AnalyzerInferenceDeadman
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: analyzer
+              tier: TICKET
+            exp_annotations:
+              summary: "analyzer 추론 사이클 데드맨 — 35분간 실행 신호 없음"
+              description: "추론 사이클 소요시간 계측(aaa_analyzer_inference_cycle_duration_seconds)이 35분(N=30분 + 여유 5분, REQ-AIF-142) 동안 한 번도 기록되지 않음 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] __main__.py 파이프라인 배선 완료 전까지는 이 메트릭 자체가 항상 부재해 상시 발화하며, alertmanager.yml에서 null 리시버로 매칭돼 실제 텔레그램 발송은 억제된다."
+              action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인. 활성화 여부는 TODO.md의 AnalyzerInferenceDeadman 항목 참조."
