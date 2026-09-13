@@ -196,8 +196,12 @@ services:
     networks:
       - aaa-network
     # HEALTHCHECK는 이미지에 내장(Dockerfile, urllib 기반 /health 프로브) — 재정의 불필요
+    # SPEC-ANALYZER-INFER-001 REQ-AIF-140(M9): Redis Streams 컨슈머(stream:daily:complete
+    # 구독, REQ-AIF-020)가 상주 부모 기동 직후부터 필요 — mysql과 동일하게 healthy 게이트.
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     read_only: true
     tmpfs:
