@@ -1208,7 +1208,7 @@ PRD 6.2절에 정의된 A/B/C/F 등급을 자동 분류하는 기준.
 
 **체제 억제 연동**: 체제 감지(6.4절) 발동 시 밴드의 `signal_class`를 전 구간 HOLD로 강제하고 `regime_suppressed=true`로 저장한다 — notifier가 체제 상태를 별도로 알 필요 없이 밴드만으로 일관 동작. 원 score 기준 밴드는 저장하지 않는다(원 score는 `trading_signals`에 보존되므로 사후 재현 가능).
 
-**비용**: 시장당 A·B등급 ~60종목 × 그리드 ~120 × horizon 2 ≈ 1.4만 행 predict — 트리 부스팅 배치 추론으로 N100에서 초 단위 예상. 메모리 영향은 500MB 예산 내 실측(ANALYZER-INFER-001).
+**비용**: 시장당 A·B등급 ~60종목 × 그리드 ~120 × horizon 2 ≈ 1.4만 행 predict — 트리 부스팅 배치 추론으로 N100에서 초 단위 예상. 메모리 영향은 **400MB 컨테이너 limit 내 실측 확정**(ANALYZER-INFER-001 M8, 2026-09-13 — NAS 프로덕션 `aaa-analyzer` 컨테이너에서 실제 활성 챔피언 모델로 `ru_maxrss` 측정, 아래 표 참조).
 
 ---
 
@@ -1612,7 +1612,7 @@ Repository Secrets:
 | 서비스 | `-Xms` | `-Xmx` | `MaxMetaspaceSize` | `MaxDirectMemorySize` | 컨테이너 limit | 비고 |
 |--------|--------|--------|--------------------|-----------------------|----------------|------|
 | aaa-collector | 128m | 512m | 192m | 64m | 1G | WebSocket 5세션 + REST 배치 + 백필, 힙 압력 중~높. RAM 32GB 업그레이드(#119, 2026-07-25)로 30일 실측 JVM 총사용 피크(~560MiB) + 성장 마진 반영해 상향 |
-| aaa-analyzer | - | - | - | - | 500MB | Python 프로세스, JVM 없음. ML 모델 8개 상시 적재. **⚠️ Phase 2 착수 전 실측 필요**: LightGBM/XGBoost 모델 로드 + 추론 시 peak RSS 미검증. tracemalloc/memory_profiler로 측정 후 재검토 |
+| aaa-analyzer | - | - | - | - | **400MB**(ANALYZER-INFER-001 M8, 2026-09-13 확정 — 종전 500MB 표기는 아래 실측 확정값 미반영 잔재였다. 실제 `docker-compose.yml` 배포 limit(400MB)이 맞다) | Python 프로세스, JVM 없음. 시장별 완결형 자식 프로세스가 그 시장의 활성 horizon 모델만 적재(도메스틱: D60만 활성=4개, 해외: D20+D60 활성=8개 — "모델 8개 상시 적재"는 해외 worst case를 가리킨다). **peak RSS 실측 확정**: NAS 프로덕션 컨테이너에서 `python3 -m analyzer.inference` 자식과 동일한 임포트 그래프(pandas/numpy/sqlalchemy/redis + `analyzer.inference` 모듈 트리 + lightgbm/xgboost)로 실제 활성 챔피언 모델(trained_date 2026-09-05)을 로드해 `resource.getrusage().ru_maxrss` 측정(`tracemalloc`은 이 대상에 무효 — booster 실체가 C++ 힙에 있어 Python 할당자 추적기가 보지 못함, ~40배 과소보고를 실측 확인) — domestic(D60, 모델 4개) **259.39MiB**, overseas(D20+D60, 모델 8개, worst case) **272.52MiB**. 400MB limit 대비 약 32% 마진 |
 | aaa-notifier | 64m | 192m | 128m | 64m | 400MB[^notifier-limit] | 틱 구독 + 6단계 필터, 재처리 급증 대비 |
 | aaa-trader | 64m | 128m | 128m | 32m | 450MB | I/O 위주 극저부하, 동시 주문 사실상 1건 |
 
