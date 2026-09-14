@@ -164,6 +164,14 @@ services:
     env_file:
       - ${AAA_SSD_BASE}/secrets/.env.common
       - ${AAA_SSD_BASE}/secrets/.env.analyzer
+    # SPEC-ANALYZER-PIPELINE-001 REQ-APL-130: 크로스-프로세스 Prometheus
+    # multiprocess 모드 — 상주 부모와 자식 추론 프로세스가 같은 디렉토리를
+    # 공유해야 MultiProcessCollector가 합산할 수 있다(app.py는 부모 측
+    # 소비 지점). 값 자체는 기존 tmpfs `/tmp` 마운트(아래) 하위 경로라
+    # 컨테이너 재시작마다 초기화된다 — 이전 실행의 잔존 pid 파일이 누적·
+    # 오염되는 것을 방지한다(design.md §2.4). 신규 볼륨을 추가하지 않는다.
+    environment:
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
     expose:
       - "8000"
     volumes:
