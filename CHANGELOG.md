@@ -6,6 +6,14 @@
 
 ### Added
 
+- aaa-analyzer 추론 서버 인프라 배선 (SPEC-ANALYZER-INFER-001 M9, REQ-AIF-140/141/142)
+  - `docker-compose.yml` — `analyzer` 서비스에 `depends_on.redis: condition: service_healthy` 추가(기존 `mysql` 단독 의존에 추가, collector 서비스와 동일 패턴)
+  - Redis ACL 실측(NAS 프로덕션, `appuser` 계정) — `+@all -@dangerous`로 스트림 명령 5종(XADD/XGROUP CREATE/XREADGROUP/XACK/XAUTOCLAIM) 전부 라이브 성공 확인, 신규 계정 발급 불요(기존 `appuser` 재사용 확정)
+  - vmalert 신규 그룹 `analyzer-inference-deadman`(알림 `AnalyzerInferenceDeadman`) — `absent_over_time(aaa_analyzer_inference_cycle_duration_seconds_count[35m])`, N=30분(REQ-AIF-142, M7 domestic 실측 745.88초 대비 2.4배 마진) + 전용 unittest 샤드 `rules_test_analyzer_inference.yaml` 신설
+  - `alertmanager.yml` — `AnalyzerInferenceDeadman`을 tier 라우팅보다 먼저 가로채 no-op 리시버(`analyzer-inference-deadman-mute`)로 보내는 route 최상단 추가. **라우팅은 의도적으로 비활성화**: aaa-analyzer 측 `__main__.py` 파이프라인 배선이 이 SPEC 범위 밖(후속 미작성 SPEC 소관)으로 남아 `aaa_analyzer_inference_*` 메트릭이 어떤 실행 경로에서도 아직 발행되지 않으므로, 활성 라우팅 배포 시 메트릭 부재로 상시 발화(거짓 양성)한다. 룰·유닛테스트만 선반영하고 활성화 절차는 `aaa/TODO.md`의 "AnalyzerInferenceDeadman" 항목에 기록(후속 파이프라인 배선 SPEC 완료 후 null 라우팅 제거)
+  - PRD confidence 표기 정정("0.0~1.0" → DDL 확정값 "0.500~1.000") + TECHSPEC "500MB 예산" 문구를 실측(NAS 프로덕션 peak RSS: domestic 259.39MiB / overseas 272.52MiB, `ru_maxrss` 기준)에 근거해 400MB 확정으로 정정
+  - TECHSPEC §6.1(등급 경계) 개정 — INFER-001 M4 실데이터 역산 결과 반영(수치는 코드 산출물에만 존재, 문서에 하드코딩하지 않음), §6.6(가격 밴드 스윕) 개정 — 해외 그리드 범위(±15%→±21.5%)·병합 임계(1% 확정)·가상 일봉 규칙(동결 유지) 실측 결과 반영, PRD §3 등급 확정 지연 목표 `[TBD]분` → 20분 확정(M7 실측 근거)
+  - **알려진 갭**: `aaa_analyzer_inference_*` 메트릭명이 aaa-analyzer M8에서 확정된 실제 값과 일치하는지 이 M9 작업에서는 aaa-analyzer 소스 범위 밖이라 재대조하지 못함 — 후속 파이프라인 배선 SPEC이 룰 활성화 전 재확인 필요
 - MySQL/Redis 로그 보존 정리 타이머 신설 (SPEC-INFRA-LOG-CLEANUP-001, REQ-LC-*)
   - `scripts/aaa-log-cleanup.sh` — `${AAA_HDD_BASE}/logs/{mysql,redis}` 2개 디렉토리에 대해 mtime 기준 30일(`RETENTION_DAYS`) 초과 파일을 삭제. `aaa-analyzer`/`aaa-collector`/`aaa-notifier`는 이미 활성 확인된 자체 회전(Python 네이티브 / logback rollingpolicy)이 있어 대상에서 제외 (REQ-LC-001~006)
   - `scripts/aaa-log-cleanup.timer`/`.service` — systemd system(root) scope, 매주 일요일 06:30 KST 발화, `aaa-reset-acl.service`와 동일한 `After=local-fs.target storage_serv.service filemgr_serv.service` 체인 사용, 기존 백업 타이머 3종과 OnCalendar 충돌 없음 (REQ-LC-007~009)
