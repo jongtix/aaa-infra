@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- cve-scan.yml의 scan-self-built job이 --ignore-unfixed 적용 + 레포별 .trivyignore 승인·미만료 예외 제외 후 CRITICAL/HIGH 집계 — push-time 블로킹 게이트와 판정 기준 정합(SPEC-INFRA-CVE-SCAN-004 M2), post-exclusion count>0 시 '다음 릴리스 빌드가 이 게이트에 막힙니다' 문구 추가
+
 ### Added
 
 - aaa-analyzer 추론 서버 인프라 배선 (SPEC-ANALYZER-INFER-001 M9, REQ-AIF-140/141/142)
