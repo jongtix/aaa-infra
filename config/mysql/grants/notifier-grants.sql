@@ -1,0 +1,41 @@
+-- =============================================================================
+-- notifier INSERT GRANT — SPEC-NOTIFIER-SCHEMA-001
+-- =============================================================================
+-- notifier 런타임 서비스 계정에 신규 이벤트 소싱 테이블 1개의 INSERT 권한만 부여한다.
+-- SELECT ON aaa.*는 계정 생성 시점(config/mysql/initdb.d/04-init-notifier.sh 또는
+-- 라이브 NAS의 root 수동 SQL)에 이미 부여되므로 이 파일에서 재부여하지 않는다.
+-- UPDATE/DELETE/DDL은 절대 부여하지 않는다(INSERT-ONLY를 DB 권한 수준으로 강제,
+-- REQ-NOTIFIER-SCHEMA-023 — 갱신형 send_status 컬럼을 두지 않는 이벤트 소싱 설계와 정합).
+--
+--   notification_log   이벤트 소싱 — notifier가 텔레그램 발송 사건을 INSERT
+--
+-- [WHY 별도 파일] initdb.d(04-init-notifier.sh)는 MySQL 최초 init 시점,
+--   즉 Flyway가 스키마를 만들기 전에 실행된다. MySQL 8.4는 존재하지 않는
+--   테이블에 대한 테이블 단위 GRANT를 거부하므로(ERROR 1146), notification_log에
+--   대한 INSERT grant는 V49 마이그레이션 배포 완료 이후 이 스크립트로 별도 적용한다.
+--
+-- [WHEN] V49__notifier_create_notification_log.sql이 collector 기동을 통해
+--        배포 완료된 것을 flyway_schema_history로 확인한 **이후에만** 실행한다.
+--        순서 위반 시 ERROR 1146 (42S02)로 즉시 실패한다(REQ-NOTIFIER-SCHEMA-022).
+--
+-- [CREDENTIAL CONVENTION] SPEC-INFRA-DB-BACKUP-001 M8부터 프로젝트는 두 가지 관례를
+--   병행한다: (1) 자동화/스크립트 경로(CI 워크플로, ops 스크립트)는
+--   `--defaults-extra-file`(600 권한 cnf 파일, 필요 시 컨테이너 ro 마운트)을 사용한다.
+--   (2) 아래처럼 사람이 직접 실행하는 수동 root 1회성 작업은 기존 `docker exec` 내부
+--   `MYSQL_PWD` 관례를 그대로 유지한다 — 이런 드물게 실행되는 수동 작업을 위해 신규
+--   root급 자격증명 파일을 만드는 것은 유출 표면만 늘리기 때문이다.
+--
+-- [APPLY] MySQL 호스트(NAS)에서 — DB명은 aaa 고정(MYSQL_DATABASE=aaa).
+--   -p"$VAR" 형식은 금지(docker top/ps aux에 패스워드 노출) — MYSQL_PWD 환경변수로
+--   컨테이너 내부에서 해석되도록 한다:
+--   docker exec -i aaa-mysql bash -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot aaa' \
+--     < config/mysql/grants/notifier-grants.sql
+--
+-- [VERIFY] SHOW GRANTS FOR 'notifier'@'%';
+--   → SELECT ON aaa.*, INSERT ON aaa.notification_log
+--     정확히 2개 권한 행만 존재해야 한다(그 외 UPDATE/DELETE/DDL 0건).
+-- [REVERT] REVOKE INSERT ON aaa.notification_log FROM 'notifier'@'%';
+-- =============================================================================
+
+GRANT INSERT ON aaa.notification_log TO 'notifier'@'%';
+FLUSH PRIVILEGES;
