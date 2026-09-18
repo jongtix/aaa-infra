@@ -645,7 +645,8 @@ DDL 전문(컬럼 타입, 제약조건 등)은 Flyway 마이그레이션 SQL이 
 
 **스키마 상세 수준**:
 - Phase 1 대상 테이블: 설계 의도, 주요 컬럼, 인덱스 전략을 기술. DDL 전문은 Flyway 마이그레이션(V1~)이 단일 소스
-- Phase 2~4 대상 테이블(`trading_signals`, `signal_price_bands`, `notification_log`, `order_log`): 테이블명 + 주요 컬럼 윤곽만 정의. `trading_signals` 윤곽은 6.2절(추론 결과), `signal_price_bands` 윤곽은 6.6절 참조
+- Phase 2~4 대상 테이블 중 `order_log`: 테이블명 + 주요 컬럼 윤곽만 정의(trader Phase 4 시점 상세화 예정)
+- `trading_signals`/`signal_price_bands`/`notification_log`는 DDL 상세를 별도 출처에서 정의: `trading_signals` 윤곽은 6.2절(추론 결과), `signal_price_bands` 윤곽은 6.6절, `notification_log` DDL 상세는 [SPEC-NOTIFIER-SCHEMA-001](../../.moai/specs/SPEC-NOTIFIER-SCHEMA-001/spec.md) 및 Flyway `V49__notifier_create_notification_log.sql` 참조
 
 ### 4.1 Phase 1 — Priority 1 테이블
 
