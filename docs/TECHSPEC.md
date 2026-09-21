@@ -867,14 +867,16 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 
 | Stream 이름 | 발행자 | 구독자 | 메시지 내용 |
 |------------|--------|--------|------------|
-| `stream:tick:domestic` | collector | notifier (타이밍 평가) | 국내 실시간 체결/호가 틱 (`symbol` 필드 포함) |
-| `stream:tick:overseas` | collector | notifier (타이밍 평가) | 해외 실시간 체결/호가 틱 (`symbol` 필드 포함) |
+| `stream:tick:domestic` | collector | notifier (타이밍 평가) | 국내 실시간 체결/호가 틱 (엔트리 4필드 `symbol`·`trId`·`data`·`trace_id` — 아래 틱 엔트리 계약 참조) |
+| `stream:tick:overseas` | collector | notifier (타이밍 평가) | 해외 실시간 체결/호가 틱 (엔트리 4필드 `symbol`·`trId`·`data`·`trace_id` — 아래 틱 엔트리 계약 참조) |
 | `stream:daily:complete` | collector | analyzer | 일봉 수집 완료 이벤트 (`market`: `domestic`/`overseas`, 완전성 메타 `attempted`/`succeeded`/`skipped` 종목 수 — SPEC-COLLECTOR-BATCH-001 REQ-BATCH-042) |
 | `stream:signal:domestic` | analyzer | notifier | 국내 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, `score`, confidence 필드 포함 — analyzer 설계 [G-1] 2026-07-03, `score` 추가 2026-07-05 [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)) |
 | `stream:signal:overseas` | analyzer | notifier | 해외 매매 신호 (`symbol`, `horizon`, `trade_date`, `trace_id`, 등급, `score`, confidence 필드 포함 — analyzer 설계 [G-1] 2026-07-03, `score` 추가 2026-07-05 [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)) |
 | `stream:alert` | notifier | trader (Phase 4) | 발송 완료 알림 이벤트 (`tier` 필드 포함) |
 
 **`stream:signal:*` 메시지 필드 (analyzer 설계 2026-07-03 확정, 2026-07-05 `score` 추가)**: 종목당 시간대(단기 D20/중기 D60, 6.1절) 신호가 각각 발행되므로 `horizon`(`D20`|`D60`)으로 구분한다. `trade_date`는 신호의 기준 일봉 날짜(조인 키), `trace_id`는 `stream:daily:complete` 수신부터 신호 발행까지 관통하는 추적 ID다. `score`는 앙상블 기대수익률(소수 표기, 예: `0.043` = +4.3%)이며 등급은 score에 6.1절 경계를 적용한 파생값이다([ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)) — notifier는 알림 본문에 등급과 함께 score(y%)·confidence를 표기한다(8.5절). notifier의 horizon별 필터 처리 방침은 horizon 완전 독립으로 확정(notifier 설계 [D-7], 2026-07-05 — 8.1절 필터 키 참조).
+
+**`stream:tick:*` 엔트리 계약 (실물 대조 확정 — [SPEC-NOTIFIER-CONSUMER-001](../../.moai/specs/SPEC-NOTIFIER-CONSUMER-001/spec.md) §2.4·§4.1)**: `KisTickPublisher.publish()`는 엔트리에 정확히 4개 필드만 넣으며 값은 전부 문자열이다 — `symbol`(구독 tr_key), `trId`(KIS 실시간 트랜잭션 ID), `data`(`^` 구분 원시 페이로드), `trace_id`(collector 발급 추적 ID). KIS Type A 프레임의 배치 건수(`count`)는 엔트리에 실리지 않으므로 소비자는 배치 건수를 엔트리 필드에서 읽을 수 없고, `data` 자체가 동일 구조 레코드 N건이 연속 배치된 형태일 수 있다. 1건당 필드 수는 `trId`별로 다르다 — `H0STCNT0`(국내 체결) 46, `H0STASP0`(국내 호가) 62, `HDFSCNT0`(해외 체결) 26, `HDFSASP0`(해외 호가) 71 (`api-specs/kis/ws-01`~`ws-04`, 2026-06-23/24 실측). 해외 레코드의 정규 종목 심볼은 `[1]` `SYMB`(`AAPL`)를 그대로 쓴다 — `symbol` 필드의 tr_key(`DNASAAPL`)를 문자열 절단하는 휴리스틱을 쓰지 않는다. 해외 체결 `[2]` `ZDIV`는 가격 필드의 소수점 **자리수** 메타데이터이며 배율 지수가 아니다 — `LAST`는 이미 `ZDIV` 자리수로 소수점이 찍힌 상태로 도착하므로(`ws-03` 실측 `ZDIV=4`, `LAST=298.4700`) `10^±ZDIV` 연산은 이중 스케일링이 된다.
 
 **Consumer Group 전략**:
 - 각 서비스는 Consumer Group으로 구독 (ACK 기반 메시지 처리 보장)
@@ -896,9 +898,9 @@ ETF 전용 메타데이터. 중복 ETF 대표 선정에 필요한 그룹화 키 
 | `stream:alert` | 500 | `~` (approximate) | 단일 스트림, `tier` 필드로 구분 |
 | `stream:dlq:{stream명}` | 500 | 정확 | 수동 확인 전 보존 필수 |
 
-- Phase 1~2 Consumer 부재 참고: `stream:tick:*`의 Consumer(notifier)는 Phase 3에서 구현. Phase 1~2 동안 Consumer Group 없이 발행만 수행하며, MAXLEN으로 메모리 상한을 제어한다. Phase 1 목적은 WebSocket → Redis Streams 경로 검증이며, 5,000건(약 100초치 버퍼)으로 충분하다.
-- Pending 메시지 재처리: `XAUTOCLAIM`으로 30초 이상 ACK 없는 메시지를 자신에게 재할당. 서비스 시작 시 `XPENDING` 확인 → 미처리 메시지 우선 처리 후 신규 메시지(`>`) 전환
-- Dead-letter 처리: 재처리 3회 초과 시 별도 `stream:dlq:{stream명}`으로 이동 후 시스템 채널 알림
+- Phase 1~2 Consumer 부재 참고: `stream:tick:*`의 Consumer(notifier)는 Phase 3에서 구현한다 — 소비 계층(Consumer Group·ACK·재소유·DLQ·페이로드 파싱)은 [SPEC-NOTIFIER-CONSUMER-001](../../.moai/specs/SPEC-NOTIFIER-CONSUMER-001/spec.md) 소관이고, 소비한 틱으로 타이밍을 판정하는 필터 로직은 후속 NOTIFIER-FILTER-001 소관이다. Phase 1~2 동안 Consumer Group 없이 발행만 수행하며, MAXLEN으로 메모리 상한을 제어한다. Phase 1 목적은 WebSocket → Redis Streams 경로 검증이며, 5,000건(약 100초치 버퍼)으로 충분하다.
+- Pending 메시지 재처리: 30초 이상 ACK 없는 메시지를 자신에게 재할당한다. 서비스 시작 시 1회가 아니라 **소비 라운드마다** `XPENDING` 판독 → 재소유 → 신규 메시지(`>`) 읽기 순으로 수행한다 — `XPENDING`을 먼저 읽는 이유는 재소유 명령 자체가 재전달 횟수를 1 증가시켜, 이후에 읽으면 DLQ 임계 판정이 한 칸씩 밀리기 때문이다. 재소유 명령은 클라이언트가 노출하는 것을 쓴다: analyzer는 `XAUTOCLAIM`(`orchestration/consumer.py`), notifier는 Spring Data Redis 3.5 `StreamOperations`가 `XAUTOCLAIM`을 노출하지 않아 `XPENDING`으로 얻은 ID로 명시 ID `XCLAIM`을 건다(의미론적 동등 — `StreamConsumerWorker`)
+- Dead-letter 처리: 재처리 3회 초과 시 별도 `stream:dlq:{stream명}`으로 이동한다. **이관 시 알림 채널로 직접 발송하지 않는다** — 이관 사실은 `trace_id`를 포함한 구조화 WARN 로그로만 남기고, 사람에게 도달하는 경로는 메트릭 노출 + vmalert 룰로 일원화한다(시스템 알림 vmalert/CD 일원화 방침과 정합). notifier 쪽 메트릭·vmalert 룰은 후속 NOTIFIER-OBSV-001 소관으로 아직 미구축이다(2026-09-21 기준 `config/vmalert/rules.yml`에 DLQ 룰 없음)
 
 **중복 방지 전략**:
 - MySQL 저장 시 Unique Key (종목코드 + 타임스탬프)로 중복 INSERT 방지 (`INSERT IGNORE` 또는 `ON DUPLICATE KEY`)
