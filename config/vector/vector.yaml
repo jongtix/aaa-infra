@@ -27,6 +27,25 @@ sources:
     # inode 기반 회전 추적: RotatingFileHandler의 rename/recreate(새 inode 활성 파일 재생성) 후 새 파일을 이어서 tail.
     # 체크포인트는 data_dir에 자동 기록 → 재시작 시 마지막 위치 복원(REQ-LOGS-015).
     read_from: beginning
+  infra_journal:
+    type: journald
+    # 현재 부팅분만 수집(재시작 간 중복 재적재 방지, REQ-012).
+    current_boot_only: true
+    # 의도적 6/7 비대칭(REQ-006): docker-compose.yml의 journald 드라이버 전환 대상(7개
+    # 서비스)에서 aaa-vector 자신은 제외한다. vector가 자기 로그를 journald에서 다시
+    # 읽으면 자기 참조 자기증폭 루프(vector 로그 → journald → vector 재수집 → 로그 증가
+    # → journald → ...)가 발생하므로, vector의 내부 로그는 별도의 internal_logs 소스
+    # (vector_internal, 아래)로만 수집한다.
+    include_matches:
+      CONTAINER_NAME:
+        - aaa-victoriametrics
+        - aaa-vmalert
+        - aaa-alertmanager
+        - aaa-victorialogs
+        - aaa-node-exporter
+        - aaa-cadvisor
+  vector_internal:
+    type: internal_logs
 
 transforms:
   parse_ecs:
@@ -49,6 +68,36 @@ transforms:
       ."@timestamp" = del(.ts)
       ."log.level"  = del(.level)
       ."service.name" = "aaa-analyzer"
+  parse_journal:
+    type: remap
+    inputs:
+      - infra_journal
+    # journald 필드 → 공용 victorialogs sink의 ECS 필드로 정규화.
+    # CONTAINER_NAME → service.name, journald 타임스탬프 → @timestamp.
+    # PRIORITY(syslog severity, 0~7 숫자)는 log.level(문자열)로 근사 매핑한다 —
+    # journald severity와 로그 프레임워크의 의미론적 레벨(INFO/WARN/ERROR)은
+    # 1:1 대응이 아니므로 이 매핑은 근사치다(DP-5, 정밀 레벨 파싱은 범위 밖).
+    # message 필드는 원문 그대로 통과시킨다(가공하지 않음).
+    source: |
+      ."service.name" = .CONTAINER_NAME
+      ."@timestamp" = .timestamp
+      priority = to_int(.PRIORITY) ?? 6
+      ."log.level" = if priority <= 3 {
+        "error"
+      } else if priority == 4 {
+        "warn"
+      } else {
+        "info"
+      }
+  parse_internal:
+    type: remap
+    inputs:
+      - vector_internal
+    # vector 자체 내부 로그(internal_logs 소스)는 infra_journal과 별개의 독립
+    # transform으로 유지한다 — 둘 중 하나만 롤백해도 다른 쪽에 영향이 없어야
+    # 하며(REQ-013/DP-4), 하나로 합치면 이 독립성이 깨진다. 절대 병합하지 말 것.
+    source: |
+      ."service.name" = "aaa-vector"
 
 sinks:
   victorialogs:
@@ -56,6 +105,8 @@ sinks:
     inputs:
       - parse_ecs
       - parse_analyzer
+      - parse_journal
+      - parse_internal
     endpoints:
       - http://aaa-victorialogs:9428/insert/elasticsearch/
     api_version: v8
