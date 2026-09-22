@@ -1516,44 +1516,73 @@ groups:
           action: "docker logs aaa-analyzer → 04:00 KST 일일 정체 감지 잡 실행 로그·마운트 오류(models_root 부재/권한 거부) 확인"
 
   # ---------------------------------------------------------------------------
-  # analyzer-inference-deadman — SPEC-ANALYZER-INFER-001 REQ-AIF-142 (M9)
-  # [라우팅 비활성, 2026-09-13 사용자 확정] 이 그룹은 룰 신설만 M9 범위이며, 텔레그램
-  # 발송은 alertmanager.yml에서 null 리시버로 매칭돼 의도적으로 억제된다(§ TODO.md의
-  # "AnalyzerInferenceDeadman" 항목 참조). 이유: aaa_analyzer_inference_* 메트릭
-  # (aaa-analyzer inference/metrics.py — orchestration/metrics.py의 학습 계측과
-  # 별개 모듈, REQ-AIF-142 계약)이 아직 어떤 실행 경로에서도 발행되지 않는다 —
-  # __main__.py↔StreamConsumer 파이프라인 배선은 이 SPEC 범위 밖 후속 SPEC(미작성)
-  # 소관이다. 배선 전 활성 라우팅은 메트릭 부재로 인한 상시 발화(거짓 양성)를
-  # 유발하므로, 룰 자체는 지금 신설하되(§B 요구 — 배선 완료 후 즉시 활성화 가능하도록
-  # 선반영) tier: TICKET(비-PAGE, 어차피 null 라우팅이라 실제로는 무발송)로 표기한다.
-  # 활성화 절차: 파이프라인 배선 SPEC 완료 후 alertmanager.yml의 null 매처를
-  # 제거하고 tier 라우팅(PAGE/TICKET route.routes)으로 전환하는 원-라인 변경.
+  # analyzer-inference-deadman — SPEC-OBSV-ANALYZER-DEADMAN-001 REQ-DMR-006~009 (M3)
+  # [라우팅 비활성, 2026-09-13 사용자 확정 — 여전히 유효] 텔레그램 발송은
+  # alertmanager.yml에서 null 리시버로 매칭돼 의도적으로 억제된 상태다(M6에서만
+  # 활성화 대상, 이 SPEC의 M3/M4 범위 밖 — REQ-DMR-015 시퀀싱 게이트).
   #
-  # [PromQL 설계, REQ-AIF-142 의도의 최선 근사] 원 요구사항은 "stream:daily:complete
-  # 이벤트 수신 후 N분 이내 trading_signals 신규 행 미발생 시 발동"이나, "이벤트
-  # 수신 시각" 자체를 노출하는 메트릭이 없다(REQ-AIF-021 — collector 이벤트에
-  # trace_id/trade_date 없음, analyzer가 자체 산출). 대리 신호로
-  # aaa_analyzer_inference_cycle_duration_seconds(추론 사이클 완료 시 기록되는
-  # Histogram _count)의 absent_over_time을 사용한다 — 사이클이 정상 완료되면
-  # 반드시 관측되는 유일한 3종 메트릭 중 하나(스킵/신호/소요시간)이자, 시장 무관
-  # 전체 소실을 감시하는 데드맨 스위치 취지에 부합한다(watermark-deadman/
-  # expected-run-deadman 그룹과 동일 관례 — absent()로 "감시 자체의 무력화"를 포착).
-  # N=30분(REQ-AIF-142 초기값, M7 domestic 실측 745.88초≈12.4분 대비 2.4배 마진) +
-  # 5분 여유 = 35분(collector-watermark-deadman W1 관례와 동일 buffer 폭).
-  # [알려진 한계] 지금 메트릭 자체가 부재하므로 이 룰은 배선 전까지 상시 참(true) —
-  # 라우팅 비활성이 이 상태를 안전하게 흡수한다. 배선 완료 후 실제 감시가 시작된다.
+  # [2026-09-21/22 재설계 배경] 구 expr
+  # `absent_over_time(aaa_analyzer_inference_cycle_duration_seconds_count[35m])`은
+  # 양방향 구조적 결함을 가진다: analyzer 상주 부모 프로세스의
+  # `_bootstrap_prometheus_multiproc_dir()`(api/main.py)가 매 재기동마다
+  # Prometheus 멀티프로세스 디렉터리(tmpfs)의 잔존 *.db를 전부 삭제하므로,
+  # (a) 재기동 직후~다음 사이클 완료 전까지 거짓 양성 상시 발화, (b) 반대로
+  # 컨슈머가 정체(stall)돼도 카운터 시계열 자체는 "존재하되 증가만 멈춘" 상태라
+  # absent_over_time이 결코 참이 되지 않는 거짓 음성 — 두 방향 모두 REQ-DMR-006
+  # (부정형, HARD)이 재도입을 금지하는 결함이다. 상세: SPEC-OBSV-ANALYZER-DEADMAN-001 §1.
+  #
+  # [신규 설계] "메트릭이 존재하는가"가 아니라 "analyzer가 collector의 트리거를
+  # 실제로 따라잡고 있는가"를 감시한다. analyzer가 재기동에도 살아남는 게이지
+  # aaa_analyzer_inference_last_cycle_seconds{market}(Redis 영속 warm-start,
+  # REQ-DMR-001~005, M1/M2 aaa-analyzer 구현 — 이 그룹은 그 게이지의 존재를
+  # 전제로 소비만 한다)를, collector의 트리거 앵커
+  # aaa_collector_batch_last_load_seconds{batch="domestic-daily"|"overseas-daily"}와
+  # label_replace로 batch→market 레이블을 정렬해(REQ-DMR-007) 비교한다.
+  #
+  # 발화 조건은 AND로 결합된 두 조건 모두 충족해야 한다(REQ-DMR-008):
+  #   (a) collector 배치 완료 시각이 analyzer 마지막 사이클 완료 시각보다
+  #       DRIFT_THRESHOLD(60초, 동시 완료 시각의 시계 오차·경합 노이즈 억제용
+  #       — 실질적 판정 기준은 (b) 마진) 이상 앞서 있고,
+  #   (b) 그 collector 배치 완료로부터 경과 시간이 CATCHUP_MARGIN(35분)을 초과.
+  # 두 시장(market)은 label_replace가 파생한 market 레이블로 완전히 분리되므로
+  # 한 시장의 정체가 다른 시장의 정상 상태를 오염시키지 않는다.
+  #
+  # [임계치·마진 — 잠정값, M5 라이브 재확인 대상] CATCHUP_MARGIN=35분(REQ-AIF-142
+  # 구 관례 N=30분+여유 5분을 재계산 출발점으로 계승, spec.md §4)은 collector 배치
+  # 완료~analyzer 사이클 완료 사이의 정상 지연(스트림 이벤트 전파 + 자식 프로세스
+  # 스폰 + 실제 추론 처리 시간, 구 주석의 M7 domestic 실측 745.88초≈12.4분 참고)을
+  # 이 개정 세션에서 실측 근거 없이 재사용한 값이다 — 확정 수치가 아니라
+  # run-phase M5(배포+라이브 NAS /metrics·Redis 재확인)에서 실제 사이클 1회 이상을
+  # 관측해 과소/과대 여부를 재검토해야 한다(plan.md §B Known Issues). DRIFT_THRESHOLD
+  # =60초는 판정 로직상 사실상 "0보다 큼"에 준하는 안전장치이며 이 값 자체의 튜닝은
+  # 이 SPEC의 완료 기준에 포함하지 않는다.
   # ---------------------------------------------------------------------------
   - name: analyzer-inference-deadman
     interval: 30s
     rules:
       - alert: AnalyzerInferenceDeadman
-        expr: absent_over_time(aaa_analyzer_inference_cycle_duration_seconds_count[35m])
+        expr: |
+          (
+            label_replace(
+              aaa_collector_batch_last_load_seconds{batch=~"(domestic|overseas)-daily"},
+              "market", "$1", "batch", "(domestic|overseas)-daily"
+            )
+            - on(market) aaa_analyzer_inference_last_cycle_seconds
+          ) >= 60
+          and on(market)
+          (
+            time()
+            - label_replace(
+                aaa_collector_batch_last_load_seconds{batch=~"(domestic|overseas)-daily"},
+                "market", "$1", "batch", "(domestic|overseas)-daily"
+              )
+          ) > 35 * 60
         for: 0m
         labels:
           severity: warning
           component: analyzer
           tier: TICKET
         annotations:
-          summary: "analyzer 추론 사이클 데드맨 — 35분간 실행 신호 없음"
-          description: "추론 사이클 소요시간 계측(aaa_analyzer_inference_cycle_duration_seconds)이 35분(N=30분 + 여유 5분, REQ-AIF-142) 동안 한 번도 기록되지 않음 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] __main__.py 파이프라인 배선 완료 전까지는 이 메트릭 자체가 항상 부재해 상시 발화하며, alertmanager.yml에서 null 리시버로 매칭돼 실제 텔레그램 발송은 억제된다."
-          action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인. 활성화 여부는 TODO.md의 AnalyzerInferenceDeadman 항목 참조."
+          summary: "analyzer 추론 사이클 정체 — {{ $labels.market }}"
+          description: "collector 배치({{ $labels.market }}-daily) 완료 시각이 analyzer의 마지막 추론 사이클 완료 시각(aaa_analyzer_inference_last_cycle_seconds)보다 앞서 있고, 그 배치 완료로부터 35분(CATCHUP_MARGIN, 잠정값·M5 재확인 대상) 이상 경과 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] 이 알림의 텔레그램 발송은 alertmanager.yml에서 null 리시버로 매칭돼 현재 억제된다 — M1~M5 검증 완료 후에만 M6에서 활성화(REQ-DMR-015)."
+          action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인, Redis GET observability:analyzer:last-cycle:{{ $labels.market }} 값 대조."

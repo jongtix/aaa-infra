@@ -1,27 +1,32 @@
 # =============================================================================
-# vmalert 룰 유닛테스트 — analyzer 추론 데드맨 스위치 (라우팅 비활성)
-# SPEC-ANALYZER-INFER-001 REQ-AIF-142 (M9)
+# vmalert 룰 유닛테스트 — analyzer 추론 데드맨 스위치 (재설계, 라우팅 비활성)
+# SPEC-OBSV-ANALYZER-DEADMAN-001 REQ-DMR-006~011 (M3/M4)
 # =============================================================================
 # 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
 # 실행(이 파일만): docker run --rm -v "$PWD":/rules victoriametrics/vmalert-tool:v1.147.0 \
 #     unittest --files=/rules/rules_test_analyzer_inference.yaml
 # rule_files 는 본 파일 기준 상대경로(rules.yml = 같은 디렉토리).
 #
-# [별도 파일로 분리하는 이유] rules_test_analyzer.yaml(GATE-001/STALENESS-001)과는
-# 다른 SPEC(INFER-001) 소관이며, 라우팅-비활성이라는 이 그룹만의 상태(§B)를
-# 별도로 문서화하기 위해 전용 파일로 둔다 — check-alert-coverage.sh는
-# rules_test_*.yaml glob으로 파일명 무관하게 수집하므로 네이밍 제약은 없다.
+# [재작성 이유] 구 TI-AIF-DEADMAN-001~003은 구 expr
+# absent_over_time(aaa_analyzer_inference_cycle_duration_seconds_count[35m])만
+# 검증했다 — SPEC-OBSV-ANALYZER-DEADMAN-001 §1이 그 expr 자체를 재설계했으므로
+# (analyzer 재기동 시 Prometheus 멀티프로세스 디렉터리 초기화로 인한 거짓 양성/
+# 거짓 음성 양방향 결함, rules.yml의 analyzer-inference-deadman 그룹 주석 참조)
+# 이 파일도 새 expr(collector 앵커 label_replace 비교)에 맞게 전면 재작성됐다.
+# 구 케이스는 더 이상 유효하지 않으므로 재사용하지 않는다.
 #
-# [absent_over_time 35m — "느린 계열" 분리 불필요] analyzer_slow.yaml(8d)/
-# analyzer_model_staleness의 25h 관례와 달리, 35m 윈도우는 30s 그리드에서도
-# 70스텝(35m/30s)에 불과해 저렴하다 — 8d(192h)·25h급 느린 계열 분리 기준에
-# 해당하지 않는다.
+# [새 expr 요약] aaa_analyzer_inference_last_cycle_seconds{market}(analyzer,
+# Redis 영속 warm-start, REQ-DMR-001~005 — M1/M2 aaa-analyzer 구현 전제, 이
+# 테스트는 게이지 값 자체를 시뮬레이션 입력으로 직접 지정한다)를
+# aaa_collector_batch_last_load_seconds{batch="domestic-daily"|"overseas-daily"}와
+# label_replace(batch→market)로 정렬해 비교한다. 발화 조건은 AND로 결합된 두
+# 조건 모두 충족: (a) drift = collector_last_load - analyzer_last_cycle >= 60초,
+# (b) time() - collector_last_load > 35분(CATCHUP_MARGIN, 잠정값·M5 재확인 대상).
 #
-# [현재 메트릭 부재가 정상] aaa_analyzer_inference_cycle_duration_seconds는
-# __main__.py↔StreamConsumer 파이프라인 배선(이 SPEC 범위 밖 후속 SPEC)이
-# 완료되기 전까지 어떤 실행 경로에서도 발행되지 않는다 — TI-AIF-DEADMAN-002가
-# 검증하는 "메트릭 완전 부재 → 발화" 케이스가 지금 프로덕션의 실제 상태다.
-# 라우팅 비활성(alertmanager.yml null 리시버)이 이 상시 발화를 안전하게 흡수한다.
+# [시간 모델] unittest의 time()은 eval_time(초, 0=epoch 기준)과 동일. 이 파일의
+# 게이지 값은 collector-collection-gap-expected-run 등 기존 그룹과 동일 관례로
+# "0 또는 음수 상수"를 사용해 time() - value 형태로 경과시간을 직접 읽을 수
+# 있게 한다(예: 값 0, eval_time=300 → 경과 300초).
 # =============================================================================
 
 rule_files:
@@ -31,56 +36,80 @@ evaluation_interval: 30s
 
 tests:
   # ===========================================================================
-  # 룰: analyzer-inference-deadman — AnalyzerInferenceDeadman
+  # 룰: analyzer-inference-deadman — AnalyzerInferenceDeadman (재설계, REQ-DMR-006~008)
   # ===========================================================================
 
-  # TI-AIF-DEADMAN-001. [무발화] 사이클 소요시간이 35분 창 내(t=10m)에서 관측됨 → 미발화(정상 실행 중 시뮬레이션).
-  #   30s 그리드에서 70스텝(35m) 커버 — `+0x` 뒤 반복수는 eval_time(2100s=35m)을
-  #   충분히 넘는 여유(80스텝=2400s)로 설정.
+  # TI-DMR-DEADMAN-001. [무발화, 신선] collector(domestic-daily)가 t=0에 완료,
+  #   analyzer(domestic)는 아직 이전 사이클 값(t=0 기준 90000초 전, 즉 하루
+  #   가까이 이전)에 머물러 있어 drift(90000s)는 임계치(60s)를 이미 초과하지만,
+  #   collector 완료로부터의 경과 시간(eval_time=300s=5분)이 CATCHUP_MARGIN(35분)
+  #   이내이므로 아직 정체로 판정하지 않는다 — AC-DMR-009.
   - interval: 30s
     input_series:
-      - series: 'aaa_analyzer_inference_cycle_duration_seconds_count{market="domestic"}'
-        values: '0+0x20 1+0x60'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-daily"}'
+        values: '0+0x15'
+      - series: 'aaa_analyzer_inference_last_cycle_seconds{market="domestic"}'
+        values: '-90000+0x15'
     alert_rule_test:
-      - eval_time: 2100s
+      - eval_time: 300s
         groupname: analyzer-inference-deadman
         alertname: AnalyzerInferenceDeadman
         exp_alerts: []
 
-  # TI-AIF-DEADMAN-002. [발화, 부재 — 배선 전 프로덕션 실제 상태] 메트릭 자체가
-  #   전혀 존재하지 않음(__main__.py↔StreamConsumer 파이프라인 미배선) → absent_over_time 발화.
-  - interval: 30s
-    input_series: []
-    alert_rule_test:
-      - eval_time: 2100s
-        groupname: analyzer-inference-deadman
-        alertname: AnalyzerInferenceDeadman
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: analyzer
-              tier: TICKET
-            exp_annotations:
-              summary: "analyzer 추론 사이클 데드맨 — 35분간 실행 신호 없음"
-              description: "추론 사이클 소요시간 계측(aaa_analyzer_inference_cycle_duration_seconds)이 35분(N=30분 + 여유 5분, REQ-AIF-142) 동안 한 번도 기록되지 않음 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] __main__.py 파이프라인 배선 완료 전까지는 이 메트릭 자체가 항상 부재해 상시 발화하며, alertmanager.yml에서 null 리시버로 매칭돼 실제 텔레그램 발송은 억제된다."
-              action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인. 활성화 여부는 TODO.md의 AnalyzerInferenceDeadman 항목 참조."
-
-  # TI-AIF-DEADMAN-003. [발화, 완전 두절] t=0 이후 스크레이프 완전 중단(단일 샘플만
-  #   존재, 이후 35m+ 무샘플) → 무음실패 발화(정상 STALENESS-001 관례 계승).
+  # TI-DMR-DEADMAN-002. [발화, 진짜 정체] collector(domestic-daily)가 t=0에
+  #   완료했고 analyzer(domestic)는 여전히 90000초 전 값에 머물러 정체
+  #   상태(drift=90000s >= 60s) — eval_time=2130s(35분+30초, CATCHUP_MARGIN
+  #   경과)에서 발화한다 — AC-DMR-010.
   - interval: 30s
     input_series:
-      - series: 'aaa_analyzer_inference_cycle_duration_seconds_count{market="overseas"}'
-        values: '0'
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-daily"}'
+        values: '0+0x75'
+      - series: 'aaa_analyzer_inference_last_cycle_seconds{market="domestic"}'
+        values: '-90000+0x75'
     alert_rule_test:
-      - eval_time: 2100s
+      - eval_time: 2130s
         groupname: analyzer-inference-deadman
         alertname: AnalyzerInferenceDeadman
         exp_alerts:
           - exp_labels:
               severity: warning
               component: analyzer
+              market: domestic
               tier: TICKET
             exp_annotations:
-              summary: "analyzer 추론 사이클 데드맨 — 35분간 실행 신호 없음"
-              description: "추론 사이클 소요시간 계측(aaa_analyzer_inference_cycle_duration_seconds)이 35분(N=30분 + 여유 5분, REQ-AIF-142) 동안 한 번도 기록되지 않음 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] __main__.py 파이프라인 배선 완료 전까지는 이 메트릭 자체가 항상 부재해 상시 발화하며, alertmanager.yml에서 null 리시버로 매칭돼 실제 텔레그램 발송은 억제된다."
-              action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인. 활성화 여부는 TODO.md의 AnalyzerInferenceDeadman 항목 참조."
+              summary: "analyzer 추론 사이클 정체 — domestic"
+              description: "collector 배치(domestic-daily) 완료 시각이 analyzer의 마지막 추론 사이클 완료 시각(aaa_analyzer_inference_last_cycle_seconds)보다 앞서 있고, 그 배치 완료로부터 35분(CATCHUP_MARGIN, 잠정값·M5 재확인 대상) 이상 경과 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] 이 알림의 텔레그램 발송은 alertmanager.yml에서 null 리시버로 매칭돼 현재 억제된다 — M1~M5 검증 완료 후에만 M6에서 활성화(REQ-DMR-015)."
+              action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인, Redis GET observability:analyzer:last-cycle:domestic 값 대조."
+
+  # TI-DMR-DEADMAN-003. [무발화, 재기동 직후 게이지 일시 부재 — 회귀 가드]
+  #   collector(overseas-daily)는 t=0에 방금 완료(경과 300s < 마진)했고,
+  #   analyzer(overseas) 게이지 시계열 자체가 아예 존재하지 않는 상태를
+  #   시뮬레이션(재기동 후 멀티프로세스 디렉터리 초기화~warm-start 반영 전
+  #   찰나의 창을 대리). label_replace 조인 상대가 없어 결과 벡터가 비므로
+  #   구 absent_over_time 설계와 달리 상시 발화 재발 없이 무발화한다 — REQ-DMR-011(c).
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="overseas-daily"}'
+        values: '0+0x15'
+    alert_rule_test:
+      - eval_time: 300s
+        groupname: analyzer-inference-deadman
+        alertname: AnalyzerInferenceDeadman
+        exp_alerts: []
+
+  # TI-DMR-DEADMAN-004. [무발화, 캐치업 완료 — 부가 회귀 가드] collector
+  #   (domestic-daily)가 t=0에 완료해 경과 시간은 마진(35분)을 이미 초과했지만
+  #   (eval_time=2130s), analyzer(domestic)가 그 이후(t=100s)에 사이클을
+  #   완료해 이미 따라잡음(drift = 0 - 100 = -100 < 60) — 마진 초과 단독으로는
+  #   발화하지 않고 drift 조건(REQ-DMR-008 (a))도 함께 충족해야 함을 확인.
+  - interval: 30s
+    input_series:
+      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-daily"}'
+        values: '0+0x75'
+      - series: 'aaa_analyzer_inference_last_cycle_seconds{market="domestic"}'
+        values: '100+0x75'
+    alert_rule_test:
+      - eval_time: 2130s
+        groupname: analyzer-inference-deadman
+        alertname: AnalyzerInferenceDeadman
+        exp_alerts: []
