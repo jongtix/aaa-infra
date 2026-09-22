@@ -294,7 +294,8 @@ services:
       # retentionPeriod 3개월: 침묵장애 감지엔 단기로 충분하나 M5 임계 튜닝이 다주(multi-week)
       #   분포를 보므로 분기치 보유. 시계열 ~수백개 @30s라 디스크 영향 미미.
       - "-retentionPeriod=3"
-    logging: *default-logging
+    logging:
+      driver: journald
     networks:
       - aaa-network
     cap_drop:
@@ -339,7 +340,8 @@ services:
       #   CollectorGateUnset(for: 26h) 누산기가 vmalert 재기동마다 리셋되어 부팅-unset 감지가 무력화된다.
       - "-remoteWrite.url=http://aaa-victoriametrics:8428"
       - "-remoteRead.url=http://aaa-victoriametrics:8428"
-    logging: *default-logging
+    logging:
+      driver: journald
     networks:
       - aaa-network
     depends_on:
@@ -402,7 +404,8 @@ services:
         uid: "65534"
         gid: "65534"
         mode: 0400
-    logging: *default-logging
+    logging:
+      driver: journald
     networks:
       - aaa-network
     cap_drop:
@@ -441,7 +444,8 @@ services:
     command:
       - "-retentionPeriod=90d"
       - "-storageDataPath=/victoria-logs-data"
-    logging: *default-logging
+    logging:
+      driver: journald
     networks:
       - aaa-network
     cap_drop:
@@ -463,8 +467,11 @@ services:
     # group_add: ["1005"]: analyzer 로그 디렉토리(1005 소유, chmod 750) 읽기 권한을 보조그룹으로 확보.
     # 주 UID(1004:1004)는 불변 — analyzer 디렉토리의 chmod 완화·소유권 변경 없이 group_add만으로 접근한다
     # (SPEC-OBSV-LOGS-002 REQ-LOGS-016/017, DP-5. §3 Exclusion #8: vector 전용 UID 재설계는 범위 밖).
+    # "999": journald(systemd-journal 그룹)를 읽기 위한 보조그룹(SPEC-OBSV-LOGS-004 REQ-009).
+    # 주 UID(1004:1004)는 여전히 불변 — journald 접근도 group_add만으로 확보한다.
     group_add:
       - "1005"
+      - "999"
     deploy:
       resources:
         limits:
@@ -479,7 +486,13 @@ services:
       - ${AAA_HDD_BASE}/data/vector:/var/lib/vector
       # 파이프라인 설정(읽기 전용): IaC — 레포 커밋, 런타임 마운트.
       - ${AAA_SSD_BASE}/config/vector/vector.yaml:/etc/vector/vector.yaml:ro
-    logging: *default-logging
+      # journald 소스 읽기(읽기 전용, SPEC-OBSV-LOGS-004 REQ-008/009): journald 저널 디렉토리
+      # 2곳(영속·휘발) + machine-id(journald가 저널 파일 식별에 사용).
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    logging:
+      driver: journald
     networks:
       - aaa-network
     depends_on:
@@ -516,7 +529,8 @@ services:
       - "--path.sysfs=/host/sys"
       # compose 이스케이프: $$ → 런타임 단일 $ (정규식 앵커 보존).
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-    logging: *default-logging
+    logging:
+      driver: journald
     networks:
       - aaa-network
     cap_drop:
@@ -568,7 +582,8 @@ services:
       - /var/run:/var/run:rw
       - /sys:/sys:ro
       - /volume1/@docker:/volume1/@docker:ro
-    logging: *default-logging
+    logging:
+      driver: journald
     networks:
       - aaa-network
     expose:
