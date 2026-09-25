@@ -66,6 +66,8 @@ _call_log_append() {
 # _extract_block <file> <header_regex> <sibling_regex>
 # header_regex에 매치하는 첫 줄부터, sibling_regex에 매치하는 다음 줄 직전까지 출력.
 # header를 못 찾으면(블록 자체가 없음) 빈 문자열 출력.
+# 두 정규식은 -v 동적 문자열로 awk에 넘어가므로 구현체마다 해석이 갈리는 문법
+# (특히 중괄호 반복 횟수 표기인 구간표현식)을 쓰지 말 것 — 프로덕션 러너의 awk는 mawk다.
 _extract_block() {
   local file="$1" header="$2" sibling="$3"
   [ -f "$file" ] || return 0
@@ -95,9 +97,15 @@ compose_top_level_shared_changed() {
 # _ALL_KNOWN_SERVICES 중 자기 2-space 블록이 old/new 사이에 달라진 서비스명을 한 줄씩 출력.
 compose_changed_service_blocks() {
   local old="$1" new="$2" svc old_block new_block
+  # 다음 서비스 헤더(2-space 들여쓰기 서비스명 + ':') 판별 정규식.
+  # 구간표현식(중괄호 반복 횟수 표기)을 쓰지 않는다 — NAS 배포 러너의 mawk 1.3.4는 이를 리터럴로
+  # 처리해 어떤 줄과도 매치하지 않고, 그러면 모든 블록이 "헤더~EOF"로 넓어져 뒤쪽 서비스
+  # 변경이 앞쪽 서비스 전부의 변경으로 오집계된다(SPEC-INFRA-CICD-003, 관련: aaa-infra#178).
+  # "1글자 이상"은 [..][..]* 명시적 반복으로 표현한다(mawk·gawk·BSD awk·busybox 동일 매치).
+  local sibling='^  [A-Za-z0-9_-][A-Za-z0-9_-]*:'
   for svc in "${_ALL_KNOWN_SERVICES[@]}"; do
-    old_block=$(_extract_block "$old" "^  ${svc}:" '^  [A-Za-z0-9_-]\{1,\}:')
-    new_block=$(_extract_block "$new" "^  ${svc}:" '^  [A-Za-z0-9_-]\{1,\}:')
+    old_block=$(_extract_block "$old" "^  ${svc}:" "$sibling")
+    new_block=$(_extract_block "$new" "^  ${svc}:" "$sibling")
     if [ "$old_block" != "$new_block" ]; then
       printf '%s\n' "$svc"
     fi
