@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- CD 반영 판정의 compose 서비스 블록 경계 정규식 mawk 이식성 결함 수정 (SPEC-INFRA-CICD-003, 관련: aaa-infra#178)
+  - `.github/deploy/reflect.sh` — 형제 서비스 경계 정규식이 구간표현식(`\{…\}`)에 의존해, NAS 러너 기본 awk인 mawk 1.3.4에서 매치가 0건이 되고 마지막 서비스(alertmanager) 변경이 전체 서비스 변경으로 오판되던 문제를 수정. 구간표현식 없는 `^  [A-Za-z0-9_-][A-Za-z0-9_-]*:` 형태로 바꿔 mawk 2종·gawk·BSD awk·busybox awk 5개 구현에서 동일하게 동작함을 확인
+  - `.github/deploy/reflect_test.sh` — 마지막 서비스 변경 시 `UP:alertmanager`만 산출하는지 검증하는 회귀 테스트 추가(18 → 19개)
+  - `.github/workflows/ci.yml` — `deploy-reflect-test` job 신설. PATH shim으로 mawk를 강제해 `reflect_test.sh`를 실행하고 `status-check` 의존에 추가 — PR #179 CI에서 통과 확인
+  - 라이브 확인(2026-09-25): 병합 후 CD Deploy run 36109975366에서 판정이 기존의 `NOTIFY:…수동 검토 필요`가 아닌 `UP:alertmanager`로 나왔고 `aaa-alertmanager` 컨테이너만 재생성됨. NAS `docker inspect` 결과 `prom/alertmanager:v0.34.1`로 running 상태이며, 다른 서비스는 재시작되지 않음
+
 ### Changed
 
 - `AnalyzerInferenceDeadman` 데드맨 알림 collector 앵커 기반 재설계 + 라우팅 활성화 (SPEC-OBSV-ANALYZER-DEADMAN-001 M3/M4/M6/M7 — 위 SPEC-ANALYZER-INFER-001 M9 항목의 후속)
