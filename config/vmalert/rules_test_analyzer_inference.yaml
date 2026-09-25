@@ -1,5 +1,5 @@
 # =============================================================================
-# vmalert 룰 유닛테스트 — analyzer 추론 데드맨 스위치 (재설계, 라우팅 비활성)
+# vmalert 룰 유닛테스트 — analyzer 추론 데드맨 스위치 (재설계, 라우팅 활성화 완료 M6)
 # SPEC-OBSV-ANALYZER-DEADMAN-001 REQ-DMR-006~011 (M3/M4)
 # =============================================================================
 # 실행(전체): ./run-unittests.sh          — 파일별 docker 병렬 실행(권장)
@@ -78,7 +78,7 @@ tests:
               tier: TICKET
             exp_annotations:
               summary: "analyzer 추론 사이클 정체 — domestic"
-              description: "collector 배치(domestic-daily) 완료 시각이 analyzer의 마지막 추론 사이클 완료 시각(aaa_analyzer_inference_last_cycle_seconds)보다 앞서 있고, 그 배치 완료로부터 35분(CATCHUP_MARGIN, 잠정값·M5 재확인 대상) 이상 경과 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] 이 알림의 텔레그램 발송은 alertmanager.yml에서 null 리시버로 매칭돼 현재 억제된다 — M1~M5 검증 완료 후에만 M6에서 활성화(REQ-DMR-015)."
+              description: "collector 배치(domestic-daily) 완료 시각이 analyzer의 마지막 추론 사이클 완료 시각(aaa_analyzer_inference_last_cycle_seconds)보다 앞서 있고, 그 배치 완료로부터 35분(CATCHUP_MARGIN, 잠정값·M5 재확인 대상) 이상 경과 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심."
               action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인, Redis GET observability:analyzer:last-cycle:domestic 값 대조."
 
   # TI-DMR-DEADMAN-003. [무발화, 재기동 직후 게이지 일시 부재 — 회귀 가드]
