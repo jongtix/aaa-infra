@@ -6,6 +6,12 @@
 
 ### Changed
 
+- `AnalyzerInferenceDeadman` 데드맨 알림 collector 앵커 기반 재설계 + 라우팅 활성화 (SPEC-OBSV-ANALYZER-DEADMAN-001 M3/M4/M6/M7 — 위 SPEC-ANALYZER-INFER-001 M9 항목의 후속)
+  - `config/vmalert/rules.yml` — expr을 `absent_over_time(aaa_analyzer_inference_cycle_duration_seconds_count[35m])`(메트릭 부재만으로 판정 — 재기동 직후 거짓 양성 + 정체 시 거짓 음성의 양방향 결함)에서, collector 배치 완료 시각(`aaa_collector_batch_last_load_seconds`) 대비 analyzer 마지막 사이클 시각(`aaa_analyzer_inference_last_cycle_seconds`)의 지연 비교식으로 재설계 — 35분 캐치업 마진 + 60초 드리프트 임계(둘 다 잠정값, 추가 실측 튜닝 대기). `rules_test_analyzer_inference.yaml`을 무발화·진짜정체발화·재기동직후무발화·캐치업무발화 4개 케이스로 재작성
+  - `config/alertmanager/alertmanager.yml` — 위 SPEC-ANALYZER-INFER-001 M9에서 선반영해둔 가로채기 route(tier 라우팅보다 먼저 no-op 리시버로 보내던 것)와 `analyzer-inference-deadman-mute` 리시버를 제거해 실제 라우팅 활성화 — `system-bot-telegram-ticket`로 정상 도달 확인(NAS `amtool config routes test` 라이브 검증, 2026-09-25)
+  - `rules.yml`/`rules_test_analyzer_inference.yaml`의 "라우팅 비활성"/"발송은 억제" stale 주석을 활성화 상태 서술로 정합화
+  - 활성화 전제: aaa-analyzer 측 게이지+Redis 영속화(위 SPEC-ANALYZER-INFER-001 M9 항목의 "알려진 갭")가 main 병합·NAS 배포·3일 관측 후 실측값 정상 기록을 확인(2026-09-25)한 뒤에만 진행 — 순서 보장으로 재설계 전 재기동-소실 결함의 재발을 차단
+  - PR #176(`WT-deadman-routing-activate` → main, 병합 커밋 `5a0276e`), CI 7개 체크 전부 통과(`vmalert-unittest`/`compose-config`/`shellcheck`/`vector-validate`/`amtool-check`/`vm-scrape-dryrun`/`status-check`)
 - cve-scan.yml의 scan-self-built job이 --ignore-unfixed 적용 + 레포별 .trivyignore 승인·미만료 예외 제외 후 CRITICAL/HIGH 집계 — push-time 블로킹 게이트와 판정 기준 정합(SPEC-INFRA-CVE-SCAN-004 M2), post-exclusion count>0 시 '다음 릴리스 빌드가 이 게이트에 막힙니다' 문구 추가
 
 ### Added
