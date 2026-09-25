@@ -189,11 +189,58 @@ jobs:
           cd .github/deploy
           docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -S warning -x ./*.sh
 
+  # --- CD reflect.sh 런타임 회귀 테스트 (SPEC-INFRA-CICD-003 REQ-CDF-009~011) ---
+  # shellcheck는 정적 검사뿐이라 awk 구현체 차이로 생기는 런타임 결함을 못 잡는다.
+  # NAS 배포 러너의 awk는 mawk 1.3.4이므로 이 job도 mawk로 reflect_test.sh를 실행한다
+  # (macOS BSD awk에서만 통과하고 mawk에서 깨지는 회귀를 잡기 위함, 관련: aaa-infra#178).
+  # lib_test.sh/rollback_test.sh/verify_test.sh 배선은 이 SPEC 범위 밖이다(REQ-CDF-014).
+  deploy-reflect-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: reflect_test.sh (mawk 강제)
+        run: |
+          set -euo pipefail
+          echo "[diag] 러너 기본 awk: $(command -v awk) -> $(readlink -f "$(command -v awk)")"
+          if ! command -v mawk >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq mawk
+          fi
+          # 러너 기본 awk가 무엇이든 이 스텝 안에서는 PATH 앞쪽 shim으로 mawk를 강제한다.
+          shim_dir="$RUNNER_TEMP/awk-shim"
+          mkdir -p "$shim_dir"
+          ln -sf "$(command -v mawk)" "$shim_dir/awk"
+          export PATH="$shim_dir:$PATH"
+
+          awk_path="$(command -v awk)"
+          awk_real="$(readlink -f "$awk_path")"
+          echo "[diag] 실행 awk: $awk_path -> $awk_real"
+          echo "[diag] awk 버전: $(awk -W version 2>&1 | head -1)"
+          case "$awk_real" in
+            */mawk) ;;
+            *) echo "[FAIL] awk가 mawk로 해석되지 않음: $awk_real"; exit 1 ;;
+          esac
+          # 카나리아: 이 mawk가 여전히 구간표현식을 리터럴로 처리하는지 확인한다. 매치되면
+          # 러너 mawk가 바뀌어 이 job이 원래 회귀 유형을 더는 재현하지 못한다는 뜻이다.
+          if printf '  abc:\n' | awk -v re='^  [a-z]\{1,\}:' '$0 ~ re { found=1 } END { exit !found }'; then
+            echo "::warning::러너 mawk가 구간표현식을 해석함 — 이 job은 aaa-infra#178 유형 회귀를 재현하지 못할 수 있음"
+          else
+            echo "[diag] 카나리아: 구간표현식 미해석 확인(NAS mawk와 같은 동작)"
+          fi
+
+          bash .github/deploy/reflect_test.sh
+
   # --- required_status_checks 집계 (SPEC-INFRA-CICD-002 M3, REQ-014) ---
   # 4개 레포 main-protection 룰셋의 required_status_checks가 이 컨텍스트를 감시한다.
-  # 개별 job 6개를 하나의 status로 묶어야 룰셋 설정이 6개 job명을 각각 추적하지 않아도 된다.
+  # 개별 job 7개를 하나의 status로 묶어야 룰셋 설정이 7개 job명을 각각 추적하지 않아도 된다.
   status-check:
-    needs: [compose-config, vmalert-unittest, amtool-check, vm-scrape-dryrun, vector-validate, shellcheck]
+    needs: [compose-config, vmalert-unittest, amtool-check, vm-scrape-dryrun, vector-validate, shellcheck, deploy-reflect-test]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions: {}
