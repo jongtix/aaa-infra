@@ -1517,9 +1517,9 @@ groups:
 
   # ---------------------------------------------------------------------------
   # analyzer-inference-deadman — SPEC-OBSV-ANALYZER-DEADMAN-001 REQ-DMR-006~009 (M3)
-  # [라우팅 비활성, 2026-09-13 사용자 확정 — 여전히 유효] 텔레그램 발송은
-  # alertmanager.yml에서 null 리시버로 매칭돼 의도적으로 억제된 상태다(M6에서만
-  # 활성화 대상, 이 SPEC의 M3/M4 범위 밖 — REQ-DMR-015 시퀀싱 게이트).
+  # [라우팅 활성화, 2026-09-25 M6 완료] M1~M5 라이브 검증 완료 후 REQ-DMR-015
+  # 시퀀싱 게이트를 통과해 alertmanager.yml의 null 리시버 가로채기 route를
+  # 제거했다 — tier 매칭에 따라 정상 발송된다.
   #
   # [2026-09-21/22 재설계 배경] 구 expr
   # `absent_over_time(aaa_analyzer_inference_cycle_duration_seconds_count[35m])`은
@@ -1584,5 +1584,5 @@ groups:
           tier: TICKET
         annotations:
           summary: "analyzer 추론 사이클 정체 — {{ $labels.market }}"
-          description: "collector 배치({{ $labels.market }}-daily) 완료 시각이 analyzer의 마지막 추론 사이클 완료 시각(aaa_analyzer_inference_last_cycle_seconds)보다 앞서 있고, 그 배치 완료로부터 35분(CATCHUP_MARGIN, 잠정값·M5 재확인 대상) 이상 경과 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심. [라우팅 비활성] 이 알림의 텔레그램 발송은 alertmanager.yml에서 null 리시버로 매칭돼 현재 억제된다 — M1~M5 검증 완료 후에만 M6에서 활성화(REQ-DMR-015)."
+          description: "collector 배치({{ $labels.market }}-daily) 완료 시각이 analyzer의 마지막 추론 사이클 완료 시각(aaa_analyzer_inference_last_cycle_seconds)보다 앞서 있고, 그 배치 완료로부터 35분(CATCHUP_MARGIN, 잠정값·M5 재확인 대상) 이상 경과 — stream:daily:complete 구독 컨슈머 정지 또는 자식 프로세스 스폰 실패 의심."
           action: "docker logs aaa-analyzer → stream:daily:complete XREADGROUP/자식 스폰(spawn.py) 로그 확인, Redis GET observability:analyzer:last-cycle:{{ $labels.market }} 값 대조."
