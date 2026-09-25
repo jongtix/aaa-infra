@@ -89,7 +89,8 @@ run_test() {
 _write_base_compose() {
   # $1=path $2=vmalert_image_tag(변형 포인트) $3=collector_image_tag $4=mysql_image_tag
   # $5=x_logging_max_size(변형 포인트) $6=notifier_image_tag(변형 포인트)
-  local path="$1" vmalert_tag="${2:-v1}" collector_tag="${3:-latest}" mysql_tag="${4:-8.4}" max_size="${5:-10m}" notifier_tag="${6:-latest}"
+  # $7=alertmanager_image_tag(변형 포인트, 기본값은 기존 고정값과 동일 — 기존 테스트 출력 불변)
+  local path="$1" vmalert_tag="${2:-v1}" collector_tag="${3:-latest}" mysql_tag="${4:-8.4}" max_size="${5:-10m}" notifier_tag="${6:-latest}" alertmanager_tag="${7:-v0.33.1}"
   cat > "$path" <<EOF
 x-logging: &default-logging
   driver: json-file
@@ -135,7 +136,7 @@ services:
     restart: unless-stopped
 
   alertmanager:
-    image: prom/alertmanager:v0.33.1
+    image: prom/alertmanager:${alertmanager_tag}
     restart: unless-stopped
 
   victorialogs:
@@ -254,6 +255,30 @@ test_compose_classify_unchanged_file_emits_nothing() {
   local out
   out=$(compose_classify "$old" "$new")
   assert_eq "" "$out"
+  rm -f "$old" "$new"
+}
+
+# SPEC-INFRA-CICD-003 REQ-CDF-006/007 회귀 테스트 (관련: aaa-infra#178).
+# alertmanager는 앞에 서비스 블록 7개(mysql~vmalert)가 있고 뒤에도 3개가 있는 위치다.
+# 서비스 블록 경계(sibling) 정규식이 매치에 실패하는 awk(구간표현식 미지원 mawk)에서는
+# 모든 블록이 "헤더~EOF"로 넓어져, alertmanager 한 줄 변경이 선행 서비스 7개의
+# 변경으로도 잘못 집계된다. 출력이 정확히 alertmanager 한 줄인지로 그 결함을 직접 잡는다.
+# (마지막 서비스 node-exporter는 원래 "헤더~EOF"가 정답이라 이 결함을 검출하지 못하므로
+#  회귀 위치로 쓰지 않는다.)
+test_compose_changed_service_blocks_trailing_alertmanager_change_emits_only_alertmanager() {
+  local old new
+  old=$(mktemp) new=$(mktemp)
+  _write_base_compose "$old" "v1" "latest" "8.4" "10m" "latest" "v0.34.0"
+  _write_base_compose "$new" "v1" "latest" "8.4" "10m" "latest" "v0.34.1"   # alertmanager 블록만 변경
+
+  local changed
+  changed=$(compose_changed_service_blocks "$old" "$new")
+  assert_eq "alertmanager" "$changed" "선행 서비스가 변경 목록에 섞이면 sibling 경계 판별 실패(awk 구현체 이식성 결함)"
+
+  # 증상 수준 재확인: 관측 서비스 단독 변경이므로 차단형 NOTIFY 없이 UP:alertmanager만 나와야 한다.
+  local out
+  out=$(compose_classify "$old" "$new")
+  assert_eq "UP:alertmanager" "$out"
   rm -f "$old" "$new"
 }
 
@@ -550,6 +575,10 @@ test_reflect_deploy_scrape_yml_sends_sighup_not_restart() {
 # Run all tests
 # -----------------------------------------------------------------------------
 
+# 블록 경계 회귀 테스트를 맨 먼저 실행한다: reflect.sh의 `set -e`가 source로 이 하네스에
+# 적용되므로 첫 실패 assert에서 스위트가 종료된다. 경계 판별이 깨지면 뒤의 여러 테스트가
+# 함께 실패하는데, 원인을 가장 직접 보여주는 이 테스트의 메시지가 먼저 남도록 순서를 둔다.
+run_test test_compose_changed_service_blocks_trailing_alertmanager_change_emits_only_alertmanager
 run_test test_compose_classify_vmalert_block_only_emits_up_vmalert_only
 run_test test_compose_classify_shared_anchor_change_blocks_everything
 run_test test_compose_classify_collector_block_change_blocks_and_never_emits_collector
