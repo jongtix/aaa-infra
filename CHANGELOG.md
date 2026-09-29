@@ -6,6 +6,16 @@
 
 ### Added
 
+- notifier MySQL 계정/grant 스캐폴딩 + TECHSPEC §4 출처 정정 (SPEC-NOTIFIER-SCHEMA-001, REQ-NOTIFIER-SCHEMA-021~025/031)
+  - `config/mysql/initdb.d/04-init-notifier.sh` 신설 — fresh-init 시 `notifier`@`%` 계정을 `CREATE USER IF NOT EXISTS` + `GRANT SELECT ON aaa.*`로 생성(`01-init-collector.sh`/`02-init-analyzer.sh`/`03-init-backup.sh` 다음 lexical 순번)
+  - `config/mysql/grants/notifier-grants.sql` 신설 — `analyzer-grants.sql` 패턴을 미러링, `GRANT INSERT ON aaa.notification_log`만 부여(UPDATE/DELETE/DDL 권한 없음 — INSERT-ONLY를 DB 권한 수준으로 강제). aaa-collector의 `notification_log` 마이그레이션(V49) 배포 확인 이후에만 적용 가능(MySQL 8.4는 존재하지 않는 테이블에 대한 테이블 단위 GRANT를 ERROR 1146으로 거부)
+  - `.env.example`의 예약 주석 라인(`# MYSQL_NOTIFIER_PASSWORD=...`) 주석 해제
+  - `docs/TECHSPEC.md` §4 정정 — `notification_log`를 "테이블명 + 주요 컬럼 윤곽만 정의" 서술에서 제외, DDL 상세 출처를 SPEC-NOTIFIER-SCHEMA-001 및 Flyway `V49__notifier_create_notification_log.sql`로 명시(`order_log`는 그대로 outline-only로 남음)
+  - `aaa-notifier` 빌드·`docker-compose.yml` notifier 서비스 블록에는 DB 접속 배선을 추가하지 않음(TELEGRAM-001/FILTER-001로 이연, REQ-NOTIFIER-SCHEMA-041)
+  - 라이브 NAS 확인 완료(2026-09-29): `SHOW GRANTS FOR 'notifier'@'%'`가 `USAGE ON *.*` + `SELECT ON aaa.*` + `INSERT ON aaa.notification_log` 정확히 3건, UPDATE/DELETE/DDL 권한 없음 확인
+
+### Added
+
 - 인프라 컨테이너 7종 로그 영속화 — Docker `journald` 드라이버 + Vector `journald` source (SPEC-OBSV-LOGS-004, AC-001~AC-016 전건 PASS)
   - `docker-compose.yml` — `victoriametrics`/`vmalert`/`alertmanager`/`victorialogs`/`vector`/`node-exporter`/`cadvisor` 7개 서비스의 `logging` 드라이버를 `json-file`(`*default-logging`)에서 `journald`로 개별 전환. 나머지 5개 서비스(`mysql`/`redis`/`collector`/`analyzer`/`notifier`)는 기존 `x-logging: &default-logging` 앵커 참조 불변. `vector` 서비스에 `group_add: "999"`(systemd-journal, 기존 `"1005"` 유지) + `/var/log/journal`·`/run/log/journal`·`/etc/machine-id` 3개 읽기 전용(`:ro`) 마운트 추가 — 기존 하드닝(`user`, `cap_drop`, `read_only`, `tmpfs`)은 불변
   - `config/vector/vector.yaml` — `type: journald` source(`infra_journal`) 신설, `include_matches.CONTAINER_NAME`에 **정확히 6개**(`aaa-victoriametrics`/`aaa-vmalert`/`aaa-alertmanager`/`aaa-victorialogs`/`aaa-node-exporter`/`aaa-cadvisor`)만 지정 — `aaa-vector`는 의도적으로 제외(드라이버 전환 7개 ≠ 저널 수집 6개 비대칭, 자기증폭 루프 방지). Vector 자가 관측용 `type: internal_logs` source(`vector_internal`)를 별도 독립 transform으로 배선(부분 롤백 가능성 확보). `PRIORITY`→`log.level` coarse 매핑(stdout/stderr 구분이며 바이너리 자체 로그 레벨 아님, 한계는 주석에 명시), 기존 `collector_logs`/`analyzer_logs`/`parse_ecs`/`parse_analyzer`는 무변경 — 신규 경로만 `sinks.victorialogs.inputs`에 추가 배선
