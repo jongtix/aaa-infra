@@ -60,8 +60,13 @@ systemd-analyze cat-config systemd/journald.conf | grep -i SystemMaxUse
 
 ```bash
 journalctl --disk-usage
-journalctl -o short-iso -n 1 --no-pager   # 가장 오래된 항목 시각 확인엔 --reverse 마지막 줄 참고
+journalctl -o short-iso --no-pager | head -1   # 가장 오래된 항목 시각
+journalctl -o short-iso --no-pager | tail -1   # 가장 최신 항목 시각
 ```
+
+`journalctl -n 1`(옵션 없이)은 최신 1건만 보여준다 — `-n`/`--lines`는 `tail`처럼
+동작해 항상 최근 항목을 반환하므로, 가장 오래된 항목을 확인하려면 위처럼
+`--no-pager` 전체 출력(기본 정렬은 오래된 순)에서 첫 줄을 취해야 한다.
 
 512M 적용 후 측정한 보존 윈도우(가장 오래된 유효 항목의 타임스탬프 ~
 현재 시각)가 **60분 미만**이면, `512M`는 이 NAS의 실제 로그 유입량 대비
