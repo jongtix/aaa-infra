@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- 인프라 컨테이너 7종 로그 영속화 — Docker `journald` 드라이버 + Vector `journald` source (SPEC-OBSV-LOGS-004, AC-001~AC-016 전건 PASS)
+  - `docker-compose.yml` — `victoriametrics`/`vmalert`/`alertmanager`/`victorialogs`/`vector`/`node-exporter`/`cadvisor` 7개 서비스의 `logging` 드라이버를 `json-file`(`*default-logging`)에서 `journald`로 개별 전환. 나머지 5개 서비스(`mysql`/`redis`/`collector`/`analyzer`/`notifier`)는 기존 `x-logging: &default-logging` 앵커 참조 불변. `vector` 서비스에 `group_add: "999"`(systemd-journal, 기존 `"1005"` 유지) + `/var/log/journal`·`/run/log/journal`·`/etc/machine-id` 3개 읽기 전용(`:ro`) 마운트 추가 — 기존 하드닝(`user`, `cap_drop`, `read_only`, `tmpfs`)은 불변
+  - `config/vector/vector.yaml` — `type: journald` source(`infra_journal`) 신설, `include_matches.CONTAINER_NAME`에 **정확히 6개**(`aaa-victoriametrics`/`aaa-vmalert`/`aaa-alertmanager`/`aaa-victorialogs`/`aaa-node-exporter`/`aaa-cadvisor`)만 지정 — `aaa-vector`는 의도적으로 제외(드라이버 전환 7개 ≠ 저널 수집 6개 비대칭, 자기증폭 루프 방지). Vector 자가 관측용 `type: internal_logs` source(`vector_internal`)를 별도 독립 transform으로 배선(부분 롤백 가능성 확보). `PRIORITY`→`log.level` coarse 매핑(stdout/stderr 구분이며 바이너리 자체 로그 레벨 아님, 한계는 주석에 명시), 기존 `collector_logs`/`analyzer_logs`/`parse_ecs`/`parse_analyzer`는 무변경 — 신규 경로만 `sinks.victorialogs.inputs`에 추가 배선
+  - `docs/JOURNALD-RETENTION.md` 신규 — `/etc/systemd/journald.conf`의 `SystemMaxUse`(호스트 레벨, 이 레포 IaC 관리 밖) `50M`→`512M` 수동 상향 절차 + 적용 확인(`systemd-analyze cat-config`) + 보존 윈도우 재확인 + 60분 미만 시 재-에스컬레이션 기준 문서화
+  - 배포 후 라이브 실측(NAS, 2026-09-29): `docker logs` 7개 전건 정상, VictoriaLogs `service.name`별 6개 값 각 ≥1건 적재 확인, vector 자가 관측 41건(배포 직후 1회성 연결거부 버스트, 증폭 패턴 없음), vector 자원 사용 MEM 62.93%(80.55MiB/128MiB)·CPU 0.78%(상한 대비 여유), 실효 저널 보존 창 81분(60분 임계 상회, 재상향 불필요)
+- CD `OBSERVED_SERVICES` 화이트리스트에 cadvisor 누락 보완 (`.github/deploy/reflect.sh`) — SPEC-OBSV-LOGS-004 M4-fix. `docker-compose.yml`의 cadvisor `journald` 전환 diff가 CD `up` 대상에서 누락되던 결함 수정. `reflect_test.sh`에 cadvisor 전용 회귀 테스트 추가
+
 ### Fixed
 
 - CD 반영 판정의 compose 서비스 블록 경계 정규식 mawk 이식성 결함 수정 (SPEC-INFRA-CICD-003, 관련: aaa-infra#178)
