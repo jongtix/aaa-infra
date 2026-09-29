@@ -366,6 +366,15 @@
 - WebSocket 재연결 성공 직후, 유실 기간 동안의 타이밍 알림 불가 상태를 로그에 기록
 - 재연결 안정화 유예: 재연결 성공 후 최소 [TBD]초 동안 연결 상태를 확인 (초기 기본값 범위: ~30초)
 
+**WebSocket 복원력 메커니즘** ([SPEC-COLLECTOR-WS-RESILIENCE-002](../../.moai/specs/SPEC-COLLECTOR-WS-RESILIENCE-002/spec.md), v1.81.0/v1.81.1):
+
+| 메커니즘 | 동작 |
+|----------|------|
+| 유휴 감지 워치독 | 세션별 최종 수신 시각(틱·제어 메시지·PINGPONG 전체 포함) 추적, 30초 주기 스케줄 점검으로 유휴 임계값(기본 60초, 설정 가능) 초과 시 강제 재연결. 장 마감 시간대는 비활성화 |
+| 인증 실패 서킷 브레이커 | 기존 안전 모드 TTL/백오프와 독립된 별도 카운터(30초 윈도우, 3회 임계값, 트립 시 최소 30초 재연결 지연)로 KIS 대상 재연결 폭주를 방지. 안전 모드 재진입 임계값(위 갱신 전략 표)과 상호 약화 없이 각자 독립적으로 유효 |
+
+- 배경: 2026-09-28 half-open 소켓 인시던트 — 오류 로그 없이 18분 이상 틱 수신이 무음 중단된 사례에서 도입
+
 **관심 종목 동기화**:
 
 | 회차 | 시각 (KST) | 목적 |
@@ -530,7 +539,8 @@ KIS API는 Access Token과 Approval Key 두 가지 토큰을 관리한다. 계�
 | Access Token | 정상 (Lazy) | `getValidToken(alias)` 최초 호출 시 발급 (캐시 미스) |
 | Access Token | 방어 (401) | API 호출 시 401 응답 수신 → 즉시 재발급 후 원래 요청 재시도 |
 | Approval Key | 정상 (스케줄) | 매일 08:30 `@Scheduled` cron으로 5개 계좌 일괄 발급 |
-| Approval Key | 방어 (WebSocket) | 승인 요청 거부 시 즉시 재발급 후 재연결 |
+| Approval Key | 방어 (핸드셰이크) | WebSocket 접속 승인 요청 자체가 거부(HTTP 401 상당) 시 즉시 재발급 후 재연결 |
+| Approval Key | 방어 (SUBSCRIBE) | 핸드셰이크는 성공했으나 이후 SUBSCRIBE 응답 msg1에 `invalid approval` 수신 시, 문자열 접두사 분류로 탐지 → 캐시 무효화 → 재발급 → 기존 세션에 신규 키 주입(재연결 없이). Single-flight 가드 + 계좌(alias)별 최소 60초 재발급 간격 ([SPEC-COLLECTOR-WS-RESILIENCE-002](../../.moai/specs/SPEC-COLLECTOR-WS-RESILIENCE-002/spec.md)) |
 | 모두 | 갱신 실패 | 최대 3회 재시도 (exponential backoff). 3회 실패 시 해당 계좌 안전 모드 진입 + Micrometer counter 계측 (CollectorSafeMode vmalert 룰) |
 
 **동시성 제어**
