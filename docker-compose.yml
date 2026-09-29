@@ -232,9 +232,11 @@ services:
           memory: 400M
           cpus: "0.5"
     # REDIS_APPUSER_USERNAME/PASSWORD 등은 서비스 간 공유 시크릿 — .env.common만 사용(TECHSPEC.md "Secrets 파일 범위").
-    # .env.notifier는 이후 Phase의 DB 계정 + TELEGRAM_TRADE_BOT_TOKEN 전용(현 스캐폴딩 단계 미사용)
+    # .env.notifier: DB 계정(MYSQL_NOTIFIER_PASSWORD) — SPEC-NOTIFIER-FILTER-001부터 사용 시작.
+    # TELEGRAM_TRADE_BOT_TOKEN은 TELEGRAM-001까지 여전히 미사용(파일에는 존재, 앱이 참조 안 함).
     env_file:
       - ${AAA_SSD_BASE}/secrets/.env.common
+      - ${AAA_SSD_BASE}/secrets/.env.notifier
     expose:
       - "8080"
     volumes:
