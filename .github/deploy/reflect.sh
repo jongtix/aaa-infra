@@ -34,12 +34,15 @@ source "$SCRIPT_DIR/lib.sh"
 
 # 관측 서비스 목록(REQ-CD-013) — compose 자동 반영(`docker compose up`) 대상 화이트리스트.
 # mysql·redis·collector·analyzer·notifier는 절대 포함하지 않는다([HARD]).
-OBSERVED_SERVICES=(vmalert alertmanager victoriametrics victorialogs vector node-exporter)
+# cadvisor는 SPEC-OBSV-LOGS-004(M4)에서 journald 드라이버 전환 대상 7개 컨테이너에
+# 포함됐으나 이 화이트리스트 갱신이 누락돼 있었다 — 2026-09-29 배포에서 나머지 6개는
+# 자동 반영됐지만 cadvisor만 구 json-file 드라이버로 남는 CD 배선 갭으로 확인됨.
+OBSERVED_SERVICES=(vmalert alertmanager victoriametrics victorialogs vector node-exporter cadvisor)
 
 # docker-compose.yml 안에 정의된 전체 서비스 이름(블록 diff 분류용). mysql/redis/
 # collector/analyzer/notifier도 포함하지만, 이는 그 블록이 변경됐을 때 "관측 서비스가 아니므로
 # up 대상에서 제외 + notify"로 올바르게 분류하기 위함이지 up 대상으로 삼기 위함이 아니다.
-_ALL_KNOWN_SERVICES=(mysql redis collector analyzer notifier victoriametrics vmalert alertmanager victorialogs vector node-exporter)
+_ALL_KNOWN_SERVICES=(mysql redis collector analyzer notifier victoriametrics vmalert alertmanager victorialogs vector node-exporter cadvisor)
 
 # -----------------------------------------------------------------------------
 # docker 명령 실행 간접화 — 이 파일에서 실제 `docker ...`를 호출하는 유일한 지점.
