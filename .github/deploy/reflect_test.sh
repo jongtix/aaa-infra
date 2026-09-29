@@ -89,8 +89,9 @@ run_test() {
 _write_base_compose() {
   # $1=path $2=vmalert_image_tag(변형 포인트) $3=collector_image_tag $4=mysql_image_tag
   # $5=x_logging_max_size(변형 포인트) $6=notifier_image_tag(변형 포인트)
-  # $7=alertmanager_image_tag(변형 포인트, 기본값은 기존 고정값과 동일 — 기존 테스트 출력 불변)
-  local path="$1" vmalert_tag="${2:-v1}" collector_tag="${3:-latest}" mysql_tag="${4:-8.4}" max_size="${5:-10m}" notifier_tag="${6:-latest}" alertmanager_tag="${7:-v0.33.1}"
+  # $7=alertmanager_image_tag(변형 포인트) $8=cadvisor_image_tag(변형 포인트, 기본값은
+  # 기존 고정값과 동일 — 기존 테스트 출력 불변)
+  local path="$1" vmalert_tag="${2:-v1}" collector_tag="${3:-latest}" mysql_tag="${4:-8.4}" max_size="${5:-10m}" notifier_tag="${6:-latest}" alertmanager_tag="${7:-v0.33.1}" cadvisor_tag="${8:-v0.55.1}"
   cat > "$path" <<EOF
 x-logging: &default-logging
   driver: json-file
@@ -150,6 +151,10 @@ services:
   node-exporter:
     image: prom/node-exporter:v1.11.1
     restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:${cadvisor_tag}
+    restart: unless-stopped
 EOF
 }
 
@@ -168,6 +173,24 @@ test_compose_classify_vmalert_block_only_emits_up_vmalert_only() {
   assert_contains "$out" "UP:vmalert"
   assert_not_contains "$out" "UP:alertmanager"
   assert_not_contains "$out" "UP:victoriametrics"
+  assert_not_contains "$out" "NOTIFY:"
+  rm -f "$old" "$new"
+}
+
+test_compose_classify_cadvisor_block_only_emits_up_cadvisor_only() {
+  # 회귀 테스트(2026-09-29 배포): cadvisor는 SPEC-OBSV-LOGS-004(M4)에서 journald 전환
+  # 대상에 포함됐으나 OBSERVED_SERVICES 화이트리스트 갱신이 누락돼 자동 반영에서
+  # 누락됐다 — cadvisor 자기 블록 변경이 UP:cadvisor로 나오는지 직접 검증한다.
+  local old new
+  old=$(mktemp) new=$(mktemp)
+  _write_base_compose "$old" "v1" "latest" "8.4" "10m" "latest" "v0.33.1" "v0.55.1"
+  _write_base_compose "$new" "v1" "latest" "8.4" "10m" "latest" "v0.33.1" "v0.56.0"   # cadvisor 블록만 변경
+
+  local out
+  out=$(compose_classify "$old" "$new")
+  assert_contains "$out" "UP:cadvisor"
+  assert_not_contains "$out" "UP:vmalert"
+  assert_not_contains "$out" "UP:node-exporter"
   assert_not_contains "$out" "NOTIFY:"
   rm -f "$old" "$new"
 }
@@ -580,6 +603,7 @@ test_reflect_deploy_scrape_yml_sends_sighup_not_restart() {
 # 함께 실패하는데, 원인을 가장 직접 보여주는 이 테스트의 메시지가 먼저 남도록 순서를 둔다.
 run_test test_compose_changed_service_blocks_trailing_alertmanager_change_emits_only_alertmanager
 run_test test_compose_classify_vmalert_block_only_emits_up_vmalert_only
+run_test test_compose_classify_cadvisor_block_only_emits_up_cadvisor_only
 run_test test_compose_classify_shared_anchor_change_blocks_everything
 run_test test_compose_classify_collector_block_change_blocks_and_never_emits_collector
 run_test test_compose_classify_notifier_block_change_blocks_and_never_emits_notifier
