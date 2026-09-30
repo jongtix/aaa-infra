@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- notifier 서비스에 `.env.notifier` env_file 배선 추가 (SPEC-NOTIFIER-FILTER-001)
+  - `docker-compose.yml` — `notifier` 서비스 `env_file`에 `${AAA_SSD_BASE}/secrets/.env.notifier`를 `.env.common` 다음으로 추가. aaa-notifier가 SPEC-NOTIFIER-FILTER-001부터 `MYSQL_NOTIFIER_PASSWORD`로 DB에 접속하므로(장전 참조 SELECT + `notification_log` DRYRUN INSERT), 배선 없이 배포하면 환경변수 미해석으로 기동에 실패한다. 위 SPEC-NOTIFIER-SCHEMA-001 항목에서 이연해 둔 DB 접속 배선을 여기서 마무리
+  - 시크릿 파일 `secrets/.env.notifier`는 SCHEMA-001 작업 당시(2026-09-18) NAS에 이미 준비됨 — 이번 변경은 compose 배선만 추가. `TELEGRAM_TRADE_BOT_TOKEN`은 파일에 있으나 TELEGRAM-001 전까지 앱이 참조하지 않는다(주석 갱신)
+  - aaa-notifier FILTER-001 이미지 배포보다 먼저 반영되어야 한다
+
 ### Added
 
 - notifier MySQL 계정/grant 스캐폴딩 + TECHSPEC §4 출처 정정 (SPEC-NOTIFIER-SCHEMA-001, REQ-NOTIFIER-SCHEMA-021~025/031)
