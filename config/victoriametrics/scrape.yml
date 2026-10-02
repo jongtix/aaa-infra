@@ -53,3 +53,13 @@ scrape_configs:
     static_configs:
       # aaa-network 내부 DNS. analyzer는 expose 8000(호스트 미공개).
       - targets: ["aaa-analyzer:8000"]
+
+  # [aaa-infra#187 조사 중 발견] notifier가 스크랩 대상에 누락돼 있어
+  # notifier_filter_* 메트릭(유지 확증 dwell 등)이 VM에 전혀 적재되지 않았다.
+  # collector와 동일하게 Spring Actuator Prometheus 엔드포인트를 스크랩.
+  - job_name: notifier
+    metrics_path: /actuator/prometheus
+    scheme: http
+    static_configs:
+      # aaa-network 내부 DNS. notifier는 expose 8080(호스트 미공개).
+      - targets: ["aaa-notifier:8080"]
