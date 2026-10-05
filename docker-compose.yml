@@ -430,7 +430,7 @@ services:
   victorialogs:
     # VictoriaLogs는 VictoriaMetrics 제품군이나 별도 버전 체계.
     # v1.52.0 distroless 버전 고정 (SPEC-OBSV-VLOGS-HEALTH-001 — healthcheck 제거로 대응).
-    image: victoriametrics/victoria-logs:v1.52.0
+    image: victoriametrics/victoria-logs:v1.53.0
     container_name: aaa-victorialogs
     restart: unless-stopped
     deploy:
