@@ -1668,6 +1668,7 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 
 **컨테이너 헬스체크**:
 - 모든 서비스 컨테이너에 `healthcheck` 설정 (Spring Boot: `/actuator/health`, FastAPI: `/health`)
+  - 예외: `victorialogs`는 v1.52.0부터 distroless 이미지라 셸·`wget`이 없어 healthcheck를 두지 않는다. 생존 감시는 vmalert `VictorialogsDown` 알람이 대신한다(SPEC-OBSV-VLOGS-HEALTH-001)
 - 헬스체크 실패 시 `restart: unless-stopped` 정책으로 자동 재시작
 - 역할: 인프라 계층 감시 (컨테이너 크래시, JVM 무응답 자동 복구)
 - [TBD - Phase 1 구현 시] Spring Boot Actuator는 `health`만 노출 (`management.endpoints.web.exposure.include=health`), FastAPI `/docs`·`/redoc`는 프로덕션 비활성화
@@ -1705,7 +1706,7 @@ Redis 컨테이너 limit = `maxmemory` × 2: AOF rewrite 시 `fork()` → Copy-o
 | 항목 | 내용 |
 |------|------|
 | 수집 에이전트 | Vector 0.56.0 (collector JSON ECS `.log` tail, `*.gz` 제외) |
-| 로그 저장소 | VictoriaLogs v1.51.0 (90일 보존, `/victoria-logs-data`) |
+| 로그 저장소 | VictoriaLogs v1.53.0 (90일 보존, `/victoria-logs-data`). distroless 이미지라 healthcheck 없음 — vmalert `VictorialogsDown`으로 외부 감시 |
 | 수집 범위 | collector 한정 (mysql/redis 제외 — 결정 C) |
 | 조회 | SSH 터널 → VMUI/LogsQL (`http://localhost:9428/select/vmui/`) |
 | 메트릭 스택과 관계 | 독립 (VM/vmalert/AM 변경 없음) |
