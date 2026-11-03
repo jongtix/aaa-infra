@@ -1208,6 +1208,8 @@ PRD 6.2절에 정의된 A/B/C/F 등급을 자동 분류하는 기준.
 
 **`signal_price_bands` 컬럼 윤곽** (타입 정밀화·인덱스는 ANALYZER-SCHEMA-001): `stock_id`(FK), `trade_date`(기준 일봉 날짜 — 밴드의 적용 대상은 익거래일 장중), `horizon`(D20/D60), `boundary_set`(PROMOTE/DEMOTE), `band_seq`, `price_low`, `price_high`, `signal_class`(5클래스), `regime_suppressed`, `model_version`, `created_at`. 같은 (`stock_id`, `trade_date`, `horizon`, `boundary_set`) 안에서 `band_seq` 오름차순 밴드는 경계 가격을 공유하는 연속 파티션이다 — 인접 밴드는 경계 가격을 공유하고, 내부 밴드는 반개구간 `[price_low, price_high)`(공유 경계 가격은 `price_low`로 갖는 쪽, 즉 상위/뒤 밴드에 속함)이며, **마지막 밴드만 상한을 포함**해 클램프 판정 없이 그 가격을 조회한다 — notifier `BandPartition.lookup`의 조회 규칙과 일치한다(SPEC-ANALYZER-INFER-002 REQ-AIR-002)
 
+**`signal_price_curves`** (신설, [SPEC-SIGNAL-PRICECURVE-001](../../.moai/specs/SPEC-SIGNAL-PRICECURVE-001/spec.md), Flyway `V50__analyzer_create_signal_price_curves.sql`): 밴드 스윕이 산출하는 그리드별 score(`grid_scores`)를 폐기하지 않고 (`stock_id`, `trade_date`, `horizon`)당 1행의 JSON 커브로 전량 저장한다. 컬럼: `stock_id`(FK), `trade_date`, `horizon`(D20/D60), `prev_close`(그리드 중심, 디버그/감사용), `grid_step_pct`(이 행의 그리드 해상도), `curve`(JSON, `[{"price":..,"score":..}, ...]` 그리드 오름차순 배열), `model_version`, `created_at`. `signal_price_bands`와 달리 `boundary_set`·`regime_suppressed` 컬럼을 두지 않는다 — `grid_scores`는 `evaluate(grid)` 1회 평가로 PROMOTE/DEMOTE 양쪽에 공유되고, 커브는 항상 억제 전 원값이라 "억제된 버전"이 애초에 존재하지 않기 때문이다(UNIQUE 키는 (`stock_id`, `trade_date`, `horizon`) 하나뿐). notifier는 이 커브를 장전 참조 데이터에 적재해 발동 체결가에서 선형 보간(최근접 두 그리드 포인트, 범위 밖은 클램프)한 표시 score를 산출하며, 커브가 없을 때만 전일 종가 기준 신호 score로 폴백한다(8.1절 1단계와 연동).
+
 **소비 규칙 (notifier — 8.1절 1단계와 연동)**:
 - 장 시작 전 cron에서 당일 밴드를 프로세스 메모리에 적재(notifier 참조 데이터 장전 스냅샷에 통합). 틱 경로 DB 동기 조회 금지 원칙 유지
 - 유효 등급 초기값 = 전일 종가가 속한 DEMOTE 파티션의 등급

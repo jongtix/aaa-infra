@@ -216,7 +216,7 @@ ML 학습(Phase 2)에 필요한 과거 데이터를 Phase 1에서 사전 수집�
 
 모델은 예측 기간 종료 시점의 **기대수익률(연속 점수, score)** 을 직접 출력하고, 등급은 그 score에 수익률 경계를 적용해 파생한다(연속 점수 + 이산화 계층 — [ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md)). STRONG 등급은 더 높은 수익/손실이 예상될 때(|score|가 클 때) 부여된다 — "STRONG = 크게 움직일 것"이라는 의미는 종전과 동일하다. 각 신호에는 confidence (**0.500 ~ 1.000**, ANALYZER-INFER-001 M8, 2026-09-13 확정 — DDL `confidence DECIMAL(4,3)` 및 REQ-ASCH-006(`[0.500, 1.000]`)과 정렬. 종전 "0.0~1.0" 표기는 산출식(`Φ(|score|/σ)`, 0.5=방향 무정보 ~ 1.0=확실)과 불일치하는 문서 drift였다) 값이 함께 생성된다 — 방향 확신(그 방향 판단이 맞을 확률)을 뜻하며, 분위수 회귀 예측구간으로 산출한다([TECHSPEC 8.5절](TECHSPEC.md#85-tier-분류-기준)). 등급 파생에 사용하는 수익률 경계는 [TECHSPEC 6.1절](TECHSPEC.md#61-모델-구조)에 정의한다.
 
-알림에는 등급과 함께 score(예상 수익률 y%)·confidence를 표기한다.
+알림에는 등급과 함께 score(예상 수익률 y%)·confidence를 표기한다. score 표기는 그 근거 가격을 반드시 함께 밝힌다 — 발동 체결가(현재가) 기준으로 보간된 값인지, 보간용 커브 데이터가 아직 없어 전일 종가 기준 값으로 대체(폴백)된 것인지는 서로 바꿔 쓸 수 없는 다른 값이며, 근거를 밝히지 않은 표기는 금지한다([SPEC-SIGNAL-PRICECURVE-001](../../.moai/specs/SPEC-SIGNAL-PRICECURVE-001/spec.md)).
 
 > **개정 이력 (2026-07-05)**: 종전 "모델은 5개 등급을 직접 출력" 설계를 "연속 점수 출력 + 이산화 계층"으로 개정 ([ADR-033](ADR/ADR-033-analyzer-continuous-score-price-bands.md), ADR-031 대체). 등급 체계·STRONG 의미론은 불변이며, 모델 출력 표현만 연속화한 것이다.
 
