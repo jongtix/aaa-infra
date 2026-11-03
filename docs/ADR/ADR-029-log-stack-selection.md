@@ -56,3 +56,11 @@ NAS RAM이 8GB → 32GB로 업그레이드되었다(관련: aaa-infra#119). Vict
 근거였던 "RAM 70% 임계(5.6GB) 대비 여유" 수치는 8GB 제약 하의 것으로, 32GB 기준에서는 메모리 압박이
 크게 완화되어 이 판단 자체의 긴급성은 낮아졌다. VictoriaLogs 컨테이너 memory limit(128M)은 변경하지
 않는다(#119 범위에서 실측 피크 35.5MiB로 충분한 여유 확인).
+
+## Update (2026-11-03): distroless 이미지 전환에 따른 healthcheck 제거
+
+VictoriaLogs + Vector 조합을 채택한 결정은 변함없다. 다만 이미지 태그가 v1.52.0 이상으로 올라가면서
+distroless 이미지로 바뀌어 셸과 `wget`이 더 이상 존재하지 않는다. 이에 따라 근거 1에서 언급한
+"동일 healthcheck 패턴(`/health → OK`)"을 compose healthcheck로 재사용할 수 없게 되어 healthcheck를
+제거하고, 생존 여부는 vmalert `VictorialogsDown` 알람으로 외부에서 감시한다(SPEC-OBSV-VLOGS-HEALTH-001).
+현재 운영 중인 태그는 v1.53.0이다.

@@ -6,6 +6,15 @@
 
 ### Fixed
 
+- VictoriaLogs distroless 이미지 전환으로 실행 불가해진 healthcheck 제거 + vmalert 외부 생존 감시로 대체 (SPEC-OBSV-VLOGS-HEALTH-001, REQ-VLH-001~008)
+  - 배경 — dependabot이 `victoriametrics/victoria-logs`를 v1.51.0 → v1.52.0으로 올리면서(2026-07-17) 이미지가 Alpine에서 distroless로 바뀌어 셸·`wget`이 사라졌다. compose의 `wget` 기반 healthcheck가 실행 불가해져 컨테이너가 `unhealthy`로 판정되고, `depends_on: service_healthy`로 묶인 `vector`가 Created에 멈춰 로그 파이프라인이 중단됐다. 즉시 조치는 v1.51.0 롤백(53e0a84), 이번 SPEC이 근본 수정
+  - `docker-compose.yml` — `victorialogs` 서비스의 `healthcheck:` 블록 제거, `vector`의 `depends_on.victorialogs.condition`을 `service_healthy` → `service_started`로 변경(432c24b)
+  - `config/victoriametrics/scrape.yml` — `job_name: victorialogs`(대상 `aaa-victorialogs:9428`) scrape job 등록(82b27cc)
+  - `config/vmalert/rules.yml` — `victorialogs-liveness` 그룹에 `VictorialogsDown` 알람 추가(`up{job="victorialogs"} == 0`, `for: 90s`, `severity=critical`·`component=victorialogs`·`tier=TICKET`), `config/vmalert/rules_test_ops.yaml`에 단위 테스트 2건(지속 다운 시 발화, 정상 시 무발화) 추가(f377d74)
+  - 이미지는 이후 dependabot이 v1.53.0으로 올렸다(85d36da, 2026-10-05). SPEC의 이미지 재상향 태스크(T6)는 생략되어 이 SPEC에 귀속되는 compose 이미지 변경은 없다
+  - sync 전 로컬 점검 — `config/vmalert/check-alert-coverage.sh` exit 0(룰 61개, 허용목록 미커버 2개, 끊긴 참조 0개), vmalert-tool v1.147.0 `rules_test_ops.yaml` unittest SUCCESS
+  - 라이브 실측(NAS, 2026-11-03 KST) — `aaa-victorialogs` v1.53.0·Up 11일·재시작 0회·healthcheck 없음, `aaa-vector` 가동 중, `up{job="victorialogs"}` = 1(직전 11일 최솟값 1), vmalert에 `VictorialogsDown` 룰 로드 확인. 통제 정지 테스트: 10:47:42에 `docker stop aaa-victorialogs` → +75초 `pending` → +165초 `up=0` 및 `ALERTS{alertname="VictorialogsDown",alertstate="firing",severity="critical",tier="TICKET"}` → 재기동 후 `up=1`, 약 3분 내 해소(VictoriaLogs 스토리지 오픈 약 26초). 테스트 내내 `aaa-vector` 가동 유지
+  - 미검증 — (1) `tier=TICKET` 알람의 수신 채널(Telegram/alertmanager 라우팅) 전달 여부는 확인하지 않음, (2) healthcheck 없는 컨테이너에서 `docker compose up --wait`의 대기 동작(DP-2)은 직접 시험하지 않음, (3) 해당 커밋들의 CI 결과는 이번 sync에서 재확인하지 않음
 - notifier 서비스에 `.env.notifier` env_file 배선 추가 (SPEC-NOTIFIER-FILTER-001)
   - `docker-compose.yml` — `notifier` 서비스 `env_file`에 `${AAA_SSD_BASE}/secrets/.env.notifier`를 `.env.common` 다음으로 추가. aaa-notifier가 SPEC-NOTIFIER-FILTER-001부터 `MYSQL_NOTIFIER_PASSWORD`로 DB에 접속하므로(장전 참조 SELECT + `notification_log` DRYRUN INSERT), 배선 없이 배포하면 환경변수 미해석으로 기동에 실패한다. 위 SPEC-NOTIFIER-SCHEMA-001 항목에서 이연해 둔 DB 접속 배선을 여기서 마무리
   - 시크릿 파일 `secrets/.env.notifier`는 SCHEMA-001 작업 당시(2026-09-18) NAS에 이미 준비됨 — 이번 변경은 compose 배선만 추가. `TELEGRAM_TRADE_BOT_TOKEN`은 파일에 있으나 TELEGRAM-001 전까지 앱이 참조하지 않는다(주석 갱신)
