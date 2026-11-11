@@ -1099,12 +1099,13 @@ groups:
   # 그룹 12: NAS 호스트 자원 — 디스크·RAM·CPU 3단계 (SPEC-INFRA-NODE-001)
   # ---------------------------------------------------------------------------
   # 게이트 무관·24h 상시. 디스크는 mountpoint 라벨(/volume1·/volume2)로 각각 발화.
-  # CPU = node_load5/4 (N100 4코어 하드코딩, §5 V-1). absent 시 비교식 빈 벡터로 구조적 억제(REQ-NE-014).
+  # CPU = 사용률 비율식(idle·iowait 제외, nice 포함, 코어 수 상수 없음) — SPEC-INFRA-NODE-002가
+  #   NODE-001 REQ-NE-011~013 대체. absent 시 비교식 빈 벡터로 구조적 억제(REQ-NE-014·REQ-NE2-006).
   # 다단계 동시 발화: 임계 초과 시 해당하는 모든 단계가 동시에 발화한다(예: 95% → W1+W2+Critical).
   # 의도적 설계 — AM inhibit 룰 제외(§6). 상위 알림이 유실되더라도 하위 알림이 보장된다.
   # [SPEC-OBSV-WATERMARK-001 REQ-WM-026, 2026-07-10 개정] 디스크 Critical(>90%)·RAM Critical(>95%)
-  #   2종만 TICKET→PAGE 승격(쓰기 실패=전 서비스 정지 전조·OOM=분 단위 진행). CPU Critical(>90%)은
-  #   load5/4가 I/O 대기 포함 프록시라 오탐성 — TICKET 유지.
+  #   2종만 TICKET→PAGE 승격(쓰기 실패=전 서비스 정지 전조·OOM=분 단위 진행).
+  #   CPU Critical은 신규 지표 운영 이력 확보 전까지 TICKET 유지 (SPEC-INFRA-NODE-002).
   - name: node-resource
     interval: 60s
     rules:
@@ -1195,44 +1196,50 @@ groups:
           description: "호스트 메모리 사용률이 95% 초과 지속 — OOM Killer가 컨테이너를 강제 종료할 위험."
           action: "ssh nas-ugreen \"free -h && docker stats --no-stream\" → 과다 사용 컨테이너 식별"
 
-      # --- CPU: node_load5/4 70/85/90% ---
-      # node_load5/4: 5분 부하평균 ÷ 코어수(4, N100 하드코딩). 순수 CPU 사용률이 아닌 프록시.
-      # I/O 대기(D 상태) 포함. NAS 디스크 I/O 폭증 시 CPU 부하 없이도 지표 상승 가능(§5 V-1).
+      # --- CPU: 사용률(idle·iowait 제외, nice 포함) 70/85/90% (SPEC-INFRA-NODE-002) ---
+      # 전 CPU·전 모드 합산 비율식 — 코어 수 상수 없음. iowait는 바쁨에서 제외, nice는 포함.
+      # 05~08시 KST nice 작업(약 1코어)이 흔함 — antivirus_serv 귀속은 미검증(SPEC-INFRA-NODE-002 §5 V-1).
       - alert: NodeCpuWarning1
-        expr: (node_load5 / 4) > 0.70
+        expr: |
+          1 - sum(rate(node_cpu_seconds_total{mode=~"idle|iowait"}[5m]))
+              / sum(rate(node_cpu_seconds_total[5m])) > 0.70
         for: 5m
         labels:
           severity: warning
           component: node
           tier: TICKET
         annotations:
-          summary: "NAS CPU 부하 1단계 — {{ $value | humanizePercentage }}"
-          description: "5분 부하평균(코어 대비)이 70% 초과 지속 — 디스크 I/O 대기도 포함되는 지표라 CPU가 아닌 I/O 병목일 수 있음."
-          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 부하 원인 컨테이너·I/O 확인"
+          summary: "NAS CPU 사용률 1단계 — {{ $value | humanizePercentage }}"
+          description: "CPU 사용률(idle·iowait 제외, nice 포함)이 70% 초과 지속."
+          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)이 흔함(출처는 antivirus_serv로 추정, 미검증)"
 
       - alert: NodeCpuWarning2
-        expr: (node_load5 / 4) > 0.85
+        expr: |
+          1 - sum(rate(node_cpu_seconds_total{mode=~"idle|iowait"}[5m]))
+              / sum(rate(node_cpu_seconds_total[5m])) > 0.85
         for: 5m
         labels:
           severity: warning
           component: node
           tier: TICKET
         annotations:
-          summary: "NAS CPU 부하 2단계 — {{ $value | humanizePercentage }}"
-          description: "5분 부하평균(코어 대비)이 85% 초과 지속 — 디스크 I/O 대기도 포함되는 지표라 CPU가 아닌 I/O 병목일 수 있음."
-          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 부하 원인 컨테이너·I/O 확인"
+          summary: "NAS CPU 사용률 2단계 — {{ $value | humanizePercentage }}"
+          description: "CPU 사용률(idle·iowait 제외, nice 포함)이 85% 초과 지속."
+          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)이 흔함(출처는 antivirus_serv로 추정, 미검증)"
 
       - alert: NodeCpuCritical
-        expr: (node_load5 / 4) > 0.90
+        expr: |
+          1 - sum(rate(node_cpu_seconds_total{mode=~"idle|iowait"}[5m]))
+              / sum(rate(node_cpu_seconds_total[5m])) > 0.90
         for: 2m
         labels:
           severity: critical
           component: node
           tier: TICKET
         annotations:
-          summary: "NAS CPU 부하 3단계 — {{ $value | humanizePercentage }}"
-          description: "5분 부하평균(코어 대비)이 90% 초과 지속 — 디스크 I/O 대기도 포함되는 지표라 CPU가 아닌 I/O 병목일 수 있음. CPU는 TICKET 유지(오탐성)."
-          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 부하 원인 컨테이너·I/O 확인"
+          summary: "NAS CPU 사용률 3단계 — {{ $value | humanizePercentage }}"
+          description: "CPU 사용률(idle·iowait 제외, nice 포함)이 90% 초과 지속. 신규 지표 운영 이력 확보 전까지 TICKET 유지."
+          action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)이 흔함(출처는 antivirus_serv로 추정, 미검증)"
 
   # ---------------------------------------------------------------------------
   # 그룹 XR-H: 예상 실행 신선도 — 라벨 무관 단일 룰(SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-019, Module H)
