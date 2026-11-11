@@ -1643,7 +1643,7 @@ Repository Secrets:
 
 [^notifier-limit]: 실제 `docker-compose.yml` 값은 이전부터 항상 400MB였다(과거 이 표의 600MB 기재가 오기 — 이번 #119 정리 시 정합화). notifier는 Phase 3 스캐폴딩 단계(DB 미접속, 실 워크로드 없음)라 JVM 플래그·컨테이너 limit 모두 실제 Phase 3 배포 시 실측 후 재조정 예정(`docker-compose.yml`의 "실측 후 조정" 주석과 동일 기조) — RAM 32GB 업그레이드와 무관하게 현 단계에서는 값을 변경하지 않는다.
 
-**메모리 예산 (실제 운영 스택 기준, `docker-compose.yml` 전 서비스 합산, 2026-07-26 #119 재산정)**
+**메모리 예산 (실제 운영 스택 기준, `docker-compose.yml` 전 서비스 합산, 2026-07-26 #119 재산정, 2026-11-11 cadvisor 512MB 반영)**
 
 | 구성 요소 | 컨테이너 limit |
 |-----------|---------|
@@ -1658,9 +1658,9 @@ Repository Secrets:
 | victorialogs | 128MB |
 | vector | 128MB |
 | node-exporter | 48MB |
-| cadvisor | 128MB |
-| **합계** | **4,752MB (14.5%, 32,768MB 기준)** |
-| **여유** | **28,016MB (85.5%)** |
+| cadvisor | 512MB |
+| **합계** | **5,136MB (15.7%, 32,768MB 기준)** |
+| **여유** | **27,632MB (84.3%)** |
 
 위 표는 각 컨테이너의 `deploy.resources.limits.memory` 설정값(상한)의 합산이며 실측 RSS 합이 아니다 — 실제 사용량은 대부분 limit 대비 크게 낮다(2026-07-26 `docker stats` 실측: collector 681Mi/800M 등, RAM 32GB 업그레이드 근거 자료 참조). trader는 아직 `docker-compose.yml`에 없어 이 합산에서 제외했다(위 JVM 표의 trader 행은 향후 설계값).
 

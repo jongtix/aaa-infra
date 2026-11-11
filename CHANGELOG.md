@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- cadvisor 컨테이너 메모리 한도 256M → 512M 상향 (`docker-compose.yml`, `docs/TECHSPEC.md` 메모리 예산 표 합계 5,136MB로 재산정)
+  - 2026-11-11 06:25~08:31 KST에 OOM kill 7회 발생, 직전 최소 48시간 working set이 한도(256MiB)에 근접(약 250~255MiB). 한도 상향만 한 조치이며 메모리 증가 원인(호스트 systemd cgroup 추적 등)은 별도 조사 대상
 - VictoriaLogs distroless 이미지 전환으로 실행 불가해진 healthcheck 제거 + vmalert 외부 생존 감시로 대체 (SPEC-OBSV-VLOGS-HEALTH-001, REQ-VLH-001~008)
   - 배경 — dependabot이 `victoriametrics/victoria-logs`를 v1.51.0 → v1.52.0으로 올리면서(2026-07-17) 이미지가 Alpine에서 distroless로 바뀌어 셸·`wget`이 사라졌다. compose의 `wget` 기반 healthcheck가 실행 불가해져 컨테이너가 `unhealthy`로 판정되고, `depends_on: service_healthy`로 묶인 `vector`가 Created에 멈춰 로그 파이프라인이 중단됐다. 즉시 조치는 v1.51.0 롤백(53e0a84), 이번 SPEC이 근본 수정
   - `docker-compose.yml` — `victorialogs` 서비스의 `healthcheck:` 블록 제거, `vector`의 `depends_on.victorialogs.condition`을 `service_healthy` → `service_started`로 변경(432c24b)
