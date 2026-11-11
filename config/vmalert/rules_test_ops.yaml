@@ -313,7 +313,7 @@ tests:
         exp_alerts: []
 
   # ===========================================================================
-  # 룰 10: node-resource — NAS 호스트 자원(디스크·RAM·CPU) (SPEC-INFRA-NODE-001/002)
+  # 룰 10: node-resource — NAS 호스트 자원(디스크·RAM·CPU·온도) (SPEC-INFRA-NODE-001/002)
   # ===========================================================================
   # interval: 60s (node-resource 그룹 평가 주기).
   # 디스크 ratio: node_filesystem_size_bytes=100, node_filesystem_avail_bytes=<값>으로 사용률 재현.
@@ -322,6 +322,9 @@ tests:
   #   CPU 2개(cpu="0"·"1"), CPU별 1분 증분 합 = 60(초). 사용률 = 1 − (idle+iowait 증분 합) / (전체 증분 합).
   # 디스크·RAM: warning for:5m → eval_time 6m, critical for:2m → eval_time 3m(게이지는 0m부터 참).
   # CPU: rate()가 두 번째 표본(1m)부터 값을 내므로 1주기 여유 — warning 7m, critical 4m. 미발화: 임계 직하값.
+  # 온도(SPEC-INFRA-NODE-002): 게이지 node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}를
+  #   '<온도>+0x10'으로 입력. warning for:5m → 6m, critical for:2m → 3m(게이지는 0m부터 참 — 디스크와 같은 관례).
+  #   max() 집계라 기대 라벨에 chip·sensor·instance가 없다.
 
   # TI-NODE-001. [디스크] NodeDiskWarning1 발화 — /volume1 75%(avail=25) > 70%, 6m (AC-3a / REQ-NE-005)
   - interval: 60s
@@ -735,6 +738,170 @@ tests:
         groupname: node-resource
         alertname: NodeCpuCritical
         exp_alerts: []
+
+  # TI-NODE-019. [온도] NodeTempWarning1 발화 + 게이트 무관 — 88°C > 85°C, 6m (AC-3·AC-5 / REQ-NE2-004·005·007)
+  # market_open=0(휴장) 입력은 발화에 영향 없음(REQ-NE2-007).
+  - interval: 60s
+    input_series:
+      - series: 'node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}'
+        values: '88+0x10'
+      - series: 'aaa_collector_market_open'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempWarning1
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              tier: TICKET
+            exp_annotations:
+              summary: "NAS CPU 패키지 온도 1단계 — 88°C"
+              description: "CPU 패키지 온도가 85°C 초과 지속(Tjmax 105°C)."
+              action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+
+  # TI-NODE-020. [온도] NodeTempWarning1 미발화(경계) — 정확히 85°C는 초과 아님, 6m (AC-3 / REQ-NE2-005)
+  - interval: 60s
+    input_series:
+      - series: 'node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}'
+        values: '85+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempWarning1
+        exp_alerts: []
+
+  # TI-NODE-021. [온도] NodeTempWarning2 발화 — 92°C > 90°C, 6m (AC-3 / REQ-NE2-005)
+  - interval: 60s
+    input_series:
+      - series: 'node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}'
+        values: '92+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempWarning2
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              tier: TICKET
+            exp_annotations:
+              summary: "NAS CPU 패키지 온도 2단계 — 92°C"
+              description: "CPU 패키지 온도가 90°C 초과 지속(Tjmax 105°C)."
+              action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+
+  # TI-NODE-022. [온도] NodeTempCritical 발화 — 97°C > 95°C, 3m, PAGE (AC-3 / REQ-NE2-005)
+  - interval: 60s
+    input_series:
+      - series: 'node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}'
+        values: '97+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: node-resource
+        alertname: NodeTempCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: node
+              tier: PAGE
+            exp_annotations:
+              summary: "NAS CPU 패키지 온도 3단계 — 97°C"
+              description: "CPU 패키지 온도가 95°C 초과 지속(Tjmax 105°C). 스로틀링·하드웨어 보호 정지 위험."
+              action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+
+  # TI-NODE-023. [온도 다단계 동시 발화] 97°C — W1·W2(TICKET)·Critical(PAGE) 동시 발화, 6m (AC-3 / REQ-NE2-005)
+  - interval: 60s
+    input_series:
+      - series: 'node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}'
+        values: '97+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempWarning1
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              tier: TICKET
+            exp_annotations:
+              summary: "NAS CPU 패키지 온도 1단계 — 97°C"
+              description: "CPU 패키지 온도가 85°C 초과 지속(Tjmax 105°C)."
+              action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempWarning2
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: node
+              tier: TICKET
+            exp_annotations:
+              summary: "NAS CPU 패키지 온도 2단계 — 97°C"
+              description: "CPU 패키지 온도가 90°C 초과 지속(Tjmax 105°C)."
+              action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: node
+              tier: PAGE
+            exp_annotations:
+              summary: "NAS CPU 패키지 온도 3단계 — 97°C"
+              description: "CPU 패키지 온도가 95°C 초과 지속(Tjmax 105°C). 스로틀링·하드웨어 보호 정지 위험."
+              action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+
+  # TI-NODE-024. [온도 absent] 온도 시계열 부재 → 미발화 — 구조적 억제, 6m (AC-4 / REQ-NE2-006)
+  - interval: 60s
+    input_series: []
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempWarning1
+        exp_alerts: []
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempCritical
+        exp_alerts: []
+
+  # TI-NODE-025. [온도 선택자 한정] 다른 칩(nvme_nvme0) 97°C만 → 미발화, 6m (AC-4 / REQ-NE2-004·006)
+  - interval: 60s
+    input_series:
+      - series: 'node_hwmon_temp_celsius{chip="nvme_nvme0",sensor="temp1"}'
+        values: '97+0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempWarning1
+        exp_alerts: []
+      - eval_time: 6m
+        groupname: node-resource
+        alertname: NodeTempCritical
+        exp_alerts: []
+
+  # TI-NODE-026. [온도 집계 중복 방지] instance만 다른 temp1 2개(97·96°C) → NodeTempCritical 1건(97°C), 3m (AC-4 / REQ-NE2-004)
+  # max() 집계로 instance 라벨이 사라져 알림 1건만 생성된다.
+  - interval: 60s
+    input_series:
+      - series: 'node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1",instance="a"}'
+        values: '97+0x10'
+      - series: 'node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1",instance="b"}'
+        values: '96+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        groupname: node-resource
+        alertname: NodeTempCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: node
+              tier: PAGE
+            exp_annotations:
+              summary: "NAS CPU 패키지 온도 3단계 — 97°C"
+              description: "CPU 패키지 온도가 95°C 초과 지속(Tjmax 105°C). 스로틀링·하드웨어 보호 정지 위험."
+              action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
 
   # ===========================================================================
   # SPEC-OBSV-VLOGS-HEALTH-001: victorialogs-liveness 룰 유닛테스트
