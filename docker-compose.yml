@@ -551,18 +551,24 @@ services:
 
   # --- cAdvisor: 컨테이너별 메모리·CPU 시계열 수집 (#119 §3 용량계획 검증) ---
   cadvisor:
-    # [HARD] latest 금지(mysql 8.4·redis 8.8·VM/vmalert 선례). v0.53.0부터 registry가 ghcr.io/google/cadvisor로
-    #   이전되어 gcr.io/cadvisor/cadvisor에는 더 이상 신규 태그가 없다 — gcr.io 기준 최종 안정 태그 v0.52.1 고정.
+    # [HARD] latest 금지(mysql 8.4·redis 8.8·VM/vmalert 선례) — 명시 태그로 고정한다. 최초 v0.52.1로 고정했고
+    #   이후 dependabot이 같은 gcr.io 경로에서 v0.55.1로 범프했다(cb684c8). 최초 작성 당시의 "v0.53.0부터
+    #   ghcr.io/google/cadvisor로 이전되어 gcr.io에는 신규 태그가 없다"는 판단은 이 범프와 맞지 않으며 재검증하지 않았다.
     image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: aaa-cadvisor
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          # 최초 128M(alertmanager/vmalert 동급 사이드카 기준)은 NAS 실측으로 부족 확인 — 2026-07-28
+          # [이력 1] 최초 128M(alertmanager/vmalert 동급 사이드카 기준)은 NAS 실측으로 부족 확인 — 2026-07-28
           #   OOM kill(exitCode 137) 1회 발생, 재시작 직후에도 working set ~125MiB(97.8%)로 상한 재근접.
-          #   실측 수요의 약 2배(limit ≈ 2×working set)로 상향해 컨테이너 증가·스크랩 스파이크 흡수.
-          memory: 256M
+          #   실측 수요의 약 2배(limit ≈ 2×working set)로 256M 상향.
+          # [이력 2] 256M → 512M(정확히 2배), 2026-11-11 — 2026-11-11 06:25~08:31 KST에 OOM kill 7회(재시작 카운트 7).
+          #   직전 최소 48시간 동안 working set이 약 250~255MiB(한도 256MiB)에 붙어 있었다. 당시 NAS 가용 메모리
+          #   약 17GiB로 여유 있음.
+          #   [주의] 이번 조치는 한도 상향뿐이다. 메모리 증가 원인(추적 cgroup 약 105개 중 약 92개가 호스트 systemd
+          #   cgroup, v0.55.1 대 이전 버전 차이 등)은 아직 조사·축소하지 않았다 — 증가가 계속되면 512M도 다시 찰 수 있다.
+          memory: 512M
           cpus: "0.25"
     # [하드닝, B안 개정 — NAS 라이브 검증 2026-07-26] 최초 B안(/var/run + /sys만)은 로컬(Docker Desktop,
     #   macOS)에서 정상 동작하는 것처럼 보였으나, 실제 NAS에서는 개별 aaa-* 컨테이너 지표가 전혀 잡히지 않고
