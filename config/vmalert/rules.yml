@@ -1096,7 +1096,7 @@ groups:
           action: "collector 로그(market-indicators 배치 평일 17:05, {{ $labels.source }} 실패 사유) → market_indicators 테이블 source 컬럼으로 실제 적재 소스 확인"
 
   # ---------------------------------------------------------------------------
-  # 그룹 12: NAS 호스트 자원 — 디스크·RAM·CPU 3단계 (SPEC-INFRA-NODE-001)
+  # 그룹 12: NAS 호스트 자원 — 디스크·RAM·CPU·온도 3단계 (SPEC-INFRA-NODE-001 + SPEC-INFRA-NODE-002)
   # ---------------------------------------------------------------------------
   # 게이트 무관·24h 상시. 디스크는 mountpoint 라벨(/volume1·/volume2)로 각각 발화.
   # CPU = 사용률 비율식(idle·iowait 제외, nice 포함, 코어 수 상수 없음) — SPEC-INFRA-NODE-002가
@@ -1106,6 +1106,7 @@ groups:
   # [SPEC-OBSV-WATERMARK-001 REQ-WM-026, 2026-07-10 개정] 디스크 Critical(>90%)·RAM Critical(>95%)
   #   2종만 TICKET→PAGE 승격(쓰기 실패=전 서비스 정지 전조·OOM=분 단위 진행).
   #   CPU Critical은 신규 지표 운영 이력 확보 전까지 TICKET 유지 (SPEC-INFRA-NODE-002).
+  #   온도 Critical(>95°C)은 PAGE (SPEC-INFRA-NODE-002).
   - name: node-resource
     interval: 60s
     rules:
@@ -1240,6 +1241,45 @@ groups:
           summary: "NAS CPU 사용률 3단계 — {{ $value | humanizePercentage }}"
           description: "CPU 사용률(idle·iowait 제외, nice 포함)이 90% 초과 지속. 신규 지표 운영 이력 확보 전까지 TICKET 유지."
           action: "ssh nas-ugreen \"uptime && docker stats --no-stream\" → 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+
+      # --- CPU 패키지 온도 85/90/95°C (SPEC-INFRA-NODE-002) ---
+      # coretemp temp1 = "Package id 0"(node_hwmon_sensor_label). Tjmax 105°C.
+      # max() 집계 — 동일 센서 다중 시계열이 들어와도 알림 1건. 온도 Critical만 PAGE.
+      - alert: NodeTempWarning1
+        expr: max(node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}) > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+          tier: TICKET
+        annotations:
+          summary: "NAS CPU 패키지 온도 1단계 — {{ $value | humanize }}°C"
+          description: "CPU 패키지 온도가 85°C 초과 지속(Tjmax 105°C)."
+          action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+
+      - alert: NodeTempWarning2
+        expr: max(node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}) > 90
+        for: 5m
+        labels:
+          severity: warning
+          component: node
+          tier: TICKET
+        annotations:
+          summary: "NAS CPU 패키지 온도 2단계 — {{ $value | humanize }}°C"
+          description: "CPU 패키지 온도가 90°C 초과 지속(Tjmax 105°C)."
+          action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
+
+      - alert: NodeTempCritical
+        expr: max(node_hwmon_temp_celsius{chip="platform_coretemp_0",sensor="temp1"}) > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: node
+          tier: PAGE
+        annotations:
+          summary: "NAS CPU 패키지 온도 3단계 — {{ $value | humanize }}°C"
+          description: "CPU 패키지 온도가 95°C 초과 지속(Tjmax 105°C). 스로틀링·하드웨어 보호 정지 위험."
+          action: "팬·통풍(먼지·설치 위치) 점검 → ssh nas-ugreen \"uptime && docker stats --no-stream\"으로 상위 CPU 소비 컨테이너 확인. 05~08시 KST에는 nice 작업(약 1코어)과 함께 온도가 오르는 일이 흔함(출처는 antivirus_serv로 추정, 미검증)"
 
   # ---------------------------------------------------------------------------
   # 그룹 XR-H: 예상 실행 신선도 — 라벨 무관 단일 룰(SPEC-COLLECTOR-EXPECTED-RUN-001 REQ-XR-019, Module H)
