@@ -291,38 +291,11 @@ groups:
           action: "collector 로그(토·월 아침 주간 배치 실행분) → 실행 여부·KIS 오류 확인"
 
   # ---------------------------------------------------------------------------
-  # 그룹 8: 국내 뉴스 배치 stale — 1h + 장중 게이트
-  # SPEC-OBSV-BATCH-COVERAGE-001 REQ-006
-  # [SPEC-OBSV-WATERMARK-001 Exclusion 7] news-domestic은 일-grain 워터마크 신선도 대상이 아니므로
-  #   본 실행 신선도(1h)가 유일한 감시망 — 유지.
+  # [REMOVED 2026-11-16, SPEC-COLLECTOR-EXPECTED-RUN-001] 구 그룹 8(collector-collection-gap-news,
+  #   1h + 장중 게이트)은 collector-collection-gap-expected-run이 대체한다. 월요일 첫 수집이 주말
+  #   backlog(약 8천 건, 105~173s)를 처리하는 동안 게이트 오픈(08:55)+for:7m이 먼저 만료돼 매주
+  #   오발했다(11-02/11-16 발화, 11-09 모면). domestic-news 마진은 collector 레지스트리에서 1h로 설정.
   # ---------------------------------------------------------------------------
-  # domestic-news(NewsScheduler, 장중 10분 간격 09~15시 KST MON-FRI).
-  # 발행량 변동이 커 completeness 비적용, stale-only(§3.3 REQ-006).
-  # 1h = 10분 주기 기준 6회 연속 실패 허용 + 마진.
-  # 뉴스 수집창(09~15시)이 market_open과 겹치므로 동일 억제 패턴 재사용.
-  # [2026-07-27 정정] market_open 게이트 오픈(08:55:00)과 NewsScheduler 첫 cron 틱(09:00:00, 뉴스
-  #   전용이 아닌 공용 세션 게이트)의 간격이 정확히 300초로 구 for:5m과 완전히 일치 — 뉴스 배치
-  #   자체 처리 시간(관측 11~20s, 주말 백로그 최대치 포함)에 여유가 사실상 0이라 매일 아침 오발
-  #   경계선에 있었다(2026-07-20/07-27 월요일 실측 발화, ALERTS 이력 확인). 게이트 오픈 시각은
-  #   뉴스 배치 전용이 아닌 공용 세션 게이트라 변경하지 않고, 이 알림의 for만 개별 확대해 게이트
-  #   버퍼(300s) + 관측 최대 처리시간(20s) + 안전마진(~100s) ≈ 420s 확보.
-  - name: collector-collection-gap-news
-    interval: 30s
-    rules:
-      - alert: CollectorBatchStale
-        expr: |
-          ((time() - aaa_collector_batch_last_load_seconds{batch="domestic-news"}) > 1 * 3600)
-          and on() (aaa_collector_market_open == 1)
-        for: 7m
-        keep_firing_for: 10m
-        labels:
-          severity: warning
-          component: collector
-          tier: TICKET
-        annotations:
-          summary: "국내 뉴스 수집 중단 — 1시간 초과"
-          description: "장중 10분 주기 국내 뉴스 수집이 1시간 이상 중단(연속 6회 실패 상당). 휴장 시 억제됨."
-          action: "collector 로그(domestic-news 오류) → KIS 뉴스 API 응답·키 상태 확인"
 
   # ---------------------------------------------------------------------------
   # 그룹 9: 미국 관심종목 동기화 stale — 28h 무억제(무게이트)
