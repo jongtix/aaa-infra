@@ -159,56 +159,9 @@ tests:
   # ===========================================================================
 
   # ===========================================================================
-  # 룰 11: collector-collection-gap-news — 1h + 장중 게이트
-  # SPEC-OBSV-BATCH-COVERAGE-001 AC-2 / AC-3 / AC-6 / REQ-006
+  # [REMOVED 2026-11-16, SPEC-COLLECTOR-EXPECTED-RUN-001] 룰 11(collector-collection-gap-news)의
+  # T27~T29를 삭제 — domestic-news는 collector-collection-gap-expected-run이 대체(마진 1h).
   # ===========================================================================
-
-  # T27. [발화] domestic-news stale>1h AND market_open==1 → 발화.
-  # anchor=-4000 → t=0 staleness=4000s > 1h(3600s) → for:7m 후 eval_time=10m 발화.
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-news"}'
-        values: '-4000+0x30'
-      - series: 'aaa_collector_market_open'
-        values: '1+0x30'
-    alert_rule_test:
-      - eval_time: 10m
-        groupname: collector-collection-gap-news
-        alertname: CollectorBatchStale
-        exp_alerts:
-          - exp_labels:
-              severity: warning
-              component: collector
-              batch: domestic-news
-              tier: TICKET
-            exp_annotations:
-              summary: "국내 뉴스 수집 중단 — 1시간 초과"
-              description: "장중 10분 주기 국내 뉴스 수집이 1시간 이상 중단(연속 6회 실패 상당). 휴장 시 억제됨."
-              action: "collector 로그(domestic-news 오류) → KIS 뉴스 API 응답·키 상태 확인"
-
-  # T28. [휴장 억제] domestic-news stale>1h 이지만 market_open==0 → 억제(AC-3).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_batch_last_load_seconds{batch="domestic-news"}'
-        values: '-4000+0x30'
-      - series: 'aaa_collector_market_open'
-        values: '0+0x30'
-    alert_rule_test:
-      - eval_time: 10m
-        groupname: collector-collection-gap-news
-        alertname: CollectorBatchStale
-        exp_alerts: []
-
-  # T29. [absent 억제] domestic-news 시계열 부재 → 미발화(AC-6 / REQ-010).
-  - interval: 30s
-    input_series:
-      - series: 'aaa_collector_market_open'
-        values: '1+0x30'
-    alert_rule_test:
-      - eval_time: 10m
-        groupname: collector-collection-gap-news
-        alertname: CollectorBatchStale
-        exp_alerts: []
 
   # ===========================================================================
   # 룰 12: collector-collection-gap-watchlist-us — 28h 무게이트(REQ-013)
