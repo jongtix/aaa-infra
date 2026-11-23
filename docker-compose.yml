@@ -430,7 +430,7 @@ services:
   victorialogs:
     # VictoriaLogs는 VictoriaMetrics 제품군이나 별도 버전 체계.
     # v1.52.0+ distroless(셸·wget 없음) — healthcheck 제거, 외부 감시는 vmalert VictorialogsDown (SPEC-OBSV-VLOGS-HEALTH-001).
-    image: victoriametrics/victoria-logs:v1.53.0
+    image: victoriametrics/victoria-logs:v1.54.0
     container_name: aaa-victorialogs
     restart: unless-stopped
     deploy:
